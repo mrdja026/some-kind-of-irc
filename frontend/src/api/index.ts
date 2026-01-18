@@ -111,6 +111,16 @@ export const joinChannel = async (channelId: number): Promise<void> => {
   }
 };
 
+export const searchChannels = async (name: string): Promise<Channel[]> => {
+  const response = await fetch(`${API_BASE_URL}/channels/search?name=${encodeURIComponent(name)}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to search channels');
+  }
+  return response.json();
+};
+
 export const leaveChannel = async (channelId: number): Promise<void> => {
   const response = await fetch(`${API_BASE_URL}/channels/${channelId}/leave`, {
     method: 'POST',

@@ -27,6 +27,7 @@ This project is structured as a monorepo with separate frontend and backend dire
 - [x] 2.1 Add direct message (DM) functionality
 - [x] 2.2 Create channel/membership management API endpoints
 - [x] 2.3 Implement /auth/users/{user_id} endpoint to get user by ID
+- [x] 2.4 Implement auto-join #general channel on registration and login
 
 ## 3. Testing & Deployment (Backend Focus)
 

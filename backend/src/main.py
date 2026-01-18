@@ -54,6 +54,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
             if data["type"] == "message":
                 await manager.broadcast(data, data["channel_id"])
             elif data["type"] == "typing":
+                # Add user_id to typing message
+                data["user_id"] = client_id
                 await manager.broadcast(data, data["channel_id"])
     except WebSocketDisconnect:
         manager.disconnect(client_id)

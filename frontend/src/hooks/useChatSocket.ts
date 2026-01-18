@@ -4,7 +4,7 @@ import type { WebSocketMessage } from '../types';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
-export const useChatSocket = (clientId: number, token: string) => {
+export const useChatSocket = (clientId: number, token: string, onTyping?: (channelId: number, userId: number) => void) => {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -56,7 +56,9 @@ export const useChatSocket = (clientId: number, token: string) => {
           break;
         case 'typing':
           // Handle typing indicator
-          console.log('Typing indicator:', message);
+          if (onTyping && message.channel_id !== undefined && message.user_id !== undefined && message.user_id !== clientId) {
+            onTyping(message.channel_id, message.user_id);
+          }
           break;
         default:
           console.warn('Unknown message type:', message.type);
@@ -66,7 +68,7 @@ export const useChatSocket = (clientId: number, token: string) => {
     return () => {
       socket.close();
     };
-  }, [clientId, queryClient]);
+  }, [clientId, queryClient, onTyping]);
 
   const sendMessage = (message: WebSocketMessage) => {
     if (wsRef.current && isConnected) {
@@ -78,6 +80,7 @@ export const useChatSocket = (clientId: number, token: string) => {
     sendMessage({
       type: 'typing',
       channel_id: channelId,
+      user_id: clientId,
     });
   };
 

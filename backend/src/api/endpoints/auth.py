@@ -11,6 +11,8 @@ import hashlib
 from src.core.config import settings
 from src.core.database import get_db
 from src.models.user import User
+from src.models.channel import Channel
+from src.models.membership import Membership
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -128,6 +130,20 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    # Check if general channel exists, create if not
+    general_channel = db.query(Channel).filter(Channel.name == "#general").first()
+    if not general_channel:
+        general_channel = Channel(name="#general", type="public")
+        db.add(general_channel)
+        db.commit()
+        db.refresh(general_channel)
+    
+    # Add user to general channel
+    membership = Membership(user_id=new_user.id, channel_id=general_channel.id)
+    db.add(membership)
+    db.commit()
+    
     # Create and set JWT cookie
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -152,6 +168,25 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    # Check if general channel exists, create if not
+    general_channel = db.query(Channel).filter(Channel.name == "#general").first()
+    if not general_channel:
+        general_channel = Channel(name="#general", type="public")
+        db.add(general_channel)
+        db.commit()
+        db.refresh(general_channel)
+    
+    # Add user to general channel if not already a member
+    existing_membership = db.query(Membership).filter(
+        Membership.user_id == user.id,
+        Membership.channel_id == general_channel.id
+    ).first()
+    if not existing_membership:
+        membership = Membership(user_id=user.id, channel_id=general_channel.id)
+        db.add(membership)
+        db.commit()
+    
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires

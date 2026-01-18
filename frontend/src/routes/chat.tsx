@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getCurrentUser,
   getChannels,
@@ -11,6 +11,7 @@ import {
   joinChannel,
   createDirectMessageChannel,
   getUserById,
+  searchChannels,
 } from '../api'
 import { useChatSocket } from '../hooks/useChatSocket'
 import type { Channel, Message, User } from '../types'
@@ -19,11 +20,13 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 
 function ChatPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(
     null,
   )
   const [messageInput, setMessageInput] = useState('')
   const [dmUserIdInput, setDmUserIdInput] = useState('')
+  const [typingUsers, setTypingUsers] = useState<Set<number>>(new Set())
 
   // Get current user
   const {
@@ -40,6 +43,7 @@ function ChatPage() {
     data: channels,
     error: channelsError,
     isLoading: channelsLoading,
+    refetch: refetchChannels,
   } = useQuery({
     queryKey: ['channels'],
     queryFn: getChannels,
@@ -71,6 +75,21 @@ function ChatPage() {
     enabled: !!selectedChannelId,
   })
 
+  // Handle typing indicator
+  const handleTyping = (channelId: number, userId: number) => {
+    if (channelId === selectedChannelId) {
+      setTypingUsers((prev) => new Set([...prev, userId]))
+      // Remove typing indicator after 2 seconds
+      setTimeout(() => {
+        setTypingUsers((prev) => {
+          const newSet = new Set(prev)
+          newSet.delete(userId)
+          return newSet
+        })
+      }, 2000)
+    }
+  }
+
   // WebSocket connection
   const {
     isConnected,
@@ -79,6 +98,7 @@ function ChatPage() {
   } = useChatSocket(
     user?.id || 0,
     '', // No token needed as we use cookies
+    handleTyping,
   )
 
   // Handle user not authenticated
@@ -122,17 +142,130 @@ function ChatPage() {
     }
   }
 
-  // Handle message submission
+  // Handle message submission with optimistic UI
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!messageInput.trim() || !selectedChannelId) return
 
+    // Handle slash commands
+    const trimmedInput = messageInput.trim()
+    if (trimmedInput.startsWith('/')) {
+      // Parse command
+      const [command, ...args] = trimmedInput.slice(1).split(' ')
+
+      switch (command.toLowerCase()) {
+        case 'join':
+          if (args.length > 0) {
+            const channelName = args[0].startsWith('#')
+              ? args[0]
+              : `#${args[0]}`
+            try {
+              // Search for channel by name
+              const channels = await searchChannels(channelName)
+              if (channels.length > 0) {
+                const channel = channels[0]
+                await joinChannel(channel.id)
+                await refetchChannels() // Refetch channels to update list
+                setSelectedChannelId(channel.id) // Join the channel
+              } else {
+                console.error('Channel not found')
+              }
+            } catch (error) {
+              console.error('Failed to join channel:', error)
+            }
+          }
+          setMessageInput('')
+          return
+        case 'nick':
+          if (args.length > 0) {
+            // Implement nickname change (not supported yet)
+            console.error('Nickname change not implemented')
+          }
+          setMessageInput('')
+          return
+        case 'me':
+          if (args.length > 0) {
+            const action = args.join(' ')
+            // Create optimistic message for /me command
+            const optimisticMessage: Message = {
+              id: Date.now(), // Temporary ID
+              content: `/me ${action}`,
+              sender_id: user!.id,
+              channel_id: selectedChannelId,
+              timestamp: new Date().toISOString(),
+            }
+            // Optimistically update the cache
+            queryClient.setQueryData(
+              ['messages', selectedChannelId],
+              (oldData: any[] = []) => [...oldData, optimisticMessage],
+            )
+            // Send the message to the server
+            try {
+              const actualMessage = await sendMessage(
+                selectedChannelId,
+                `/me ${action}`,
+              )
+              // Replace the optimistic message with the actual one
+              queryClient.setQueryData(
+                ['messages', selectedChannelId],
+                (oldData: any[] = []) =>
+                  oldData.map((msg) =>
+                    msg.id === optimisticMessage.id ? actualMessage : msg,
+                  ),
+              )
+            } catch (error) {
+              // Remove the optimistic message if there's an error
+              queryClient.setQueryData(
+                ['messages', selectedChannelId],
+                (oldData: any[] = []) =>
+                  oldData.filter((msg) => msg.id !== optimisticMessage.id),
+              )
+              console.error('Failed to send message:', error)
+            }
+            setMessageInput('')
+          }
+          return
+        default:
+          console.error('Unknown command:', command)
+          setMessageInput('')
+          return
+      }
+    }
+
+    // Regular message with optimistic UI
+    const optimisticMessage: Message = {
+      id: Date.now(), // Temporary ID
+      content: trimmedInput,
+      sender_id: user!.id,
+      channel_id: selectedChannelId,
+      timestamp: new Date().toISOString(),
+    }
+    // Optimistically update the cache
+    queryClient.setQueryData(
+      ['messages', selectedChannelId],
+      (oldData: any[] = []) => [...oldData, optimisticMessage],
+    )
+    // Send the message to the server
     try {
-      await sendMessage(selectedChannelId, messageInput.trim())
-      setMessageInput('')
+      const actualMessage = await sendMessage(selectedChannelId, trimmedInput)
+      // Replace the optimistic message with the actual one
+      queryClient.setQueryData(
+        ['messages', selectedChannelId],
+        (oldData: any[] = []) =>
+          oldData.map((msg) =>
+            msg.id === optimisticMessage.id ? actualMessage : msg,
+          ),
+      )
     } catch (error) {
+      // Remove the optimistic message if there's an error
+      queryClient.setQueryData(
+        ['messages', selectedChannelId],
+        (oldData: any[] = []) =>
+          oldData.filter((msg) => msg.id !== optimisticMessage.id),
+      )
       console.error('Failed to send message:', error)
     }
+    setMessageInput('')
   }
 
   // Loading states
@@ -293,6 +426,41 @@ function ChatPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Typing indicator */}
+              {typingUsers.size > 0 && (
+                <div className="flex items-center gap-3 mt-4">
+                  <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
+                    <span className="text-white text-xs">
+                      {/* Show first typing user's initial */}
+                      {Array.from(typingUsers)[0] === user?.id
+                        ? 'You'
+                        : `User${Array.from(typingUsers)[0]}`[0].toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="text-slate-400 text-sm">
+                      {Array.from(typingUsers)
+                        .map((userId) =>
+                          userId === user?.id ? 'You' : `User${userId}`,
+                        )
+                        .join(', ')}{' '}
+                      is typing...
+                    </div>
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"></div>
+                      <div
+                        className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                        style={{ animationDelay: '0.1s' }}
+                      ></div>
+                      <div
+                        className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                        style={{ animationDelay: '0.2s' }}
+                      ></div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

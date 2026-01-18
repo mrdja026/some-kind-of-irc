@@ -79,6 +79,12 @@ async def get_channels(current_user: User = Depends(get_current_user), db: Sessi
     channel_ids = [m.channel_id for m in memberships]
     return db.query(Channel).filter(Channel.id.in_(channel_ids)).all()
 
+@router.get("/search")
+async def search_channels(name: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Search for channels by name (case-insensitive)
+    channels = db.query(Channel).filter(Channel.name.ilike(f"%{name}%")).all()
+    return [ChannelResponse(id=ch.id, name=ch.name, type=ch.type) for ch in channels]
+
 @router.get("/dms", response_model=List[ChannelResponse])
 async def get_direct_messages(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get all direct message channels the user is a member of

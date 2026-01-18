@@ -139,5 +139,75 @@ def test_send_and_receive_dm(test_users):
     assert messages[0]["content"] == message_content
     assert messages[0]["sender_id"] == user1_id
 
+def test_auto_join_general_channel_on_register():
+    """Test that users automatically join #general channel on registration."""
+    # Clear existing data
+    with TestingSessionLocal() as db:
+        db.query(User).delete()
+        db.query(Channel).delete()
+        db.query(Membership).delete()
+        db.query(Message).delete()
+        db.commit()
+    
+    # Register a new user
+    test_user = {"username": "testuser3", "password": "pass123"}
+    response = client.post("/auth/register", json=test_user)
+    assert response.status_code == 200
+    
+    # Verify #general channel exists
+    with TestingSessionLocal() as db:
+        general_channel = db.query(Channel).filter(Channel.name == "#general").first()
+        assert general_channel is not None
+        assert general_channel.type == "public"
+        
+        # Verify user is a member of #general
+        user = db.query(User).filter(User.username == test_user["username"]).first()
+        assert user is not None
+        
+        membership = db.query(Membership).filter(
+            Membership.user_id == user.id,
+            Membership.channel_id == general_channel.id
+        ).first()
+        assert membership is not None
+
+def test_auto_join_general_channel_on_login():
+    """Test that users automatically join #general channel on login if not already a member."""
+    # Clear existing data
+    with TestingSessionLocal() as db:
+        db.query(User).delete()
+        db.query(Channel).delete()
+        db.query(Membership).delete()
+        db.query(Message).delete()
+        db.commit()
+    
+    # Create a user without adding to #general
+    test_user = {"username": "testuser4", "password": "pass123"}
+    with TestingSessionLocal() as db:
+        from src.api.endpoints.auth import get_password_hash
+        hashed_password = get_password_hash(test_user["password"])
+        new_user = User(username=test_user["username"], password_hash=hashed_password)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+    
+    # Login the user
+    login_response = client.post("/auth/login", data={"username": test_user["username"], "password": test_user["password"]})
+    assert login_response.status_code == 200
+    
+    # Verify #general channel exists and user is a member
+    with TestingSessionLocal() as db:
+        general_channel = db.query(Channel).filter(Channel.name == "#general").first()
+        assert general_channel is not None
+        assert general_channel.type == "public"
+        
+        user = db.query(User).filter(User.username == test_user["username"]).first()
+        assert user is not None
+        
+        membership = db.query(Membership).filter(
+            Membership.user_id == user.id,
+            Membership.channel_id == general_channel.id
+        ).first()
+        assert membership is not None
+
 if __name__ == "__main__":
     pytest.main([__file__])
