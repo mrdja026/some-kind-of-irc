@@ -1,0 +1,7 @@
+venv/
+frontend/node_modules
+frontend/.output
+frontend/.tanstack
+backend/__pycache__/
+backend/.pytest_cache/
+backend/tests/__pycache__/
