@@ -10,3 +10,7 @@ backend/.pytest_cache/
 backend/src/services/__pycache__
 screenshots/
 backend/*.db
+irc-minimal/
+media-storage/minio.exe
+media-storage/mc.exe
+media-storage/data/

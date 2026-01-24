@@ -102,3 +102,7 @@ This IRC chat application provides a familiar IRC-like experience with modern fe
 
 - If the WebSocket connection fails, ensure the backend server is running and check the frontend’s `VITE_WS_URL` environment variable (default: `ws://localhost:8002`).
 - If the test user creation fails, check the backend’s `src/core/database.py` for connection issues.
+
+### MINIO
+
+Download minio from https://min.io/download#/windows or https://min.io/download#/linux and put it as a child in media-storage

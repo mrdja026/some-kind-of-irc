@@ -17,10 +17,16 @@ passlib = { version = "*", extras = ["bcrypt"] }
 pydantic = "*"
 pydantic-settings = "*"
 python-multipart = "*"
+flask = "*"
+boto3 = "*"
+requests = "*"
 
 [tasks]
 install-backend = { cmd = "backend/be/Scripts/python -m pip install -r backend/requirements.txt" }
+install-media-storage = { cmd = "python -m pip install -r media-storage/requirements.txt" }
 install-frontend = { cmd = "pnpm install", cwd = "frontend" }
-setup = { depends-on = ["install-backend", "install-frontend"] }
+setup = { depends-on = ["install-backend", "install-media-storage", "install-frontend"] }
 api = { cmd = "../backend/be/Scripts/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8002", cwd = "backend" }
 ui = { cmd = "pnpm dev", cwd = "frontend" }
+media-storage = { cmd = "python media-storage/app.py", env = { MINIO_ENDPOINT = "http://localhost:9000", MINIO_PUBLIC_ENDPOINT = "http://localhost:9000", MINIO_BUCKET = "irc-media", MINIO_REGION = "us-east-1", MINIO_USE_SSL = "false", MINIO_ACCESS_KEY = "minioadmin", MINIO_SECRET_KEY = "minioadmin", BACKEND_VERIFY_URL = "http://localhost:8002/auth/me", PUBLIC_BASE_URL = "http://localhost:9101", MAX_UPLOAD_MB = "10", PORT = "9101" } }
+minio = { cmd = "media-storage/minio.exe server media-storage/data --console-address :9001", env = { MINIO_ROOT_USER = "minioadmin", MINIO_ROOT_PASSWORD = "minioadmin" } }

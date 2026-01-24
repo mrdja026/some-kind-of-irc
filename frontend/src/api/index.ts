@@ -142,17 +142,38 @@ export const getMessages = async (channelId: number): Promise<Message[]> => {
   return response.json();
 };
 
-export const sendMessage = async (channelId: number, content: string): Promise<Message> => {
+export const sendMessage = async (
+  channelId: number,
+  content: string,
+  imageUrl?: string | null,
+): Promise<Message> => {
   const response = await fetch(`${API_BASE_URL}/channels/${channelId}/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, image_url: imageUrl ?? null }),
   });
   if (!response.ok) {
     throw new Error('Failed to send message');
   }
+  return response.json();
+};
+
+export const uploadImage = async (file: File): Promise<{ url: string }> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/media/upload`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to upload image');
+  }
+
   return response.json();
 };

@@ -17,6 +17,7 @@ export type Message = {
   channel_id: number;
   timestamp: string;
   client_temp_id?: number;
+  image_url?: string | null;
 };
 
 export type Membership = {
@@ -34,6 +35,7 @@ export type WebSocketMessage = {
   type: 'message' | 'join' | 'leave' | 'typing';
   id?: number;
   content?: string;
+  image_url?: string | null;
   sender_id?: number;
   channel_id?: number;
   timestamp?: string;

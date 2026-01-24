@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useState, useEffect, useRef } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -8,6 +8,7 @@ import {
   getDirectMessages,
   getMessages,
   sendMessage,
+  uploadImage,
   joinChannel,
   createDirectMessageChannel,
   getUserById,
@@ -15,6 +16,7 @@ import {
 } from '../api'
 import { useChatSocket } from '../hooks/useChatSocket'
 import type { Channel, Message, User } from '../types'
+import { Home, LogIn, Menu, MessageSquare, X } from 'lucide-react'
 
 export const Route = createFileRoute('/chat')({ component: ChatPage })
 
@@ -27,6 +29,10 @@ function ChatPage() {
   const [messageInput, setMessageInput] = useState('')
   const [dmUserIdInput, setDmUserIdInput] = useState('')
   const [typingUsers, setTypingUsers] = useState<Set<number>>(new Set())
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [isNavOpen, setIsNavOpen] = useState(false)
 
   // Get current user
   const {
@@ -142,6 +148,71 @@ function ChatPage() {
     }
   }
 
+  const handleAttachmentClick = () => {
+    setUploadError(null)
+    if (!selectedChannelId) return
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !selectedChannelId || !user) return
+
+    setIsUploading(true)
+    setUploadError(null)
+
+    try {
+      const upload = await uploadImage(file)
+      const trimmedContent = messageInput.trim()
+      const optimisticMessage: Message = {
+        id: Date.now(),
+        client_temp_id: Date.now(),
+        content: trimmedContent,
+        sender_id: user.id,
+        channel_id: selectedChannelId,
+        timestamp: new Date().toISOString(),
+        image_url: upload.url,
+      }
+
+      queryClient.setQueryData(
+        ['messages', selectedChannelId],
+        (oldData: Message[] = []) => [...oldData, optimisticMessage],
+      )
+
+      setMessageInput('')
+
+      const actualMessage = await sendMessage(
+        selectedChannelId,
+        trimmedContent,
+        upload.url,
+      )
+
+      queryClient.setQueryData(
+        ['messages', selectedChannelId],
+        (oldData: Message[] = []) => {
+          const withoutOptimistic = oldData.filter(
+            (msg) => msg.client_temp_id !== optimisticMessage.client_temp_id,
+          )
+          const hasActual = withoutOptimistic.some(
+            (msg) => msg.id === actualMessage.id,
+          )
+          if (hasActual) {
+            return withoutOptimistic.map((msg) =>
+              msg.id === actualMessage.id ? { ...msg, ...actualMessage } : msg,
+            )
+          }
+          return [...withoutOptimistic, actualMessage]
+        },
+      )
+    } catch (error) {
+      setUploadError('Upload failed. Please try again.')
+      console.error('Failed to upload image:', error)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
   // Handle message submission with optimistic UI
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -194,6 +265,7 @@ function ChatPage() {
               sender_id: user!.id,
               channel_id: selectedChannelId,
               timestamp: new Date().toISOString(),
+              image_url: null,
             }
             // Optimistically update the cache
             queryClient.setQueryData(
@@ -214,8 +286,15 @@ function ChatPage() {
                     (msg) =>
                       msg.client_temp_id !== optimisticMessage.client_temp_id,
                   )
-                  if (withoutOptimistic.some((msg) => msg.id === actualMessage.id)) {
-                    return withoutOptimistic
+                  const hasActual = withoutOptimistic.some(
+                    (msg) => msg.id === actualMessage.id,
+                  )
+                  if (hasActual) {
+                    return withoutOptimistic.map((msg) =>
+                      msg.id === actualMessage.id
+                        ? { ...msg, ...actualMessage }
+                        : msg,
+                    )
                   }
                   return [...withoutOptimistic, actualMessage]
                 },
@@ -250,6 +329,7 @@ function ChatPage() {
       sender_id: user!.id,
       channel_id: selectedChannelId,
       timestamp: new Date().toISOString(),
+      image_url: null,
     }
     // Optimistically update the cache
     queryClient.setQueryData(
@@ -289,34 +369,101 @@ function ChatPage() {
   // Loading states
   if (userLoading || channelsLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-lg">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center chat-shell">
+        <div className="text-lg chat-meta">Loading...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex">
+    <div className="min-h-screen flex chat-shell">
+      {isNavOpen && (
+        <div
+          className="fixed inset-0 bg-black/20 z-40"
+          onClick={() => setIsNavOpen(false)}
+        />
+      )}
+      <aside
+        className={`fixed top-0 left-0 h-full w-72 z-50 transform transition-transform duration-300 ease-in-out nav-drawer ${
+          isNavOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between p-4 border-b chat-divider">
+          <div className="text-lg font-semibold">Navigation</div>
+          <button
+            onClick={() => setIsNavOpen(false)}
+            className="p-2 rounded-lg chat-menu-button"
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <nav className="flex-1 p-4 space-y-2">
+          <Link
+            to="/"
+            onClick={() => setIsNavOpen(false)}
+            className="flex items-center gap-3 p-3 rounded-lg nav-link"
+            activeProps={{
+              className:
+                'flex items-center gap-3 p-3 rounded-lg nav-link nav-link--active',
+            }}
+          >
+            <Home size={18} />
+            <span className="font-medium">Home</span>
+          </Link>
+          <Link
+            to="/login"
+            onClick={() => setIsNavOpen(false)}
+            className="flex items-center gap-3 p-3 rounded-lg nav-link"
+            activeProps={{
+              className:
+                'flex items-center gap-3 p-3 rounded-lg nav-link nav-link--active',
+            }}
+          >
+            <LogIn size={18} />
+            <span className="font-medium">Login</span>
+          </Link>
+          <Link
+            to="/chat"
+            onClick={() => setIsNavOpen(false)}
+            className="flex items-center gap-3 p-3 rounded-lg nav-link"
+            activeProps={{
+              className:
+                'flex items-center gap-3 p-3 rounded-lg nav-link nav-link--active',
+            }}
+          >
+            <MessageSquare size={18} />
+            <span className="font-medium">Chat</span>
+          </Link>
+        </nav>
+      </aside>
       {/* Sidebar */}
-      <div className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col">
+      <div className="w-64 flex flex-col chat-sidebar">
         {/* User info */}
-        <div className="p-4 border-b border-slate-700">
+        <div className="p-4 border-b chat-divider">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-cyan-500 flex items-center justify-center">
-              <span className="text-white font-bold">
+            <button
+              onClick={() => setIsNavOpen(true)}
+              className="p-2 rounded-lg chat-menu-button"
+              aria-label="Open menu"
+            >
+              <Menu size={18} />
+            </button>
+            <div className="w-10 h-10 rounded-full flex items-center justify-center chat-avatar">
+              <span className="font-bold">
                 {user?.username[0].toUpperCase()}
               </span>
             </div>
             <div>
-              <div className="text-white font-medium">{user?.username}</div>
-              <div className="text-sm text-green-500">Online</div>
+              <div className="font-semibold">{user?.username}</div>
+              <div className="text-sm chat-meta">Online</div>
             </div>
           </div>
         </div>
 
         {/* Channels list */}
         <div className="flex-1 overflow-y-auto p-2">
-          <div className="text-xs text-slate-400 uppercase tracking-wider font-medium px-3 py-2">
+          <div className="text-xs uppercase tracking-wider font-semibold px-3 py-2 chat-meta">
             Channels
           </div>
           {channels
@@ -325,10 +472,10 @@ function ChatPage() {
               <div
                 key={channel.id}
                 onClick={() => handleChannelSelect(channel)}
-                className={`px-3 py-2 rounded cursor-pointer transition-colors ${
+                className={`px-3 py-2 rounded cursor-pointer transition-colors chat-channel-item ${
                   selectedChannelId === channel.id
-                    ? 'bg-cyan-500/10 text-cyan-400'
-                    : 'text-slate-300 hover:bg-slate-700'
+                    ? 'chat-channel-item--active'
+                    : ''
                 }`}
               >
                 {channel.name}
@@ -336,7 +483,7 @@ function ChatPage() {
             ))}
 
           {/* Direct Messages */}
-          <div className="text-xs text-slate-400 uppercase tracking-wider font-medium px-3 py-2 mt-4">
+          <div className="text-xs uppercase tracking-wider font-semibold px-3 py-2 mt-4 chat-meta">
             Direct Messages
           </div>
           {directMessages?.map((dmChannel) => {
@@ -358,10 +505,10 @@ function ChatPage() {
               <div
                 key={dmChannel.id}
                 onClick={() => handleChannelSelect(dmChannel)}
-                className={`px-3 py-2 rounded cursor-pointer transition-colors ${
+                className={`px-3 py-2 rounded cursor-pointer transition-colors chat-channel-item ${
                   selectedChannelId === dmChannel.id
-                    ? 'bg-cyan-500/10 text-cyan-400'
-                    : 'text-slate-300 hover:bg-slate-700'
+                    ? 'chat-channel-item--active'
+                    : ''
                 }`}
               >
                 {otherUser?.username || dmChannel.name}
@@ -377,12 +524,12 @@ function ChatPage() {
                 value={dmUserIdInput}
                 onChange={(e) => setDmUserIdInput(e.target.value)}
                 placeholder="User ID"
-                className="flex-1 px-3 py-1 bg-slate-700 border border-slate-600 rounded text-white text-sm focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                className="flex-1 px-3 py-1 rounded text-sm chat-input"
               />
               <button
                 type="submit"
                 disabled={!dmUserIdInput.trim()}
-                className="px-3 py-1 bg-cyan-500 hover:bg-cyan-600 disabled:bg-cyan-500/50 text-white text-sm font-medium rounded transition-colors"
+                className="px-3 py-1 text-sm font-semibold rounded transition-colors chat-send-button disabled:opacity-60"
               >
                 DM
               </button>
@@ -396,10 +543,10 @@ function ChatPage() {
         {selectedChannelId ? (
           <>
             {/* Channel header */}
-            <div className="p-4 border-b border-slate-700">
+            <div className="p-4 border-b chat-header">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-cyan-500"></div>
-                <div className="text-white font-medium">
+                <div className="w-2 h-2 rounded-full chat-dot"></div>
+                <div className="font-semibold">
                   {channels?.find((c) => c.id === selectedChannelId)?.name}
                 </div>
               </div>
@@ -408,19 +555,19 @@ function ChatPage() {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4">
               {messagesLoading ? (
-                <div className="text-white text-center py-8">
+                <div className="text-center py-8 chat-meta">
                   Loading messages...
                 </div>
               ) : messages?.length === 0 ? (
-                <div className="text-slate-400 text-center py-8">
+                <div className="text-center py-8 chat-meta">
                   No messages yet. Start the conversation!
                 </div>
               ) : (
                 <div className="space-y-4">
                   {messages?.map((message) => (
-                    <div key={message.id} className="flex gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
-                        <span className="text-white text-xs">
+                    <div key={message.id} className="flex gap-3 chat-card p-3 rounded-xl">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+                        <span className="text-xs font-semibold">
                           {/* Show sender's initial */}
                           {message.sender_id === user?.id
                             ? 'You'
@@ -429,18 +576,30 @@ function ChatPage() {
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <div className="text-sm text-white font-medium">
+                          <div className="text-sm font-semibold">
                             {message.sender_id === user?.id
                               ? 'You'
                               : `User${message.sender_id}`}
                           </div>
-                          <div className="text-xs text-slate-400">
+                          <div className="text-xs chat-meta">
                             {new Date(message.timestamp).toLocaleTimeString()}
                           </div>
                         </div>
-                        <div className="text-slate-300 mt-1">
-                          {message.content}
-                        </div>
+                        {message.content && (
+                          <div className="mt-1 chat-message-text">
+                            {message.content}
+                          </div>
+                        )}
+                        {message.image_url && (
+                          <div className="mt-2">
+                            <img
+                              src={message.image_url}
+                              alt="Attachment"
+                              className="max-w-xs rounded chat-image"
+                              loading="lazy"
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -450,8 +609,8 @@ function ChatPage() {
               {/* Typing indicator */}
               {typingUsers.size > 0 && (
                 <div className="flex items-center gap-3 mt-4">
-                  <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
-                    <span className="text-white text-xs">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+                    <span className="text-xs font-semibold">
                       {/* Show first typing user's initial */}
                       {Array.from(typingUsers)[0] === user?.id
                         ? 'You'
@@ -459,7 +618,7 @@ function ChatPage() {
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <div className="text-slate-400 text-sm">
+                    <div className="text-sm chat-typing">
                       {Array.from(typingUsers)
                         .map((userId) =>
                           userId === user?.id ? 'You' : `User${userId}`,
@@ -468,13 +627,13 @@ function ChatPage() {
                       is typing...
                     </div>
                     <div className="flex gap-1">
-                      <div className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"></div>
+                      <div className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"></div>
                       <div
-                        className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                        className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
                         style={{ animationDelay: '0.1s' }}
                       ></div>
                       <div
-                        className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                        className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
                         style={{ animationDelay: '0.2s' }}
                       ></div>
                     </div>
@@ -484,27 +643,47 @@ function ChatPage() {
             </div>
 
             {/* Message input */}
-            <div className="p-4 border-t border-slate-700">
+            <div className="p-4 border-t chat-input-bar">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileChange}
+                className="hidden"
+              />
               <form onSubmit={handleSubmit} className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleAttachmentClick}
+                  disabled={!selectedChannelId || isUploading}
+                  className="px-3 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60"
+                >
+                  Attach
+                </button>
                 <input
                   type="text"
                   value={messageInput}
                   onChange={handleInputChange}
                   placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                  className="flex-1 px-4 py-2 rounded-lg transition-all chat-input"
                 />
                 <button
                   type="submit"
                   disabled={!messageInput.trim() || !selectedChannelId}
-                  className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 disabled:bg-cyan-500/50 text-white font-medium rounded-lg transition-colors"
+                  className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60"
                 >
                   Send
                 </button>
               </form>
+              {(isUploading || uploadError) && (
+                <div className="mt-2 text-sm chat-meta">
+                  {isUploading ? 'Uploading image...' : uploadError}
+                </div>
+              )}
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-400">
+          <div className="flex-1 flex items-center justify-center chat-meta">
             Select a channel to start chatting
           </div>
         )}

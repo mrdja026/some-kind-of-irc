@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 from src.core.database import get_db
 from src.models.user import User
@@ -30,6 +30,7 @@ class ChannelResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    image_url: Optional[str] = None
 
 class MessageResponse(BaseModel):
     id: int
@@ -37,6 +38,7 @@ class MessageResponse(BaseModel):
     sender_id: int
     channel_id: int
     timestamp: str
+    image_url: Optional[str] = None
 
     model_config = {
         "from_attributes": True
@@ -141,7 +143,8 @@ async def get_messages(channel_id: int, db: Session = Depends(get_db)):
             content=msg.content,
             sender_id=msg.sender_id,
             channel_id=msg.channel_id,
-            timestamp=msg.timestamp.isoformat()
+            timestamp=msg.timestamp.isoformat(),
+            image_url=msg.image_url,
         ) for msg in messages
     ]
 
@@ -152,7 +155,12 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
     if not membership:
         raise HTTPException(status_code=403, detail="You are not a member of this channel")
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    new_message = Message(content=message.content, sender_id=current_user.id, channel_id=channel_id)
+    new_message = Message(
+        content=message.content,
+        image_url=message.image_url,
+        sender_id=current_user.id,
+        channel_id=channel_id,
+    )
     db.add(new_message)
     db.commit()
     db.refresh(new_message)
@@ -161,6 +169,7 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         "type": "message",
         "id": new_message.id,
         "content": new_message.content,
+        "image_url": new_message.image_url,
         "sender_id": new_message.sender_id,
         "channel_id": new_message.channel_id,
         "timestamp": new_message.timestamp.isoformat(),
@@ -171,7 +180,8 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         content=new_message.content,
         sender_id=new_message.sender_id,
         channel_id=new_message.channel_id,
-        timestamp=new_message.timestamp.isoformat()
+        timestamp=new_message.timestamp.isoformat(),
+        image_url=new_message.image_url,
     )
 
 @router.post("/{channel_id}/join")

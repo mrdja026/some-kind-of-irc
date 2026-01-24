@@ -1,15 +1,200 @@
+@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@400;600;700&display=swap");
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --cream: #fefae0;
+  --beige: #e9edc9;
+  --sage: #ccd5ae;
+  --tan: #d4a373;
+  --brown: #4a3b2a;
+  --soft-shadow: 0 24px 60px rgba(74, 59, 42, 0.18);
+  --app-bg-image: none;
+}
 
 body {
   @apply m-0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-    sans-serif;
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+  background-color: var(--cream);
+  color: var(--brown);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
-    monospace;
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.login-page {
+  background: linear-gradient(135deg, rgba(254, 250, 224, 0.95), rgba(233, 237, 201, 0.92)),
+    var(--app-bg-image);
+  background-size: cover;
+  background-position: center;
+}
+
+.login-card {
+  background: rgba(255, 255, 245, 0.92);
+  border: 1px solid var(--sage);
+  box-shadow: var(--soft-shadow);
+}
+
+.login-title {
+  font-family: "Libre Baskerville", "Times New Roman", serif;
+  color: var(--brown);
+}
+
+.login-subtitle {
+  color: rgba(74, 59, 42, 0.7);
+}
+
+.login-input {
+  background: rgba(233, 237, 201, 0.6);
+  border: 1px solid rgba(204, 213, 174, 0.9);
+  color: var(--brown);
+}
+
+.login-input:focus {
+  outline: 2px solid rgba(212, 163, 115, 0.5);
+  border-color: var(--tan);
+}
+
+.login-button {
+  background: var(--tan);
+  color: #fffaf0;
+}
+
+.login-button:hover {
+  background: #c89261;
+}
+
+.login-toggle {
+  color: #a96a3e;
+}
+
+.chat-shell {
+  background: linear-gradient(160deg, rgba(254, 250, 224, 0.92), rgba(233, 237, 201, 0.85)),
+    var(--app-bg-image);
+  background-size: cover;
+  background-position: center;
+}
+
+.chat-sidebar {
+  background: var(--beige);
+  border-right: 1px solid rgba(204, 213, 174, 0.9);
+}
+
+.chat-header,
+.chat-input-bar {
+  background: rgba(254, 250, 224, 0.9);
+  border-color: rgba(204, 213, 174, 0.8);
+}
+
+.chat-channel-item {
+  color: rgba(74, 59, 42, 0.8);
+}
+
+.chat-channel-item:hover {
+  background: rgba(204, 213, 174, 0.35);
+}
+
+.chat-channel-item--active {
+  background: rgba(212, 163, 115, 0.2);
+  color: var(--brown);
+  border: 1px solid rgba(212, 163, 115, 0.5);
+}
+
+.chat-dot {
+  background: var(--tan);
+}
+
+.chat-menu-button {
+  background: rgba(204, 213, 174, 0.6);
+  border: 1px solid rgba(204, 213, 174, 0.8);
+  color: var(--brown);
+}
+
+.chat-menu-button:hover {
+  background: rgba(204, 213, 174, 0.9);
+}
+
+.nav-drawer {
+  background: rgba(254, 250, 224, 0.97);
+  border-right: 1px solid rgba(204, 213, 174, 0.8);
+  box-shadow: var(--soft-shadow);
+}
+
+.nav-link {
+  color: rgba(74, 59, 42, 0.85);
+  background: transparent;
+}
+
+.nav-link:hover {
+  background: rgba(204, 213, 174, 0.4);
+}
+
+.nav-link--active {
+  background: rgba(212, 163, 115, 0.25);
+  border: 1px solid rgba(212, 163, 115, 0.45);
+  color: var(--brown);
+}
+
+.chat-avatar {
+  background: rgba(204, 213, 174, 0.8);
+  color: var(--brown);
+}
+
+.chat-message-text {
+  color: rgba(74, 59, 42, 0.9);
+}
+
+.chat-input {
+  background: rgba(233, 237, 201, 0.6);
+  border: 1px solid rgba(204, 213, 174, 0.9);
+  color: var(--brown);
+}
+
+.chat-input:focus {
+  outline: 2px solid rgba(212, 163, 115, 0.45);
+  border-color: var(--tan);
+}
+
+.chat-attach-button {
+  background: rgba(204, 213, 174, 0.65);
+  border: 1px solid rgba(204, 213, 174, 0.9);
+  color: var(--brown);
+}
+
+.chat-attach-button:hover {
+  background: rgba(204, 213, 174, 0.9);
+}
+
+.chat-send-button {
+  background: var(--tan);
+  color: #fffaf0;
+}
+
+.chat-send-button:hover {
+  background: #c89261;
+}
+
+.chat-divider {
+  border-color: rgba(204, 213, 174, 0.8);
+}
+
+.chat-card {
+  background: rgba(255, 255, 245, 0.7);
+  border: 1px solid rgba(204, 213, 174, 0.6);
+}
+
+.chat-meta {
+  color: rgba(74, 59, 42, 0.6);
+}
+
+.chat-image {
+  border: 1px solid rgba(212, 163, 115, 0.4);
+}
+
+.chat-typing {
+  color: rgba(74, 59, 42, 0.65);
 }

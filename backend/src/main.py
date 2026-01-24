@@ -1,8 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from src.core.database import Base, engine
 from src.api.endpoints.auth import router as auth_router
 from src.api.endpoints.channels import router as channels_router
+from src.api.endpoints.media import router as media_router
 from src.services.websocket_manager import manager
 from src.services.irc_logger import log_privmsg
 from src.models import User, Channel, Message, Membership
@@ -13,6 +15,14 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create database tables
     Base.metadata.create_all(bind=engine)
+
+    # Ensure new columns exist for existing databases
+    with engine.connect() as connection:
+        result = connection.execute(text("PRAGMA table_info(messages)"))
+        columns = {row[1] for row in result}
+        if columns and "image_url" not in columns:
+            connection.execute(text("ALTER TABLE messages ADD COLUMN image_url TEXT"))
+            connection.commit()
     
     # Create default channels on startup
     from src.core.database import SessionLocal
@@ -48,6 +58,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 app.include_router(channels_router)
+app.include_router(media_router)
 
 # Health check endpoint
 @app.get("/health")

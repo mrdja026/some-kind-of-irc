@@ -7,14 +7,14 @@ def create_test_user():
     db = SessionLocal()
     
     # Check if test user already exists
-    existing_user = db.query(User).filter(User.username == 'testuser1').first()
+    existing_user = db.query(User).filter(User.username == 'testuser22').first()
     if existing_user:
         print('Test user already exists')
         return
     
     # Create a new test user
     new_user = User(
-        username='testuser1',
+        username='testuser22',
         password_hash=get_password_hash('pass123')
     )
     
