@@ -75,3 +75,50 @@ The system SHALL have a user interface that mimics the IRC "vibe".
 
 - **WHEN** messages are displayed
 - **THEN** they are primarily text-based with minimal formatting
+
+### Requirement: Server-Side Rendering (SSR) and Incremental Static Regeneration (ISR) - FUTURE ENHANCEMENT
+
+**Status: SKIPPABLE - Out of scope for MVP, but valuable for production performance**
+
+The system COULD implement SSR/ISR to improve initial load performance and SEO.
+
+#### Implementation Approach:
+
+**SSR for Static Content:**
+
+- Pre-render channel lists, user info, and last 10 messages on server
+- Hydrate with React for real-time features
+- Use TanStack Router's SSR capabilities with `createServerFn`
+
+**ISR for Dynamic Content:**
+
+- Statically generate user profiles and channel info
+- Revalidate on changes (new users, channel updates)
+- Cache chat history snapshots
+
+**Hybrid Loading Strategy:**
+
+- SSR renders: channels sidebar, user profiles, last 10 messages
+- Client hydration: WebSocket connections, real-time updates
+- React Query takeover: fetches additional message history as needed
+
+**AI Loading States:**
+
+- Non-AI content (channels, usernames, avatars) renders immediately via SSR
+- Global button blocking during AI provider connection
+- Progressive enhancement as external services become available
+
+#### Benefits:
+
+- Faster initial page loads
+- Better SEO for public channels
+- Improved perceived performance
+- Reduced client-side JavaScript bundle for initial render
+
+#### Implementation Steps:
+
+1. Configure TanStack Router SSR mode
+2. Create server functions for initial data fetching
+3. Implement ISR for user/channel data
+4. Add loading states for external service dependencies
+5. Optimize bundle splitting for AI vs core features

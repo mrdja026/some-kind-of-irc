@@ -29,7 +29,10 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
+    display_name: Optional[str] = None
     status: str
+    profile_picture_url: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
     model_config = {
         "from_attributes": True
@@ -232,3 +235,86 @@ async def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+class UserUpdate(BaseModel):
+    display_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+
+@router.put("/me", response_model=UserResponse)
+async def update_user_profile(
+    user_update: UserUpdate,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if display_name is being changed
+    if user_update.display_name is not None and user_update.display_name != (current_user.display_name or current_user.username):
+        # Validate display_name format
+        if not user_update.display_name.strip():
+            raise HTTPException(status_code=400, detail="Display name cannot be empty")
+        if len(user_update.display_name) > 50:
+            raise HTTPException(status_code=400, detail="Display name must be 50 characters or less")
+
+        # Check uniqueness (case-insensitive)
+        existing_user = db.query(User).filter(
+            User.display_name.ilike(user_update.display_name.strip()),
+            User.id != current_user.id
+        ).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Display name already taken")
+
+        current_user.display_name = user_update.display_name.strip()
+        current_user.display_name_updated_at = datetime.now()
+
+    # Update profile picture URL if provided
+    if user_update.profile_picture_url is not None:
+        current_user.profile_picture_url = user_update.profile_picture_url
+
+    # Update timestamp
+    current_user.updated_at = datetime.now()
+
+    db.commit()
+    db.refresh(current_user)
+
+    # Convert updated_at to ISO string for response
+    user_dict = {
+        "id": current_user.id,
+        "username": current_user.username,
+        "display_name": current_user.display_name,
+        "status": current_user.status,
+        "profile_picture_url": current_user.profile_picture_url,
+        "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None,
+    }
+
+    return user_dict
+
+@router.get("/users/search")
+async def search_users(
+    username: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = 20
+):
+    if not username or len(username.strip()) < 1:
+        return []
+    
+    # Search for users by username or display_name (case-insensitive, partial match)
+    # Exclude current user
+    search_term = username.strip()
+    users = db.query(User).filter(
+        (User.username.ilike(f"%{search_term}%")) |
+        (User.display_name.isnot(None) & User.display_name.ilike(f"%{search_term}%")),
+        User.id != current_user.id
+    ).limit(limit).all()
+    
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "status": user.status,
+            "profile_picture_url": user.profile_picture_url,
+            "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        }
+        for user in users
+    ]

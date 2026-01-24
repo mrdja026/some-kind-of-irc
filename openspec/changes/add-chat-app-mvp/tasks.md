@@ -59,7 +59,7 @@ This project is structured as a monorepo with separate frontend and backend dire
 
 - [x] 6.1 Create channel list component with join functionality
 - [ ] 6.2 Implement /join #channel slash command
-- [ ] 6.3 Implement /nick command to change username
+- [x] 6.3 Implement display names (improved alternative to /nick command)
 - [x] 6.4 Implement /me command for actions
 - [x] 6.5 Implement DM channel creation and display
 - [x] 6.6 Show user names instead of channel IDs for DM channels

@@ -171,6 +171,8 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         "content": new_message.content,
         "image_url": new_message.image_url,
         "sender_id": new_message.sender_id,
+        "username": current_user.username,
+        "display_name": current_user.display_name,
         "channel_id": new_message.channel_id,
         "timestamp": new_message.timestamp.isoformat(),
     }, channel_id)
@@ -188,7 +190,9 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
 async def join_channel(channel_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     membership = db.query(Membership).filter(Membership.user_id == current_user.id, Membership.channel_id == channel_id).first()
     if membership:
-        raise HTTPException(status_code=400, detail="Already a member of this channel")
+        channel = db.query(Channel).filter(Channel.id == channel_id).first()
+        name = channel.name if channel else str(channel_id)
+        return {"message": f"Already a member of channel {name}"}
     new_membership = Membership(user_id=current_user.id, channel_id=channel_id)
     db.add(new_membership)
     db.commit()
@@ -197,6 +201,7 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
         "type": "join",
         "user_id": current_user.id,
         "username": current_user.username,
+        "display_name": current_user.display_name,
         "channel_id": channel_id,
         "channel_name": channel.name,
     }, channel_id)
@@ -215,8 +220,57 @@ async def leave_channel(channel_id: int, current_user: User = Depends(get_curren
         "type": "leave",
         "user_id": current_user.id,
         "username": current_user.username,
+        "display_name": current_user.display_name,
         "channel_id": channel_id,
         "channel_name": channel.name,
     }, channel_id)
     log_part(current_user.id, channel_id, channel.name)
     return {"message": f"Left channel {channel.name}"}
+
+class AddMemberRequest(BaseModel):
+    username: str
+
+@router.post("/{channel_id}/members")
+async def add_member_to_channel(
+    channel_id: int,
+    member_request: AddMemberRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if current user is a member of the channel
+    current_membership = db.query(Membership).filter(
+        Membership.user_id == current_user.id,
+        Membership.channel_id == channel_id
+    ).first()
+    if not current_membership:
+        raise HTTPException(status_code=403, detail="You are not a member of this channel")
+    
+    # Find user by username
+    user_to_add = db.query(User).filter(User.username == member_request.username).first()
+    if not user_to_add:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is already a member
+    existing_membership = db.query(Membership).filter(
+        Membership.user_id == user_to_add.id,
+        Membership.channel_id == channel_id
+    ).first()
+    if existing_membership:
+        raise HTTPException(status_code=400, detail="User is already a member of this channel")
+    
+    # Add user to channel
+    new_membership = Membership(user_id=user_to_add.id, channel_id=channel_id)
+    db.add(new_membership)
+    db.commit()
+    
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    await manager.broadcast({
+        "type": "join",
+        "user_id": user_to_add.id,
+        "username": user_to_add.username,
+        "display_name": user_to_add.display_name,
+        "channel_id": channel_id,
+        "channel_name": channel.name,
+    }, channel_id)
+    log_join(user_to_add.id, channel_id, channel.name)
+    return {"message": f"Added {user_to_add.username} to channel {channel.name}"}

@@ -1,7 +1,10 @@
 export type User = {
   id: number;
   username: string;
+  display_name?: string | null;
   status: 'online' | 'idle' | 'offline';
+  profile_picture_url?: string | null;
+  updated_at?: string | null;
 };
 
 export type Channel = {
@@ -18,6 +21,8 @@ export type Message = {
   timestamp: string;
   client_temp_id?: number;
   image_url?: string | null;
+  username?: string;
+  display_name?: string | null;
 };
 
 export type Membership = {
@@ -41,5 +46,48 @@ export type WebSocketMessage = {
   timestamp?: string;
   user_id?: number;
   username?: string;
+  display_name?: string | null;
   channel_name?: string;
+};
+
+// AI Agent types
+export type AIIntent = 'afford' | 'learn';
+
+export type AIQueryRequest = {
+  intent: AIIntent;
+  query: string;
+};
+
+export type AIQueryResponse = {
+  intent: string;
+  query: string;
+  response: string;
+  agent: string;
+  disclaimer: string;
+};
+
+export type AIStreamEvent =
+  | {
+      type: 'meta';
+      intent: string;
+      query: string;
+      agent: string;
+      disclaimer: string;
+    }
+  | {
+      type: 'delta';
+      text: string;
+    }
+  | {
+      type: 'done';
+    }
+  | {
+      type: 'error';
+      message: string;
+    };
+
+export type AIStatus = {
+  available: boolean;
+  remaining_requests: number;
+  max_requests_per_hour: number;
 };

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query'
 import {
   getCurrentUser,
   getChannels,
@@ -15,10 +15,85 @@ import {
   searchChannels,
 } from '../api'
 import { useChatSocket } from '../hooks/useChatSocket'
+import { useUserProfileInvalidation } from '../hooks/useUserProfileInvalidation'
 import type { Channel, Message, User } from '../types'
-import { Home, LogIn, Menu, MessageSquare, X } from 'lucide-react'
+import {
+  Home,
+  LogIn,
+  Menu,
+  MessageSquare,
+  X,
+  Settings,
+  Sparkles,
+} from 'lucide-react'
+import { AIChannel } from '../components/AIChannel'
 
 export const Route = createFileRoute('/chat')({ component: ChatPage })
+
+// Component for displaying message with avatar
+function MessageAvatar({
+  message,
+  currentUser,
+}: {
+  message: Message
+  currentUser: User | undefined
+}) {
+  const { data: senderUser } = useQuery<User>({
+    queryKey: ['user', message.sender_id],
+    queryFn: () => getUserById(message.sender_id),
+    enabled: message.sender_id !== currentUser?.id,
+  })
+
+  const displayUser =
+    message.sender_id === currentUser?.id ? currentUser : senderUser
+
+  return (
+    <div className="flex gap-3 chat-card p-3 rounded-xl">
+      {displayUser?.profile_picture_url ? (
+        <img
+          src={displayUser.profile_picture_url}
+          alt={displayUser.display_name || displayUser.username}
+          className="w-8 h-8 rounded-full flex-shrink-0 object-cover"
+        />
+      ) : (
+        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+          <span className="text-xs font-semibold">
+            {(displayUser?.display_name ||
+              displayUser?.username)?.[0].toUpperCase() ||
+              `User${message.sender_id}`[0].toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <div className="text-sm font-semibold">
+            {message.sender_id === currentUser?.id
+              ? 'You'
+              : displayUser?.display_name ||
+                displayUser?.username ||
+                `User${message.sender_id}`}
+          </div>
+          <div className="text-xs chat-meta">
+            {new Date(message.timestamp).toLocaleTimeString()}
+          </div>
+        </div>
+        {message.content && (
+          <div className="mt-1 chat-message-text">{message.content}</div>
+        )}
+        {message.image_url && (
+          <div className="mt-2">
+            <img
+              src={message.image_url}
+              alt="Attachment"
+              className="max-w-xs rounded chat-image"
+              loading="lazy"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ChatPage() {
   const navigate = useNavigate()
@@ -33,6 +108,9 @@ function ChatPage() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [isNavOpen, setIsNavOpen] = useState(false)
+  const [channelModes, setChannelModes] = useState<
+    Record<number, 'chat' | 'ai'>
+  >({})
 
   // Get current user
   const {
@@ -66,6 +144,53 @@ function ChatPage() {
     queryFn: getDirectMessages,
   })
 
+  const selectedChannel =
+    channels?.find((c) => c.id === selectedChannelId) || null
+  const defaultMode = selectedChannel?.name === '#ai' ? 'ai' : 'chat'
+  const activeMode = selectedChannelId
+    ? (channelModes[selectedChannelId] ?? defaultMode)
+    : 'chat'
+
+  const setChannelMode = (mode: 'chat' | 'ai') => {
+    if (!selectedChannelId) return
+    setChannelModes((prev) => ({ ...prev, [selectedChannelId]: mode }))
+  }
+
+  const dmUserIds = useMemo(() => {
+    if (!directMessages || !user) return []
+    const ids: number[] = []
+    for (const dmChannel of directMessages) {
+      const match = dmChannel.name.match(/dm-(\d+)-(\d+)/)
+      if (!match) continue
+      const first = parseInt(match[1])
+      const second = parseInt(match[2])
+      const otherId = first === user.id ? second : first
+      if (!Number.isNaN(otherId)) {
+        ids.push(otherId)
+      }
+    }
+    return Array.from(new Set(ids))
+  }, [directMessages, user])
+
+  const dmUserQueries = useQueries({
+    queries: dmUserIds.map((userId) => ({
+      queryKey: ['user', userId],
+      queryFn: () => getUserById(userId),
+      enabled: true,
+    })),
+  })
+
+  const dmUsersById = useMemo(() => {
+    const map = new Map<number, User>()
+    dmUserQueries.forEach((query, index) => {
+      const userId = dmUserIds[index]
+      if (query.data) {
+        map.set(userId, query.data)
+      }
+    })
+    return map
+  }, [dmUserQueries, dmUserIds])
+
   // Get messages for selected channel
   const {
     data: messages,
@@ -95,6 +220,9 @@ function ChatPage() {
       }, 2000)
     }
   }
+
+  // Use the invalidation hook to watch for profile changes
+  useUserProfileInvalidation()
 
   // WebSocket connection
   const {
@@ -314,6 +442,14 @@ function ChatPage() {
             setMessageInput('')
           }
           return
+        case 'ai':
+          setChannelMode('ai')
+          setMessageInput('')
+          return
+        case 'chat':
+          setChannelMode('chat')
+          setMessageInput('')
+          return
         default:
           console.error('Unknown command:', command)
           setMessageInput('')
@@ -435,6 +571,18 @@ function ChatPage() {
             <MessageSquare size={18} />
             <span className="font-medium">Chat</span>
           </Link>
+          <Link
+            to="/settings"
+            onClick={() => setIsNavOpen(false)}
+            className="flex items-center gap-3 p-3 rounded-lg nav-link"
+            activeProps={{
+              className:
+                'flex items-center gap-3 p-3 rounded-lg nav-link nav-link--active',
+            }}
+          >
+            <Settings size={18} />
+            <span className="font-medium">Settings</span>
+          </Link>
         </nav>
       </aside>
       {/* Sidebar */}
@@ -449,13 +597,23 @@ function ChatPage() {
             >
               <Menu size={18} />
             </button>
-            <div className="w-10 h-10 rounded-full flex items-center justify-center chat-avatar">
-              <span className="font-bold">
-                {user?.username[0].toUpperCase()}
-              </span>
-            </div>
+            {user?.profile_picture_url ? (
+              <img
+                src={user.profile_picture_url}
+                alt={user.display_name || user.username}
+                className="w-10 h-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full flex items-center justify-center chat-avatar">
+                <span className="font-bold">
+                  {(user?.display_name || user?.username)?.[0].toUpperCase()}
+                </span>
+              </div>
+            )}
             <div>
-              <div className="font-semibold">{user?.username}</div>
+              <div className="font-semibold">
+                {user?.display_name || user?.username}
+              </div>
               <div className="text-sm chat-meta">Online</div>
             </div>
           </div>
@@ -472,12 +630,15 @@ function ChatPage() {
               <div
                 key={channel.id}
                 onClick={() => handleChannelSelect(channel)}
-                className={`px-3 py-2 rounded cursor-pointer transition-colors chat-channel-item ${
+                className={`px-3 py-2 rounded cursor-pointer transition-colors chat-channel-item flex items-center gap-2 ${
                   selectedChannelId === channel.id
                     ? 'chat-channel-item--active'
                     : ''
                 }`}
               >
+                {channel.name === '#ai' && (
+                  <Sparkles size={14} className="text-amber-600" />
+                )}
                 {channel.name}
               </div>
             ))}
@@ -494,12 +655,7 @@ function ChatPage() {
                 ? parseInt(match[2])
                 : parseInt(match[1])
               : null
-
-            const { data: otherUser } = useQuery<User>({
-              queryKey: ['user', otherUserId],
-              queryFn: () => getUserById(otherUserId!),
-              enabled: !!otherUserId,
-            })
+            const otherUser = otherUserId ? dmUsersById.get(otherUserId) : null
 
             return (
               <div
@@ -511,7 +667,9 @@ function ChatPage() {
                     : ''
                 }`}
               >
-                {otherUser?.username || dmChannel.name}
+                {otherUser?.display_name ||
+                  otherUser?.username ||
+                  dmChannel.name}
               </div>
             )
           })}
@@ -542,145 +700,157 @@ function ChatPage() {
       <div className="flex-1 flex flex-col">
         {selectedChannelId ? (
           <>
-            {/* Channel header */}
+            {/* Channel header with mode toggle */}
             <div className="p-4 border-b chat-header">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full chat-dot"></div>
-                <div className="font-semibold">
-                  {channels?.find((c) => c.id === selectedChannelId)?.name}
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full chat-dot"></div>
+                  <div className="font-semibold">
+                    {selectedChannel?.name || `Channel ${selectedChannelId}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setChannelMode('chat')}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      activeMode === 'chat'
+                        ? 'chat-send-button'
+                        : 'chat-attach-button'
+                    }`}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChannelMode('ai')}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      activeMode === 'ai'
+                        ? 'chat-send-button'
+                        : 'chat-attach-button'
+                    }`}
+                  >
+                    AI
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {messagesLoading ? (
-                <div className="text-center py-8 chat-meta">
-                  Loading messages...
-                </div>
-              ) : messages?.length === 0 ? (
-                <div className="text-center py-8 chat-meta">
-                  No messages yet. Start the conversation!
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {messages?.map((message) => (
-                    <div key={message.id} className="flex gap-3 chat-card p-3 rounded-xl">
+            {activeMode === 'ai' ? (
+              <AIChannel
+                channelId={selectedChannelId}
+                channelName={selectedChannel?.name || '#ai'}
+                showHeader={false}
+                onCommand={(command) => {
+                  if (command === 'chat') {
+                    setChannelMode('chat')
+                  }
+                  if (command === 'ai') {
+                    setChannelMode('ai')
+                  }
+                }}
+              />
+            ) : (
+              <>
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  {messagesLoading ? (
+                    <div className="text-center py-8 chat-meta">
+                      Loading messages...
+                    </div>
+                  ) : messages?.length === 0 ? (
+                    <div className="text-center py-8 chat-meta">
+                      No messages yet. Start the conversation!
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {messages?.map((message) => (
+                        <MessageAvatar
+                          key={message.id}
+                          message={message}
+                          currentUser={user}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Typing indicator */}
+                  {typingUsers.size > 0 && (
+                    <div className="flex items-center gap-3 mt-4">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
                         <span className="text-xs font-semibold">
-                          {/* Show sender's initial */}
-                          {message.sender_id === user?.id
+                          {/* Show first typing user's initial */}
+                          {Array.from(typingUsers)[0] === user?.id
                             ? 'You'
-                            : `User${message.sender_id}`[0].toUpperCase()}
+                            : `User${Array.from(typingUsers)[0]}`[0].toUpperCase()}
                         </span>
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="text-sm font-semibold">
-                            {message.sender_id === user?.id
-                              ? 'You'
-                              : `User${message.sender_id}`}
-                          </div>
-                          <div className="text-xs chat-meta">
-                            {new Date(message.timestamp).toLocaleTimeString()}
-                          </div>
+                      <div className="flex items-center gap-1">
+                        <div className="text-sm chat-typing">
+                          {Array.from(typingUsers)
+                            .map((userId) =>
+                              userId === user?.id ? 'You' : `User${userId}`,
+                            )
+                            .join(', ')}{' '}
+                          is typing...
                         </div>
-                        {message.content && (
-                          <div className="mt-1 chat-message-text">
-                            {message.content}
-                          </div>
-                        )}
-                        {message.image_url && (
-                          <div className="mt-2">
-                            <img
-                              src={message.image_url}
-                              alt="Attachment"
-                              className="max-w-xs rounded chat-image"
-                              loading="lazy"
-                            />
-                          </div>
-                        )}
+                        <div className="flex gap-1">
+                          <div className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"></div>
+                          <div
+                            className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
+                            style={{ animationDelay: '0.1s' }}
+                          ></div>
+                          <div
+                            className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
+                            style={{ animationDelay: '0.2s' }}
+                          ></div>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
 
-              {/* Typing indicator */}
-              {typingUsers.size > 0 && (
-                <div className="flex items-center gap-3 mt-4">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
-                    <span className="text-xs font-semibold">
-                      {/* Show first typing user's initial */}
-                      {Array.from(typingUsers)[0] === user?.id
-                        ? 'You'
-                        : `User${Array.from(typingUsers)[0]}`[0].toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="text-sm chat-typing">
-                      {Array.from(typingUsers)
-                        .map((userId) =>
-                          userId === user?.id ? 'You' : `User${userId}`,
-                        )
-                        .join(', ')}{' '}
-                      is typing...
+                {/* Message input */}
+                <div className="p-4 border-t chat-input-bar">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  <form onSubmit={handleSubmit} className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAttachmentClick}
+                      disabled={!selectedChannelId || isUploading}
+                      className="px-3 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60"
+                    >
+                      Attach
+                    </button>
+                    <input
+                      type="text"
+                      value={messageInput}
+                      onChange={handleInputChange}
+                      placeholder="Type your message..."
+                      className="flex-1 px-4 py-2 rounded-lg transition-all chat-input"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!messageInput.trim() || !selectedChannelId}
+                      className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60"
+                    >
+                      Send
+                    </button>
+                  </form>
+                  {(isUploading || uploadError) && (
+                    <div className="mt-2 text-sm chat-meta">
+                      {isUploading ? 'Uploading image...' : uploadError}
                     </div>
-                    <div className="flex gap-1">
-                      <div className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"></div>
-                      <div
-                        className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
-                        style={{ animationDelay: '0.1s' }}
-                      ></div>
-                      <div
-                        className="w-2 h-2 rounded-full bg-amber-700/50 animate-bounce"
-                        style={{ animationDelay: '0.2s' }}
-                      ></div>
-                    </div>
-                  </div>
+                  )}
                 </div>
-              )}
-            </div>
-
-            {/* Message input */}
-            <div className="p-4 border-t chat-input-bar">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <form onSubmit={handleSubmit} className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleAttachmentClick}
-                  disabled={!selectedChannelId || isUploading}
-                  className="px-3 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60"
-                >
-                  Attach
-                </button>
-                <input
-                  type="text"
-                  value={messageInput}
-                  onChange={handleInputChange}
-                  placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 rounded-lg transition-all chat-input"
-                />
-                <button
-                  type="submit"
-                  disabled={!messageInput.trim() || !selectedChannelId}
-                  className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60"
-                >
-                  Send
-                </button>
-              </form>
-              {(isUploading || uploadError) && (
-                <div className="mt-2 text-sm chat-meta">
-                  {isUploading ? 'Uploading image...' : uploadError}
-                </div>
-              )}
-            </div>
+              </>
+            )}
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center chat-meta">
