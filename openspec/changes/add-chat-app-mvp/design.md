@@ -89,6 +89,17 @@ irc/
 - Deploy backend and static files
 - Run integration tests
 
+### 6. IRC-Like State Management (Current Gap)
+
+- Current state tracking (nick, current channel, presence) is held in-memory only.
+- This is fragile: restarts drop state, multi-worker deployments lose consistency, and horizontal scaling breaks state visibility.
+
+#### Proposed Direction
+
+- Move ephemeral session state to a shared store (Redis recommended).
+- Persist durable identity (nick) in the database, while channel presence and typing stay in Redis.
+- Keep the REST API as the source of truth for persistence; Redis only augments real-time session state.
+
 ## Risks / Trade-offs
 
 1. **Complexity**: Monorepo introduces additional complexity in build and deploy processes

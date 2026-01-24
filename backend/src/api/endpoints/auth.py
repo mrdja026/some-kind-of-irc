@@ -13,6 +13,7 @@ from src.core.database import get_db
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.membership import Membership
+from src.services.irc_logger import log_join, log_nick_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -57,7 +58,7 @@ def verify_password(plain_password, hashed_password):
 
 def get_password_hash(password):
     # Truncate password to 72 bytes to avoid bcrypt's limit
-    # bcrypt has a maximum password length of 72 bytes
+    # bcrypt has a maximum password length of 72 bytes //find solution that works wittout 72 byte restruiction
     try:
         password_bytes = password.encode('utf-8')
         if len(password_bytes) > 72:
@@ -71,11 +72,21 @@ def get_user(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
 
 def authenticate_user(db: Session, username: str, password: str):
+    print(f"Getting user from DB: {username}")
     user = get_user(db, username)
+    print(f"User found: {user}")
+    
     if not user:
+        print("User not found")
         return False
-    if not verify_password(password, user.password_hash):
+        
+    print(f"Verifying password hash: {user.password_hash}")
+    password_match = verify_password(password, user.password_hash)
+    print(f"Password match: {password_match}")
+    
+    if not password_match:
         return False
+        
     return user
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -157,11 +168,18 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
         samesite="lax",
         max_age=int(access_token_expires.total_seconds()),
     )
+    log_nick_user(new_user.id, new_user.username)
+    log_join(new_user.id, general_channel.id, general_channel.name)
     return {"message": "Registration successful"}
 
 @router.post("/login")
 async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = authenticate_user(db, form_data.username, form_data.password)
+    print(f"Login attempt with username: {form_data.username}")
+    try:
+        user = authenticate_user(db, form_data.username, form_data.password)
+    except Exception as e:
+        print(f"Error authenticating user: {e}")
+        raise
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -200,6 +218,8 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
         samesite="lax",
         max_age=int(access_token_expires.total_seconds()),
     )
+    log_nick_user(user.id, user.username)
+    log_join(user.id, general_channel.id, general_channel.name)
     return {"message": "Login successful"}
 
 @router.get("/me", response_model=UserResponse)

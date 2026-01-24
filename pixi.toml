@@ -1,0 +1,26 @@
+[workspace]
+name = "irc-fullstack"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64", "win-64"]
+
+[dependencies]
+python = "3.12.*"
+nodejs = "22.*"
+pnpm = "*"
+
+[pypi-dependencies]
+fastapi = "*"
+uvicorn = { version = "*", extras = ["standard"] }
+sqlalchemy = "*"
+python-jose = { version = "*", extras = ["cryptography"] }
+passlib = { version = "*", extras = ["bcrypt"] }
+pydantic = "*"
+pydantic-settings = "*"
+python-multipart = "*"
+
+[tasks]
+install-backend = { cmd = "backend/be/Scripts/python -m pip install -r backend/requirements.txt" }
+install-frontend = { cmd = "pnpm install", cwd = "frontend" }
+setup = { depends-on = ["install-backend", "install-frontend"] }
+api = { cmd = "../backend/be/Scripts/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8002", cwd = "backend" }
+ui = { cmd = "pnpm dev", cwd = "frontend" }

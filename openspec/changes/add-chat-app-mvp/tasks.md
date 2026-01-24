@@ -36,6 +36,10 @@ This project is structured as a monorepo with separate frontend and backend dire
 - [ ] 3.3 Set up development deployment
 - [ ] 3.4 Perform final QA and bug fixes
 
+## 3.5 State Management Reliability
+
+- [ ] 3.5.1 Replace in-memory IRC-like session state with shared store (Redis) and persist durable identity in DB
+
 ## 4. Frontend Shell
 
 - [x] 4.1 Scaffold React app using TanStack Start (Vite under the hood)
@@ -48,15 +52,15 @@ This project is structured as a monorepo with separate frontend and backend dire
 
 - [x] 5.1 Create custom useChatSocket hook to connect to FastAPI WebSocket
 - [x] 5.2 Implement cache syncing: update TanStack Query cache with WebSocket messages
-- [ ] 5.3 Add optimistic UI updates for messages
-- [ ] 5.4 Implement typing indicators
+- [x] 5.3 Add optimistic UI updates for messages
+- [x] 5.4 Implement typing indicators
 
 ## 6. IRC Structure Features (Frontend)
 
 - [x] 6.1 Create channel list component with join functionality
 - [ ] 6.2 Implement /join #channel slash command
 - [ ] 6.3 Implement /nick command to change username
-- [ ] 6.4 Implement /me command for actions
+- [x] 6.4 Implement /me command for actions
 - [x] 6.5 Implement DM channel creation and display
 - [x] 6.6 Show user names instead of channel IDs for DM channels
 

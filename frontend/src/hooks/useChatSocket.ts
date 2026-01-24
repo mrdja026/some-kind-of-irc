@@ -1,15 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { WebSocketMessage } from '../types';
+import type { Message, WebSocketMessage } from '../types';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8002';
 
 export const useChatSocket = (clientId: number, token: string, onTyping?: (channelId: number, userId: number) => void) => {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
+  const queryClientRef = useRef(queryClient);
+  const onTypingRef = useRef<typeof onTyping>(onTyping);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    queryClientRef.current = queryClient;
+    onTypingRef.current = onTyping;
+  }, [onTyping, queryClient]);
+
+  useEffect(() => {
+    if (!clientId) {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setIsConnected(false);
+      return;
+    }
+
     const socket = new WebSocket(`${WS_BASE_URL}/ws/${clientId}`);
     wsRef.current = socket;
 
@@ -41,9 +57,14 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
         case 'message':
           if (message.channel_id) {
             // Update TanStack Query cache for messages
-            queryClient.setQueryData(
+            queryClientRef.current.setQueryData(
               ['messages', message.channel_id],
-              (oldData: any[] = []) => [...oldData, message]
+              (oldData: Message[] = []) => {
+                if (message.id && oldData.some((item) => item.id === message.id)) {
+                  return oldData;
+                }
+                return [...oldData, message];
+              }
             );
           }
           break;
@@ -51,13 +72,18 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
         case 'leave':
           if (message.channel_id) {
             // Invalidate channel data to update user list
-            queryClient.invalidateQueries({ queryKey: ['channels'] });
+            queryClientRef.current.invalidateQueries({ queryKey: ['channels'] });
           }
           break;
         case 'typing':
           // Handle typing indicator
-          if (onTyping && message.channel_id !== undefined && message.user_id !== undefined && message.user_id !== clientId) {
-            onTyping(message.channel_id, message.user_id);
+          if (
+            onTypingRef.current &&
+            message.channel_id !== undefined &&
+            message.user_id !== undefined &&
+            message.user_id !== clientId
+          ) {
+            onTypingRef.current(message.channel_id, message.user_id);
           }
           break;
         default:
@@ -68,7 +94,7 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
     return () => {
       socket.close();
     };
-  }, [clientId, queryClient, onTyping]);
+  }, [clientId]);
 
   const sendMessage = (message: WebSocketMessage) => {
     if (wsRef.current && isConnected) {

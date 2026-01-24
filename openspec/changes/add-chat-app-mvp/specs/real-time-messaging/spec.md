@@ -1,20 +1,5 @@
 ## ADDED Requirements
 
-### Requirement: WebSocket Connection
-
-The system SHALL provide a WebSocket endpoint for real-time communication.
-
-#### Scenario: Successful connection
-
-- **WHEN** a user connects to the WebSocket endpoint at /ws/{client_id}
-- **THEN** the system accepts the connection
-- **AND** registers the client for message broadcasting
-
-#### Scenario: Connection failure
-
-- **WHEN** a user attempts to connect with an invalid client_id or token
-- **THEN** the system rejects the connection
-
 ### Requirement: Real-Time Message Broadcasting
 
 The system SHALL broadcast messages to all connected clients in the same channel.
@@ -30,23 +15,6 @@ The system SHALL broadcast messages to all connected clients in the same channel
 - **WHEN** a user sends a direct message to another user
 - **THEN** the system sends the message only to the intended recipient
 
-### Requirement: Optimistic UI Updates
-
-The system SHALL display messages immediately on the sender's UI before confirmation.
-
-#### Scenario: Optimistic message display
-
-- **WHEN** a user sends a message
-- **THEN** the message appears in the chat UI immediately (optimistically)
-- **AND** the system sends the message to the server
-- **AND** updates the UI with the confirmed message data
-
-#### Scenario: Message sending failure
-
-- **WHEN** a message fails to send
-- **THEN** the system removes the optimistic message from the UI
-- **AND** displays an error to the user
-
 ### Requirement: Typing Indicators
 
 The system SHALL display typing indicators when a user is typing.
@@ -61,3 +29,43 @@ The system SHALL display typing indicators when a user is typing.
 
 - **WHEN** a user stops typing for a specified period
 - **THEN** the system removes the typing indicator from the chat UI
+
+## MODIFIED Requirements
+
+### Requirement: WebSocket Connection
+
+The system SHALL provide a WebSocket endpoint for real-time communication.
+
+#### Scenario: Successful connection
+
+- **WHEN** a user connects to the WebSocket endpoint at /ws/{client_id}
+- **THEN** the system accepts the connection
+- **AND** registers the client for message broadcasting
+
+#### Scenario: Connection deferred until user is known
+
+- **WHEN** the client has not loaded the authenticated user identity
+- **THEN** the system defers initiating the WebSocket connection
+
+### Requirement: Optimistic UI Updates
+
+The system SHALL display messages immediately on the sender's UI before confirmation.
+
+#### Scenario: Optimistic message display
+
+- **WHEN** a user sends a message
+- **THEN** the message appears in the chat UI immediately (optimistically)
+- **AND** the system sends the message to the server
+- **AND** updates the UI with the confirmed message data
+
+#### Scenario: Optimistic message deduplicated
+
+- **WHEN** the server broadcasts a message that matches an optimistic entry
+- **THEN** the system replaces the optimistic entry with the persisted message
+- **AND** avoids rendering duplicate message entries
+
+#### Scenario: Message sending failure
+
+- **WHEN** a message fails to send
+- **THEN** the system removes the optimistic message from the UI
+- **AND** displays an error to the user

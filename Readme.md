@@ -72,7 +72,7 @@ This IRC chat application provides a familiar IRC-like experience with modern fe
    ```bash
    python -m src.main
    ```
-   The backend will run on `http://localhost:8000` with WebSocket support at `ws://localhost:8000`.
+   The backend will run on `http://localhost:8002` with WebSocket support at `ws://localhost:8002`.
 
 ### 2. Frontend Setup
 
@@ -100,5 +100,5 @@ This IRC chat application provides a familiar IRC-like experience with modern fe
 
 ### Troubleshooting Tips
 
-- If the WebSocket connection fails, ensure the backend server is running and check the frontend’s `VITE_WS_URL` environment variable (default: `ws://localhost:8000`).
+- If the WebSocket connection fails, ensure the backend server is running and check the frontend’s `VITE_WS_URL` environment variable (default: `ws://localhost:8002`).
 - If the test user creation fails, check the backend’s `src/core/database.py` for connection issues.

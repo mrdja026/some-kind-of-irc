@@ -189,6 +189,7 @@ function ChatPage() {
             // Create optimistic message for /me command
             const optimisticMessage: Message = {
               id: Date.now(), // Temporary ID
+              client_temp_id: Date.now(),
               content: `/me ${action}`,
               sender_id: user!.id,
               channel_id: selectedChannelId,
@@ -197,7 +198,7 @@ function ChatPage() {
             // Optimistically update the cache
             queryClient.setQueryData(
               ['messages', selectedChannelId],
-              (oldData: any[] = []) => [...oldData, optimisticMessage],
+              (oldData: Message[] = []) => [...oldData, optimisticMessage],
             )
             // Send the message to the server
             try {
@@ -205,20 +206,29 @@ function ChatPage() {
                 selectedChannelId,
                 `/me ${action}`,
               )
-              // Replace the optimistic message with the actual one
+              // Replace or append, while removing the optimistic message
               queryClient.setQueryData(
                 ['messages', selectedChannelId],
-                (oldData: any[] = []) =>
-                  oldData.map((msg) =>
-                    msg.id === optimisticMessage.id ? actualMessage : msg,
-                  ),
+                (oldData: Message[] = []) => {
+                  const withoutOptimistic = oldData.filter(
+                    (msg) =>
+                      msg.client_temp_id !== optimisticMessage.client_temp_id,
+                  )
+                  if (withoutOptimistic.some((msg) => msg.id === actualMessage.id)) {
+                    return withoutOptimistic
+                  }
+                  return [...withoutOptimistic, actualMessage]
+                },
               )
             } catch (error) {
               // Remove the optimistic message if there's an error
               queryClient.setQueryData(
                 ['messages', selectedChannelId],
-                (oldData: any[] = []) =>
-                  oldData.filter((msg) => msg.id !== optimisticMessage.id),
+                (oldData: Message[] = []) =>
+                  oldData.filter(
+                    (msg) =>
+                      msg.client_temp_id !== optimisticMessage.client_temp_id,
+                  ),
               )
               console.error('Failed to send message:', error)
             }
@@ -235,6 +245,7 @@ function ChatPage() {
     // Regular message with optimistic UI
     const optimisticMessage: Message = {
       id: Date.now(), // Temporary ID
+      client_temp_id: Date.now(),
       content: trimmedInput,
       sender_id: user!.id,
       channel_id: selectedChannelId,
@@ -243,25 +254,32 @@ function ChatPage() {
     // Optimistically update the cache
     queryClient.setQueryData(
       ['messages', selectedChannelId],
-      (oldData: any[] = []) => [...oldData, optimisticMessage],
+      (oldData: Message[] = []) => [...oldData, optimisticMessage],
     )
     // Send the message to the server
     try {
       const actualMessage = await sendMessage(selectedChannelId, trimmedInput)
-      // Replace the optimistic message with the actual one
+      // Replace or append, while removing the optimistic message
       queryClient.setQueryData(
         ['messages', selectedChannelId],
-        (oldData: any[] = []) =>
-          oldData.map((msg) =>
-            msg.id === optimisticMessage.id ? actualMessage : msg,
-          ),
+        (oldData: Message[] = []) => {
+          const withoutOptimistic = oldData.filter(
+            (msg) => msg.client_temp_id !== optimisticMessage.client_temp_id,
+          )
+          if (withoutOptimistic.some((msg) => msg.id === actualMessage.id)) {
+            return withoutOptimistic
+          }
+          return [...withoutOptimistic, actualMessage]
+        },
       )
     } catch (error) {
       // Remove the optimistic message if there's an error
       queryClient.setQueryData(
         ['messages', selectedChannelId],
-        (oldData: any[] = []) =>
-          oldData.filter((msg) => msg.id !== optimisticMessage.id),
+        (oldData: Message[] = []) =>
+          oldData.filter(
+            (msg) => msg.client_temp_id !== optimisticMessage.client_temp_id,
+          ),
       )
       console.error('Failed to send message:', error)
     }

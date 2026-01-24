@@ -29,15 +29,15 @@ pip install -r requirements.txt
 # source venv/bin/activate (macOS/Linux)
 
 # Run the development server
-PYTHONPATH=. python -m src.main --host 0.0.0.0 --port 8000
+PYTHONPATH=. python -m src.main --host 0.0.0.0 --port 8002
 ```
 
 ## API Documentation
 
 Once the server is running, you can access the API documentation:
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger UI: http://localhost:8002/docs
+- ReDoc: http://localhost:8002/redoc
 
 ## Database Setup
 

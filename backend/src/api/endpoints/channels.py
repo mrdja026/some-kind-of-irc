@@ -10,6 +10,7 @@ from src.models.message import Message
 from src.models.membership import Membership
 from src.api.endpoints.auth import get_current_user
 from src.services.websocket_manager import manager
+from src.services.irc_logger import log_join, log_part, log_privmsg
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -70,6 +71,7 @@ async def create_channel(channel: ChannelCreate, current_user: User = Depends(ge
         except:
             pass
     db.commit()
+    log_join(current_user.id, new_channel.id, new_channel.name)
     return new_channel
 
 @router.get("/", response_model=List[ChannelResponse])
@@ -149,6 +151,7 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
     membership = db.query(Membership).filter(Membership.user_id == current_user.id, Membership.channel_id == channel_id).first()
     if not membership:
         raise HTTPException(status_code=403, detail="You are not a member of this channel")
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
     new_message = Message(content=message.content, sender_id=current_user.id, channel_id=channel_id)
     db.add(new_message)
     db.commit()
@@ -162,6 +165,7 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         "channel_id": new_message.channel_id,
         "timestamp": new_message.timestamp.isoformat(),
     }, channel_id)
+    log_privmsg(current_user.id, channel_id, message.content, channel.name if channel else None)
     return MessageResponse(
         id=new_message.id,
         content=new_message.content,
@@ -186,6 +190,7 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
         "channel_id": channel_id,
         "channel_name": channel.name,
     }, channel_id)
+    log_join(current_user.id, channel_id, channel.name)
     return {"message": f"Joined channel {channel.name}"}
 
 @router.post("/{channel_id}/leave")
@@ -203,4 +208,5 @@ async def leave_channel(channel_id: int, current_user: User = Depends(get_curren
         "channel_id": channel_id,
         "channel_name": channel.name,
     }, channel_id)
+    log_part(current_user.id, channel_id, channel.name)
     return {"message": f"Left channel {channel.name}"}

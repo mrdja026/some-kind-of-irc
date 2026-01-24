@@ -2,6 +2,8 @@ from fastapi.websockets import WebSocket
 from typing import Dict, Set
 from src.core.database import get_db
 from src.models.membership import Membership
+from src.models.user import User
+from src.services.irc_logger import state_store
 
 class ConnectionManager:
     def __init__(self):
@@ -14,6 +16,9 @@ class ConnectionManager:
         self.client_channels[client_id] = set()
         # Load existing channel memberships for the client
         db = next(get_db())
+        user = db.query(User).filter(User.id == client_id).first()
+        if user:
+            state_store.set_nick(client_id, user.username)
         memberships = db.query(Membership).filter(Membership.user_id == client_id).all()
         for membership in memberships:
             self.client_channels[client_id].add(int(membership.channel_id))

@@ -16,6 +16,7 @@ export type Message = {
   sender_id: number;
   channel_id: number;
   timestamp: string;
+  client_temp_id?: number;
 };
 
 export type Membership = {

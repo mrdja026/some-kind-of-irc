@@ -1,6 +1,6 @@
 import type { User, Channel, Message, AuthResponse } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8002';
 
 // Auth APIs
 export const login = async (username: string, password: string): Promise<void> => {
