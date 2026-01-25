@@ -16,13 +16,14 @@ export type Channel = {
 export type Message = {
   id: number;
   content: string;
-  sender_id: number;
+  sender_id: number | null;
   channel_id: number;
   timestamp: string;
   client_temp_id?: number;
   image_url?: string | null;
   username?: string;
   display_name?: string | null;
+  target_user_id?: number | null;
 };
 
 export type Membership = {
@@ -41,13 +42,14 @@ export type WebSocketMessage = {
   id?: number;
   content?: string;
   image_url?: string | null;
-  sender_id?: number;
+  sender_id?: number | null;
   channel_id?: number;
   timestamp?: string;
   user_id?: number;
   username?: string;
   display_name?: string | null;
   channel_name?: string;
+  target_user_id?: number | null;
 };
 
 // AI Agent types

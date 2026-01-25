@@ -25,6 +25,9 @@ async def lifespan(app: FastAPI):
         if columns and "image_url" not in columns:
             connection.execute(text("ALTER TABLE messages ADD COLUMN image_url TEXT"))
             connection.commit()
+        if columns and "target_user_id" not in columns:
+            connection.execute(text("ALTER TABLE messages ADD COLUMN target_user_id INTEGER"))
+            connection.commit()
         
         # Check users table
         result = connection.execute(text("PRAGMA table_info(users)"))

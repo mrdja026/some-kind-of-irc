@@ -53,7 +53,6 @@ function SettingsPage() {
   // Channel creation state
   const [channelName, setChannelName] = useState('')
   const [channelType, setChannelType] = useState<'public' | 'private'>('public')
-  const [isCreatingChannel, setIsCreatingChannel] = useState(false)
   const [channelError, setChannelError] = useState<string | null>(null)
 
   // Add user to channel state
@@ -244,20 +243,13 @@ function SettingsPage() {
     e.preventDefault()
     if (!channelName.trim()) return
 
-    setIsCreatingChannel(true)
     setChannelError(null)
 
-    try {
-      const name =
-        channelType === 'public' && !channelName.startsWith('#')
-          ? `#${channelName.trim()}`
-          : channelName.trim()
-      channelCreateMutation.mutate({ name, type: channelType })
-    } catch (error) {
-      // Error handled by mutation
-    } finally {
-      setIsCreatingChannel(false)
-    }
+    const name =
+      channelType === 'public' && !channelName.startsWith('#')
+        ? `#${channelName.trim()}`
+        : channelName.trim()
+    channelCreateMutation.mutate({ name, type: channelType })
   }
 
   const handleAddUserToChannel = async (username: string) => {
@@ -486,11 +478,11 @@ function SettingsPage() {
 
             <button
               type="submit"
-              disabled={isCreatingChannel || !channelName.trim()}
+              disabled={channelCreateMutation.isPending || !channelName.trim()}
               className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60"
             >
               <Plus size={18} />
-              {isCreatingChannel ? 'Creating...' : 'Create Channel'}
+              {channelCreateMutation.isPending ? 'Creating...' : 'Create Channel'}
             </button>
           </form>
         </div>

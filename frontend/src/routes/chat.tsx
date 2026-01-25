@@ -13,6 +13,7 @@ import {
   createDirectMessageChannel,
   getUserById,
   searchChannels,
+  createChannel,
 } from '../api'
 import { useChatSocket } from '../hooks/useChatSocket'
 import { useUserProfileInvalidation } from '../hooks/useUserProfileInvalidation'
@@ -25,8 +26,12 @@ import {
   X,
   Settings,
   Sparkles,
+  Plus,
 } from 'lucide-react'
 import { AIChannel } from '../components/AIChannel'
+import { MentionAutocomplete } from '../components/MentionAutocomplete'
+import { UserProfileModal } from '../components/UserProfileModal'
+import { UserContextMenu } from '../components/UserContextMenu'
 
 export const Route = createFileRoute('/chat')({ component: ChatPage })
 
@@ -34,18 +39,59 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 function MessageAvatar({
   message,
   currentUser,
+  onUserClick,
 }: {
   message: Message
   currentUser: User | undefined
+  onUserClick?: (user: User, event: React.MouseEvent) => void
 }) {
+  const isSystemMessage =
+    message.sender_id === null || message.sender_id === undefined
   const { data: senderUser } = useQuery<User>({
     queryKey: ['user', message.sender_id],
-    queryFn: () => getUserById(message.sender_id),
-    enabled: message.sender_id !== currentUser?.id,
+    queryFn: () => getUserById(message.sender_id!),
+    enabled:
+      !isSystemMessage &&
+      message.sender_id !== currentUser?.id &&
+      message.sender_id !== null,
   })
 
   const displayUser =
     message.sender_id === currentUser?.id ? currentUser : senderUser
+
+  // System message styling
+  if (isSystemMessage) {
+    return (
+      <div className="flex gap-3 chat-card p-3 rounded-xl opacity-75">
+        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+          <span className="text-xs font-semibold">S</span>
+        </div>
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold italic">System</div>
+            <div className="text-xs chat-meta">
+              {new Date(message.timestamp).toLocaleTimeString()}
+            </div>
+          </div>
+          {message.content && (
+            <div className="mt-1 chat-message-text italic">
+              {message.content}
+            </div>
+          )}
+          {message.image_url && (
+            <div className="mt-2">
+              <img
+                src={message.image_url}
+                alt="Attachment"
+                className="max-w-xs rounded chat-image"
+                loading="lazy"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex gap-3 chat-card p-3 rounded-xl">
@@ -66,7 +112,17 @@ function MessageAvatar({
       )}
       <div className="flex-1">
         <div className="flex items-center gap-2">
-          <div className="text-sm font-semibold">
+          <div
+            className={`text-sm font-semibold ${displayUser && message.sender_id !== currentUser?.id ? 'cursor-pointer hover:underline' : ''}`}
+            onClick={
+              displayUser && message.sender_id !== currentUser?.id
+                ? (e) => {
+                    e.stopPropagation()
+                    onUserClick?.(displayUser, e)
+                  }
+                : undefined
+            }
+          >
             {message.sender_id === currentUser?.id
               ? 'You'
               : displayUser?.display_name ||
@@ -107,10 +163,25 @@ function ChatPage() {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const messageInputRef = useRef<HTMLInputElement | null>(null)
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [channelModes, setChannelModes] = useState<
     Record<number, 'chat' | 'ai'>
   >({})
+  const [showCreateChannel, setShowCreateChannel] = useState(false)
+  const [newChannelName, setNewChannelName] = useState('')
+  const [newChannelType, setNewChannelType] = useState<'public' | 'private'>(
+    'public',
+  )
+  const [channelCreateError, setChannelCreateError] = useState<string | null>(
+    null,
+  )
+  const [isCreatingChannel, setIsCreatingChannel] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{
+    user: User
+    position: { x: number; y: number }
+  } | null>(null)
+  const [profileUser, setProfileUser] = useState<User | null>(null)
 
   // Get current user
   const {
@@ -191,6 +262,17 @@ function ChatPage() {
     return map
   }, [dmUserQueries, dmUserIds])
 
+  const selectedChannelOtherUser = useMemo(() => {
+    if (!selectedChannel || selectedChannel.type !== 'private' || !user)
+      return null
+    const match = selectedChannel.name.match(/dm-(\d+)-(\d+)/)
+    if (!match) return null
+    const id1 = parseInt(match[1])
+    const id2 = parseInt(match[2])
+    const otherId = id1 === user.id ? id2 : id1
+    return dmUsersById.get(otherId) || null
+  }, [selectedChannel, user, dmUsersById])
+
   // Get messages for selected channel
   const {
     data: messages,
@@ -265,6 +347,71 @@ function ChatPage() {
       setSelectedChannelId(channel.id)
     } catch (error) {
       console.error('Failed to create DM channel:', error)
+    }
+  }
+
+  // Handle channel creation
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newChannelName.trim()) return
+
+    setIsCreatingChannel(true)
+    setChannelCreateError(null)
+
+    try {
+      const name =
+        newChannelType === 'public' && !newChannelName.startsWith('#')
+          ? `#${newChannelName.trim()}`
+          : newChannelName.trim()
+      const channel = await createChannel(name, newChannelType)
+      setNewChannelName('')
+      setNewChannelType('public')
+      setShowCreateChannel(false)
+      await refetchChannels()
+      setSelectedChannelId(channel.id)
+      // Auto-join the channel
+      try {
+        await joinChannel(channel.id)
+      } catch (error) {
+        console.error('Failed to join channel:', error)
+      }
+    } catch (error) {
+      setChannelCreateError(
+        error instanceof Error ? error.message : 'Failed to create channel',
+      )
+    } finally {
+      setIsCreatingChannel(false)
+    }
+  }
+
+  const handleUserClick = (user: User, event: React.MouseEvent) => {
+    event.preventDefault()
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    setContextMenu({
+      user,
+      position: { x: rect.left, y: rect.bottom },
+    })
+  }
+
+  const handleContextMenuClose = () => setContextMenu(null)
+
+  const handleProfile = () => {
+    if (contextMenu) {
+      setProfileUser(contextMenu.user)
+      setContextMenu(null)
+    }
+  }
+
+  const handleMessage = async () => {
+    if (contextMenu) {
+      try {
+        const channel = await createDirectMessageChannel(contextMenu.user.id)
+        setSelectedChannelId(channel.id)
+        await refetchDirectMessages()
+      } catch (error) {
+        console.error('Failed to create DM:', error)
+      }
+      setContextMenu(null)
     }
   }
 
@@ -512,7 +659,10 @@ function ChatPage() {
   }
 
   return (
-    <div className="min-h-screen flex chat-shell">
+    <div
+      className="min-h-screen flex chat-shell"
+      onClick={handleContextMenuClose}
+    >
       {isNavOpen && (
         <div
           className="fixed inset-0 bg-black/20 z-40"
@@ -621,9 +771,75 @@ function ChatPage() {
 
         {/* Channels list */}
         <div className="flex-1 overflow-y-auto p-2">
-          <div className="text-xs uppercase tracking-wider font-semibold px-3 py-2 chat-meta">
-            Channels
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="text-xs uppercase tracking-wider font-semibold chat-meta">
+              Channels
+            </div>
+            <button
+              onClick={() => setShowCreateChannel(true)}
+              className="p-1 rounded transition-colors chat-menu-button hover:opacity-80"
+              aria-label="Create channel"
+              title="Create channel"
+            >
+              <Plus size={16} />
+            </button>
           </div>
+
+          {/* Create Channel Form */}
+          {showCreateChannel && (
+            <div className="px-3 py-2 mb-2 border rounded-lg chat-divider">
+              <form onSubmit={handleCreateChannel} className="space-y-2">
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  placeholder={
+                    newChannelType === 'public'
+                      ? '#channel-name'
+                      : 'Channel name'
+                  }
+                  className="w-full px-3 py-1 rounded text-sm chat-input"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <select
+                    value={newChannelType}
+                    onChange={(e) =>
+                      setNewChannelType(e.target.value as 'public' | 'private')
+                    }
+                    className="flex-1 px-2 py-1 rounded text-sm chat-input"
+                  >
+                    <option value="public">Public</option>
+                    <option value="private">Private</option>
+                  </select>
+                  <button
+                    type="submit"
+                    disabled={!newChannelName.trim() || isCreatingChannel}
+                    className="px-3 py-1 text-sm font-semibold rounded transition-colors chat-send-button disabled:opacity-60"
+                  >
+                    {isCreatingChannel ? '...' : 'Create'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCreateChannel(false)
+                      setNewChannelName('')
+                      setNewChannelType('public')
+                      setChannelCreateError(null)
+                    }}
+                    className="px-2 py-1 text-sm rounded transition-colors chat-menu-button"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                {channelCreateError && (
+                  <div className="text-xs text-red-600">
+                    {channelCreateError}
+                  </div>
+                )}
+              </form>
+            </div>
+          )}
           {channels
             ?.filter((ch) => ch.type === 'public')
             .map((channel) => (
@@ -706,7 +922,10 @@ function ChatPage() {
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full chat-dot"></div>
                   <div className="font-semibold">
-                    {selectedChannel?.name || `Channel ${selectedChannelId}`}
+                    {selectedChannel?.type === 'private' &&
+                    selectedChannelOtherUser
+                      ? `DM-${selectedChannelOtherUser.display_name || selectedChannelOtherUser.username}`
+                      : selectedChannel?.name || `Channel ${selectedChannelId}`}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -769,6 +988,7 @@ function ChatPage() {
                           key={message.id}
                           message={message}
                           currentUser={user}
+                          onUserClick={handleUserClick}
                         />
                       ))}
                     </div>
@@ -819,7 +1039,7 @@ function ChatPage() {
                     onChange={handleFileChange}
                     className="hidden"
                   />
-                  <form onSubmit={handleSubmit} className="flex gap-2">
+                  <form onSubmit={handleSubmit} className="flex gap-2 relative">
                     <button
                       type="button"
                       onClick={handleAttachmentClick}
@@ -828,13 +1048,22 @@ function ChatPage() {
                     >
                       Attach
                     </button>
-                    <input
-                      type="text"
-                      value={messageInput}
-                      onChange={handleInputChange}
-                      placeholder="Type your message..."
-                      className="flex-1 px-4 py-2 rounded-lg transition-all chat-input"
-                    />
+                    <div className="flex-1 relative">
+                      <input
+                        ref={messageInputRef}
+                        type="text"
+                        value={messageInput}
+                        onChange={handleInputChange}
+                        placeholder="Type your message..."
+                        className="w-full px-4 py-2 rounded-lg transition-all chat-input"
+                      />
+                      <MentionAutocomplete
+                        channelId={selectedChannelId}
+                        inputValue={messageInput}
+                        onInputChange={setMessageInput}
+                        inputRef={messageInputRef}
+                      />
+                    </div>
                     <button
                       type="submit"
                       disabled={!messageInput.trim() || !selectedChannelId}
@@ -858,6 +1087,21 @@ function ChatPage() {
           </div>
         )}
       </div>
+      {profileUser && (
+        <UserProfileModal
+          user={profileUser}
+          onClose={() => setProfileUser(null)}
+        />
+      )}
+      {contextMenu && (
+        <UserContextMenu
+          position={contextMenu.position}
+          user={contextMenu.user}
+          onClose={handleContextMenuClose}
+          onProfile={handleProfile}
+          onMessage={handleMessage}
+        />
+      )}
     </div>
   )
 }

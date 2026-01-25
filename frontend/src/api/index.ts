@@ -105,7 +105,8 @@ export const createChannel = async (name: string, type: 'public' | 'private' = '
     body: JSON.stringify({ name, type }),
   });
   if (!response.ok) {
-    throw new Error('Failed to create channel');
+    const error = await response.json().catch(() => ({ detail: 'Failed to create channel' }));
+    throw new Error(error.detail || 'Failed to create channel');
   }
   return response.json();
 };
@@ -225,6 +226,24 @@ export const searchUsers = async (username: string): Promise<User[]> => {
 };
 
 // Channel member APIs
+export const getChannelMembers = async (
+  channelId: number,
+  search?: string,
+): Promise<User[]> => {
+  const url = new URL(`${API_BASE_URL}/channels/${channelId}/members`);
+  if (search) {
+    url.searchParams.set('search', search);
+  }
+  const response = await fetch(url.toString(), {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to get channel members' }));
+    throw new Error(error.detail || 'Failed to get channel members');
+  }
+  return response.json();
+};
+
 export const addUserToChannel = async (
   channelId: number,
   username: string,

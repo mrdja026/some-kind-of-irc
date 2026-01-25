@@ -73,6 +73,8 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
           if (message.channel_id) {
             // Invalidate channel data to update user list
             queryClientRef.current.invalidateQueries({ queryKey: ['channels'] });
+            // Invalidate channel members to update mention autocomplete
+            queryClientRef.current.invalidateQueries({ queryKey: ['channelMembers', message.channel_id] });
           }
           break;
         case 'typing':
