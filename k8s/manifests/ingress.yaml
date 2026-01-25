@@ -1,0 +1,84 @@
+---
+# Core Ingress — no rewrite rules
+# Routes monolith API paths and serves frontend at /
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: irc-app-core-ingress
+  namespace: irc-app
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # Route /auth/* to monolith (until auth-service exists)
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: monolith
+                port:
+                  number: 8002
+          # Route /channels/* to monolith
+          - path: /channels
+            pathType: Prefix
+            backend:
+              service:
+                name: monolith
+                port:
+                  number: 8002
+          # Route /ws to monolith (WebSocket)
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: monolith
+                port:
+                  number: 8002
+          # Route /health to monolith
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: monolith
+                port:
+                  number: 8002
+          # Route /ai/* to ai-service
+          - path: /ai
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-service
+                port:
+                  number: 8001
+          # Default: everything else goes to frontend (SSR)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+---
+# Data-Processor Ingress — with regex rewrite
+# Rewrites /data-processor/<path> to /api/<path> for the Django service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: irc-app-dp-ingress
+  namespace: irc-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /api/$1
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /data-processor/(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: data-processor
+                port:
+                  number: 8003

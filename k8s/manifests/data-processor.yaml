@@ -1,0 +1,70 @@
+---
+# Data Processor deployment — Django REST Framework service for document processing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-processor
+  namespace: irc-app
+  labels:
+    app: data-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-processor
+  template:
+    metadata:
+      labels:
+        app: data-processor
+    spec:
+      containers:
+        - name: data-processor
+          # Build and import this image locally:
+          #   docker build -t data-processor:latest ./data-processor
+          #   sudo k3s ctr images import <(docker save data-processor:latest)
+          image: data-processor:latest
+          imagePullPolicy: Never # Use locally imported image
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+            - secretRef:
+                name: irc-app-secret
+          env:
+            - name: ALLOWED_HOSTS
+              value: "*"
+            - name: DEBUG
+              value: "false"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-processor
+  namespace: irc-app
+spec:
+  selector:
+    app: data-processor
+  ports:
+    - port: 8003
+      targetPort: 8003
+  type: ClusterIP

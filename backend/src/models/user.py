@@ -8,6 +8,7 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     display_name = Column(String, nullable=True)
     password_hash = Column(String)
+    hash_type = Column(String, nullable=True)  # 'bcrypt' for new users, NULL for legacy
     status = Column(String, default="online")
     profile_picture_url = Column(String, nullable=True)
     display_name_updated_at = Column(DateTime, nullable=True)

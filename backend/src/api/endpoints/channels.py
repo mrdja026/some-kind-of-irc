@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from src.core.database import get_db
+from src.core.config import settings
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.message import Message
@@ -19,11 +20,13 @@ router = APIRouter(prefix="/channels", tags=["channels"])
 class ChannelCreate(BaseModel):
     name: str
     type: str = "public"
+    is_data_processor: bool = False
 
 class ChannelResponse(BaseModel):
     id: int
     name: str
     type: str
+    is_data_processor: bool = False
 
     model_config = {
         "from_attributes": True
@@ -51,13 +54,21 @@ class MessageResponse(BaseModel):
 async def create_channel(channel: ChannelCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if channel.type == "public" and not channel.name.startswith("#"):
         raise HTTPException(status_code=400, detail="Public channel name must start with #")
+    
+    # Check if data processor feature is enabled when creating data processor channel
+    if channel.is_data_processor and not settings.data_processor_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Data processor feature is not enabled"
+        )
+    
     # For private channels/DMs, generate a unique name based on user IDs
     if channel.type == "private":
         channel.name = f"dm-{current_user.id}-{channel.name}"
     db_channel = db.query(Channel).filter(Channel.name == channel.name).first()
     if db_channel:
         raise HTTPException(status_code=400, detail="Channel already exists")
-    new_channel = Channel(name=channel.name, type=channel.type)
+    new_channel = Channel(name=channel.name, type=channel.type, is_data_processor=channel.is_data_processor)
     db.add(new_channel)
     db.commit()
     db.refresh(new_channel)

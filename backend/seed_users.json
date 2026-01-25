@@ -1,0 +1,34 @@
+{
+  "users": [
+    {
+      "username": "admina",
+      "password": "Adm!na-9rXy27sQe5Bcz",
+      "display_name": "admina",
+      "note": "admin - full access"
+    },
+    {
+      "username": "guest",
+      "password": "Gu3st-5vPqR71kLd8Tmz",
+      "display_name": "guest",
+      "note": "non-admin"
+    },
+    {
+      "username": "guest2",
+      "password": "supasupasupa",
+      "display_name": "guest2",
+      "note": "non-admin"
+    },
+    {
+      "username": "guest3",
+      "password": "supasupasupa",
+      "display_name": "guest3",
+      "note": "non-admin"
+    },
+    {
+      "username": "guest4",
+      "password": "supasupasupa",
+      "display_name": "guest4",
+      "note": "non-admin"
+    }
+  ]
+}

@@ -153,7 +153,7 @@ export function MentionAutocomplete({
   return (
     <div
       ref={dropdownRef}
-      className="absolute bottom-full left-0 mb-1 w-full max-h-64 overflow-y-auto bg-chat-shell border border-chat-divider rounded-lg shadow-lg z-50"
+      className="absolute bottom-full left-0 mb-1 w-full max-h-48 sm:max-h-64 overflow-y-auto bg-chat-shell border border-chat-divider rounded-lg shadow-lg z-50 touch-pan-y"
     >
       {isLoading ? (
         <div className="p-3 text-sm chat-meta">Loading members...</div>
@@ -169,7 +169,7 @@ export function MentionAutocomplete({
               <div
                 key={member.id}
                 onClick={() => selectMember(member)}
-                className={`px-3 py-2 cursor-pointer transition-colors ${
+                className={`px-3 py-2 sm:py-3 cursor-pointer transition-colors min-h-[44px] ${
                   isSelected
                     ? 'bg-chat-channel-item--active'
                     : 'hover:bg-chat-channel-item'
@@ -181,19 +181,19 @@ export function MentionAutocomplete({
                     <img
                       src={member.profile_picture_url}
                       alt={displayName}
-                      className="w-6 h-6 rounded-full object-cover"
+                      className="w-6 h-6 rounded-full object-cover flex-shrink-0"
                     />
                   ) : (
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center chat-avatar">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center chat-avatar flex-shrink-0">
                       <span className="text-xs font-semibold">
                         {displayName[0].toUpperCase()}
                       </span>
                     </div>
                   )}
-                  <div className="flex-1">
-                    <div className="text-sm font-semibold">{displayName}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold truncate">{displayName}</div>
                     {member.display_name && (
-                      <div className="text-xs chat-meta">{member.username}</div>
+                      <div className="text-xs chat-meta truncate">{member.username}</div>
                     )}
                   </div>
                 </div>
