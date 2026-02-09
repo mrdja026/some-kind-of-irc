@@ -9,7 +9,7 @@ metadata:
 data:
   ALGORITHM: "HS256"
   REDIS_URL: "redis://redis:6379/0"
-  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:42069"
+  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
   AI_RATE_LIMIT_PER_HOUR: "10"
   ADMIN_ALLOWLIST: "admina"
   DATA_PROCESSOR_URL: "http://data-processor:8003"

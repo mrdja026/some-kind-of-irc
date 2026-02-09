@@ -172,7 +172,7 @@ echo -e "${GREEN}============================================================${N
 echo ""
 NODE_IP="$(hostname -I | awk '{print $1}')"
 echo "Services:"
-echo "  - Frontend (SSR):       http://localhost:42069 (or http://${NODE_IP}:42069)"
+echo "  - Frontend (SSR):       http://localhost:4269 (or http://${NODE_IP}:4269)"
 echo "  - Backend API:          http://localhost/ (via ingress)"
 echo "  - Argo CD:              https://localhost:8443 (get password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
 echo ""

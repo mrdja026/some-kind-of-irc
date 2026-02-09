@@ -17,5 +17,5 @@ The system SHALL provide a unified method to set up and run the full application
   - Data Processor (Port 8003)
   - Audit Logger (Port 8004)
   - Media Storage (Port 9101)
-  - Frontend (Port 3000)
+  - Frontend (Port 4269)
 - **AND** all services are configured to communicate via `localhost`

@@ -31,7 +31,7 @@ sleep 2
 # 3. Start Backend
 echo "Starting Backend..."
 export MEDIA_STORAGE_URL="http://localhost:9101"
-export ALLOWED_ORIGINS="http://localhost:42069,http://127.0.0.1:42069"
+export ALLOWED_ORIGINS="http://localhost:4269,http://127.0.0.1:4269"
 export REDIS_URL="redis://localhost:6379/0"
 export DATA_PROCESSOR_URL="http://localhost:8003"
 export AUDIT_LOGGER_URL="http://localhost:8004"
@@ -56,8 +56,7 @@ export MINIO_SECRET_KEY="minioadmin"
 export BACKEND_VERIFY_URL="http://localhost:8002/auth/me"
 export PUBLIC_BASE_URL="http://localhost:9101"
 export MAX_UPLOAD_MB="10"
-export PORT="9101"
-python media-storage/app.py > /dev/null 2>&1 &
+PORT="9101" python media-storage/app.py > /dev/null 2>&1 &
 
 # 5. Start Data Processor
 echo "Starting Data Processor..."
@@ -71,12 +70,13 @@ python data-processor/manage.py runserver 8003 > /dev/null 2>&1 &
 
 # 6. Start Audit Logger
 echo "Starting Audit Logger..."
-export PORT="8004"
-python audit-logger/main.py > /dev/null 2>&1 &
+PORT="8004" python audit-logger/main.py > /dev/null 2>&1 &
 
 # 7. Start Frontend
 echo "Starting Frontend..."
 cd frontend
+# Avoid leaking service PORT values into TanStack Start/Nitro.
+unset PORT
 export VITE_API_URL="http://localhost:8002"
 export VITE_WS_URL="ws://localhost:8002"
 # TanStack Start specific env vars if needed
@@ -89,7 +89,7 @@ pnpm dev &
 cd ..
 
 echo "All services started!"
-echo "Frontend: http://localhost:42069"
+echo "Frontend: http://localhost:4269"
 echo "Backend: http://localhost:8002"
 echo "MinIO Console: http://localhost:9001"
 echo "Press Ctrl+C to stop."
