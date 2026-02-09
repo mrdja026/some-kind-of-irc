@@ -1,49 +1,70 @@
-# Design: Anthropic SDK Integration & Quiz Logic
+# Design: Clarification-First AI Quiz and Report Delivery
 
-## Architecture Overview
+## Context
 
-The `ai-service` will be refactored to use the `anthropic` Python SDK. A new `QuizAgent` will be introduced to handle the complex multi-turn and tool-using logic required for the quiz.
+The delivered experience in `#ai` is a guided quiz over existing `afford`/`learn` intents, not a separate `quiz` intent. The implementation had to remain compatible with existing auth, rate limiting, and channel message APIs while improving traceability and reliability.
 
-### Component Diagram
+## Goals / Non-Goals
 
-```mermaid
-graph TD
-    Frontend[Frontend AIChannel] -- "/ai/query/stream" --> AIService[AI Service]
-    AIService -- "intent: quiz" --> QuizAgent[Quiz Agent]
-    QuizAgent -- "Anthropic SDK" --> Claude[Claude 3.5 Sonnet]
-    QuizAgent -- "DuckDuckGo/Mock" --> WebSearch[Web Search Tool]
-```
+- Goals:
+  - Ask clarifying questions before final answers.
+  - Make question selection transparent (chosen question + alternatives + reasoning).
+  - Enforce affordability safety guardrails in a context-sensitive way.
+  - Produce a shareable/downloadable report automatically at quiz completion.
+- Non-Goals:
+  - No web search/tool-calling in this phase.
+  - No new standalone AI intent.
+  - No persistent backend session store for quiz state.
 
-## Detailed Design
+## Key Decisions
 
-### 1. Anthropic SDK Integration
+### 1) Clarification-first orchestration for existing intents
 
-- Update `requirements.txt` with `anthropic>=0.30.0`.
-- Initialize `anthropic.AsyncAnthropic` in `orchestrator.py`.
-- Use the Messages API for both streaming and non-streaming requests.
+- Decision: `afford` and `learn` enter clarify mode first; final answer is emitted only after required rounds.
+- Why: Preserves user-facing intent model while enforcing higher-quality recommendations.
 
-### 2. Quiz Logic
+### 2) 3-agent panel + judge chooser
 
-- **Predefined Parts[]**: The prompt will be structured using Anthropic's message content blocks, which map well to the user's request for "Parts[]".
-- **3-Question Structure**: The system prompt will enforce a 3-question quiz format.
-- **Sub-questions**: The agent will be instructed to ask follow-up questions based on user answers to deepen the interaction.
+- Decision: Run `FinanceBot`, `LearnBot`, `RiskBot` in parallel; have `JudgeBot` select the next question.
+- Why: Improves diversity of candidate questions and provides explicit selection rationale.
 
-### 3. Web Search Tool
+### 3) Structured streaming contract for clarity and UI state
 
-- Define an Anthropic tool `web_search(query: str)`.
-- Implement the tool using a lightweight search library or a mock service if external access is restricted.
-- Allow the agent to use this tool to find up-to-date information for the quiz content.
+- Decision: Emit typed SSE events (`meta`, `progress`, `clarify_question`, `delta`, `done`).
+- Why: Enables deterministic UI state machine and debugging of first-turn behavior.
 
-### 4. Data Flow
+### 4) Smart affordability guardrail on round 4
 
-1. User selects "Quiz" in the frontend.
-2. Frontend sends `intent: "quiz"` to `ai-service`.
-3. `ai-service` invokes `QuizAgent`.
-4. `QuizAgent` initiates a session with Claude, including the `web_search` tool definition.
-5. Claude generates the first question (potentially after a web search).
-6. Response is streamed back to the frontend.
+- Decision: For `afford`, enforce a fourth guardrail round with contextual wording derived from prior answers.
+- Why: Keeps a mandatory safety checkpoint without using a rigid one-size-fits-all prompt.
 
-## Trade-offs and Considerations
+### 5) Quiz report delivery through existing media + DM channels
 
-- **Rate Limiting**: Multi-turn quiz interactions consume more tokens and requests. The `AI_RATE_LIMIT_PER_HOUR` might need adjustment.
-- **Context Persistence**: For a multi-turn quiz, we either need to send the full history back and forth or implement session management in `ai-service`. Initially, we'll keep it simple by having the frontend manage the interaction history for the session.
+- Decision: Generate PDF in frontend (`jsPDF`), upload through existing `/media/upload`, then send link/attachment to self-DM.
+- Why: Reuses current MinIO pipeline and chat message transport with minimal backend API surface growth.
+
+### 6) Development diagnostics + stale process mitigation
+
+- Decision: Add ai-service debug logging and service mode marker; proactively kill stale Python listeners on startup.
+- Why: Previous behavior drift came from stale listeners serving older code paths.
+
+## Data Flow (Implemented)
+
+1. User asks in `#ai` with `conversation_stage=initial`.
+2. ai-service emits clarify metadata/events and asks chosen question.
+3. User answers; ai-service repeats adaptive selection for next round.
+4. On final round completion, ai-service streams final recommendation.
+5. Frontend builds PDF report (original query, Q/A rounds, final recommendation).
+6. Frontend uploads PDF to MinIO-backed media service.
+7. Frontend creates/opens self-DM and posts report message with attachment URL.
+
+## Risks / Trade-offs
+
+- Frontend-generated PDFs are fast and simple but may vary slightly by browser rendering.
+- Without server-side session persistence, client state correctness remains important.
+- Guardrail heuristics are intentionally conservative and may need tuning from real usage.
+
+## Rollout / Operations Notes
+
+- Restart local stack after updates to avoid stale listeners on `8001/8002`.
+- Keep `AI_DEBUG_LOG=true` in local development for diagnosis of clarify/final transitions.
