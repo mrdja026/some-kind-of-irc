@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, redirect } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getCurrentUser,
@@ -10,21 +10,45 @@ import {
   searchUsers,
   addUserToChannel,
 } from '../api'
+import {
+  getCurrentUserServer,
+  getChannelsServer,
+} from '../api/server'
 import { useUserProfileInvalidation } from '../hooks/useUserProfileInvalidation'
 import type { User, Channel } from '../types'
 import { Settings as SettingsIcon, Upload, X, Search, Plus } from 'lucide-react'
 
-export const Route = createFileRoute('/settings')({ component: SettingsPage })
+export const Route = createFileRoute('/settings')({
+  ssr: true, // Full SSR - render components on server
+  loader: async () => {
+    try {
+      const [currentUser, channels] = await Promise.all([
+        getCurrentUserServer(),
+        getChannelsServer(),
+      ])
+      return { currentUser, channels }
+    } catch (error) {
+      // Redirect to login if not authenticated
+      throw redirect({ to: '/login' })
+    }
+  },
+  headers: () => ({
+    'Cache-Control': 'private, max-age=30', // User-specific, shorter cache
+  }),
+  staleTime: 15_000,
+  component: SettingsPage,
+})
 
 function SettingsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const loaderData = Route.useLoaderData()
 
   // Use the invalidation hook
   useUserProfileInvalidation()
 
-  // Current user query
+  // Current user query - hydrate from loader data
   const {
     data: currentUser,
     isLoading: userLoading,
@@ -32,12 +56,16 @@ function SettingsPage() {
   } = useQuery<User>({
     queryKey: ['currentUser'],
     queryFn: getCurrentUser,
+    initialData: loaderData.currentUser,
+    staleTime: 15_000,
   })
 
-  // Channels query
+  // Channels query - hydrate from loader data
   const { data: channels } = useQuery<Channel[]>({
     queryKey: ['channels'],
     queryFn: getChannels,
+    initialData: loaderData.channels,
+    staleTime: 15_000,
   })
 
   // Profile picture state
@@ -53,7 +81,6 @@ function SettingsPage() {
   // Channel creation state
   const [channelName, setChannelName] = useState('')
   const [channelType, setChannelType] = useState<'public' | 'private'>('public')
-  const [isCreatingChannel, setIsCreatingChannel] = useState(false)
   const [channelError, setChannelError] = useState<string | null>(null)
 
   // Add user to channel state
@@ -244,20 +271,13 @@ function SettingsPage() {
     e.preventDefault()
     if (!channelName.trim()) return
 
-    setIsCreatingChannel(true)
     setChannelError(null)
 
-    try {
-      const name =
-        channelType === 'public' && !channelName.startsWith('#')
-          ? `#${channelName.trim()}`
-          : channelName.trim()
-      channelCreateMutation.mutate({ name, type: channelType })
-    } catch (error) {
-      // Error handled by mutation
-    } finally {
-      setIsCreatingChannel(false)
-    }
+    const name =
+      channelType === 'public' && !channelName.startsWith('#')
+        ? `#${channelName.trim()}`
+        : channelName.trim()
+    channelCreateMutation.mutate({ name, type: channelType })
   }
 
   const handleAddUserToChannel = async (username: string) => {
@@ -291,30 +311,30 @@ function SettingsPage() {
     profilePreview || currentUser.profile_picture_url
 
   return (
-    <div className="min-h-screen chat-shell p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold chat-message-text mb-6">Settings</h1>
+    <div className="min-h-screen chat-shell p-4 sm:p-6">
+      <div className="max-w-4xl mx-auto space-y-4 md:space-y-6">
+        <h1 className="text-2xl sm:text-3xl font-bold chat-message-text mb-4 md:mb-6">Settings</h1>
 
         {/* Profile Picture Section */}
-        <div className="chat-card p-6 rounded-xl">
-          <h2 className="text-xl font-semibold chat-message-text mb-4">
+        <div className="chat-card p-4 sm:p-6 rounded-xl">
+          <h2 className="text-lg sm:text-xl font-semibold chat-message-text mb-4">
             Profile Picture
           </h2>
 
-          <div className="flex items-start gap-6">
-            <div className="flex-shrink-0">
+          <div className="flex flex-col sm:flex-row items-start gap-4 sm:gap-6">
+            <div className="flex-shrink-0 mx-auto sm:mx-0">
               {displayProfilePicture ? (
                 <div className="relative">
                   <img
                     src={displayProfilePicture}
                     alt="Profile"
-                    className="w-32 h-32 rounded-full object-cover border-2 border-solid"
+                    className="w-24 h-24 sm:w-32 sm:h-32 rounded-full object-cover border-2 border-solid"
                     style={{ borderColor: 'rgba(212, 163, 115, 0.5)' }}
                   />
                   {currentUser.profile_picture_url && (
                     <button
                       onClick={handleRemoveProfilePicture}
-                      className="absolute -top-2 -right-2 p-1 rounded-full chat-menu-button"
+                      className="absolute -top-2 -right-2 p-1 rounded-full chat-menu-button min-w-[44px] min-h-[44px]"
                       aria-label="Remove profile picture"
                     >
                       <X size={16} />
@@ -322,13 +342,13 @@ function SettingsPage() {
                   )}
                 </div>
               ) : (
-                <div className="w-32 h-32 rounded-full flex items-center justify-center chat-avatar text-4xl font-bold">
+                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full flex items-center justify-center chat-avatar text-3xl sm:text-4xl font-bold">
                   {currentUser.username[0].toUpperCase()}
                 </div>
               )}
             </div>
 
-            <div className="flex-1">
+            <div className="flex-1 w-full sm:w-auto">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -341,18 +361,18 @@ function SettingsPage() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploadingProfile}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60 min-h-[44px] w-full sm:w-auto justify-center"
                 >
                   <Upload size={18} />
-                  {profilePreview ? 'Change Picture' : 'Upload Picture'}
+                  <span className="text-sm sm:text-base">{profilePreview ? 'Change Picture' : 'Upload Picture'}</span>
                 </button>
 
                 {profilePreview && (
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={handleProfilePictureUpload}
                       disabled={isUploadingProfile}
-                      className="px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60"
+                      className="px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm sm:text-base"
                     >
                       {isUploadingProfile ? 'Uploading...' : 'Save'}
                     </button>
@@ -363,7 +383,7 @@ function SettingsPage() {
                           fileInputRef.current.value = ''
                         }
                       }}
-                      className="px-4 py-2 rounded-lg transition-colors chat-menu-button"
+                      className="px-4 py-2 rounded-lg transition-colors chat-menu-button min-h-[44px] text-sm sm:text-base"
                     >
                       Cancel
                     </button>
@@ -379,8 +399,8 @@ function SettingsPage() {
         </div>
 
         {/* Display Name Section */}
-        <div className="chat-card p-6 rounded-xl">
-          <h2 className="text-xl font-semibold chat-message-text mb-4">
+        <div className="chat-card p-4 sm:p-6 rounded-xl">
+          <h2 className="text-lg sm:text-xl font-semibold chat-message-text mb-4">
             Display Name
           </h2>
 
@@ -407,7 +427,7 @@ function SettingsPage() {
                 id="displayName"
                 value={newDisplayName}
                 onChange={(e) => setNewDisplayName(e.target.value)}
-                className="w-full px-4 py-2 rounded-lg transition-all chat-input"
+                className="w-full px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-base"
                 placeholder="Enter display name"
                 required
                 minLength={1}
@@ -426,7 +446,7 @@ function SettingsPage() {
                 newDisplayName.trim() ===
                   (currentUser.display_name || currentUser.username)
               }
-              className="px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60"
+              className="px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm sm:text-base w-full sm:w-auto"
             >
               {isUpdatingDisplayName ? 'Updating...' : 'Update Display Name'}
             </button>
@@ -434,8 +454,8 @@ function SettingsPage() {
         </div>
 
         {/* Create Channel Section */}
-        <div className="chat-card p-6 rounded-xl">
-          <h2 className="text-xl font-semibold chat-message-text mb-4">
+        <div className="chat-card p-4 sm:p-6 rounded-xl">
+          <h2 className="text-lg sm:text-xl font-semibold chat-message-text mb-4">
             Create Channel
           </h2>
 
@@ -452,7 +472,7 @@ function SettingsPage() {
                 id="channelName"
                 value={channelName}
                 onChange={(e) => setChannelName(e.target.value)}
-                className="w-full px-4 py-2 rounded-lg transition-all chat-input"
+                className="w-full px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-base"
                 placeholder={
                   channelType === 'public' ? '#channel-name' : 'Channel name'
                 }
@@ -473,7 +493,7 @@ function SettingsPage() {
                 onChange={(e) =>
                   setChannelType(e.target.value as 'public' | 'private')
                 }
-                className="w-full px-4 py-2 rounded-lg transition-all chat-input"
+                className="w-full px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-base"
               >
                 <option value="public">Public</option>
                 <option value="private">Private</option>
@@ -486,18 +506,18 @@ function SettingsPage() {
 
             <button
               type="submit"
-              disabled={isCreatingChannel || !channelName.trim()}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60"
+              disabled={channelCreateMutation.isPending || !channelName.trim()}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm sm:text-base w-full sm:w-auto justify-center"
             >
               <Plus size={18} />
-              {isCreatingChannel ? 'Creating...' : 'Create Channel'}
+              {channelCreateMutation.isPending ? 'Creating...' : 'Create Channel'}
             </button>
           </form>
         </div>
 
         {/* Add Users to Channel Section */}
-        <div className="chat-card p-6 rounded-xl">
-          <h2 className="text-xl font-semibold chat-message-text mb-4">
+        <div className="chat-card p-4 sm:p-6 rounded-xl">
+          <h2 className="text-lg sm:text-xl font-semibold chat-message-text mb-4">
             Add Users to Channel
           </h2>
 
@@ -517,7 +537,7 @@ function SettingsPage() {
                     e.target.value ? parseInt(e.target.value) : null,
                   )
                 }
-                className="w-full px-4 py-2 rounded-lg transition-all chat-input"
+                className="w-full px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-base"
               >
                 <option value="">Choose a channel...</option>
                 {channels
@@ -549,7 +569,7 @@ function SettingsPage() {
                       id="usernameSearch"
                       value={usernameSearch}
                       onChange={(e) => setUsernameSearch(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 rounded-lg transition-all chat-input"
+                      className="w-full pl-10 pr-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-base"
                       placeholder="Type username to search..."
                     />
                   </div>
@@ -559,13 +579,13 @@ function SettingsPage() {
                   )}
 
                   {searchResults.length > 0 && (
-                    <div className="mt-2 border rounded-lg chat-divider overflow-hidden">
+                    <div className="mt-2 border rounded-lg chat-divider overflow-hidden max-h-64 overflow-y-auto">
                       {searchResults.map((user) => (
                         <button
                           key={user.id}
                           onClick={() => handleAddUserToChannel(user.username)}
                           disabled={isAddingUser}
-                          className="w-full px-4 py-2 text-left hover:bg-opacity-50 transition-colors chat-channel-item flex items-center gap-3"
+                          className="w-full px-3 sm:px-4 py-2 sm:py-3 text-left hover:bg-opacity-50 transition-colors chat-channel-item flex items-center gap-2 sm:gap-3 min-h-[44px]"
                         >
                           <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
                             {user.profile_picture_url ? (
@@ -581,7 +601,7 @@ function SettingsPage() {
                               </span>
                             )}
                           </div>
-                          <span>{user.display_name || user.username}</span>
+                          <span className="text-sm sm:text-base truncate">{user.display_name || user.username}</span>
                         </button>
                       ))}
                     </div>

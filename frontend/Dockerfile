@@ -1,4 +1,18 @@
+ARG VITE_API_URL=http://backend:8002
+ARG VITE_WS_URL=ws://backend:8002
+ARG VITE_PUBLIC_API_URL
+ARG VITE_PUBLIC_WS_URL
+
 FROM node:22-alpine AS build
+
+ARG VITE_API_URL
+ARG VITE_WS_URL
+ARG VITE_PUBLIC_API_URL
+ARG VITE_PUBLIC_WS_URL
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_PUBLIC_API_URL=$VITE_PUBLIC_API_URL
+ENV VITE_PUBLIC_WS_URL=$VITE_PUBLIC_WS_URL
 
 WORKDIR /app
 
@@ -8,11 +22,24 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY . /app
 RUN pnpm build
 
-FROM nginx:stable-alpine
+FROM node:22-alpine AS runner
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
+ARG VITE_API_URL
+ARG VITE_WS_URL
+ARG VITE_PUBLIC_API_URL
+ARG VITE_PUBLIC_WS_URL
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_PUBLIC_API_URL=$VITE_PUBLIC_API_URL
+ENV VITE_PUBLIC_WS_URL=$VITE_PUBLIC_WS_URL
+
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=80
+
+WORKDIR /app
+COPY --from=build /app/.output /app/.output
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "/app/.output/server/index.mjs"]

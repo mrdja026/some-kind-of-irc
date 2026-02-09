@@ -1,0 +1,24 @@
+:80 {
+  encode gzip
+
+  @api path /auth/* /channels/* /ai/* /health
+  reverse_proxy @api backend:8002
+
+  @ws path /ws/*
+  reverse_proxy @ws backend:8002
+
+  @media_upload path /media/upload
+  reverse_proxy @media_upload backend:8002
+
+  @media path /media/*
+  reverse_proxy @media media-storage:9101
+
+  # Data processor service (document OCR and annotation)
+  @data_processor path /data-processor/*
+  handle @data_processor {
+    uri strip_prefix /data-processor
+    reverse_proxy data-processor:8003
+  }
+
+  reverse_proxy frontend:80
+}

@@ -12,7 +12,7 @@ pnpm = "*"
 fastapi = "*"
 uvicorn = { version = "*", extras = ["standard"] }
 sqlalchemy = "*"
-python-jose = { version = "*", extras = ["cryptography"] }
+python-jose = { version = "==3.5.0", extras = ["cryptography"] }
 passlib = { version = "*", extras = ["bcrypt"] }
 pydantic = "*"
 pydantic-settings = "*"
@@ -20,13 +20,75 @@ python-multipart = "*"
 flask = "*"
 boto3 = "*"
 requests = "*"
+django = "*"
+djangorestframework = "*"
+django-cors-headers = "*"
+opencv-python-headless = "*"
+pytesseract = "*"
+numpy = "*"
+scikit-image = "*"
+pillow = "*"
+httpx = "*"
+python-dotenv = "*"
 
 [tasks]
-install-backend = { cmd = "backend/be/Scripts/python -m pip install -r backend/requirements.txt" }
+# Create virtual environment
+create-venv = { cmd = "python -m venv backend/be" }
+
+# Linux backend installation
+install-backend-linux = { cmd = "backend/be/bin/python -m pip install -r backend/requirements.txt" }
+
+# Windows backend installation
+install-backend-windows = { cmd = "backend/be/Scripts/python -m pip install -r backend/requirements.txt" }
+
+install-data-processor = { cmd = "python -m pip install -r data-processor/requirements.txt" }
 install-media-storage = { cmd = "python -m pip install -r media-storage/requirements.txt" }
-install-frontend = { cmd = "pnpm install", cwd = "frontend" }
-setup = { depends-on = ["install-backend", "install-media-storage", "install-frontend"] }
-api = { cmd = "../backend/be/Scripts/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8002", cwd = "backend" }
+install-audit-logger = { cmd = "python -m pip install -r audit-logger/requirements.txt" }
+
+# Linux frontend installation and build
+install-frontend-linux = { cmd = "npx pnpm install", cwd = "frontend" }
+build-frontend = { cmd = "pnpm build", cwd = "frontend", depends-on = ["install-frontend-linux"] }
+
+# Windows frontend installation
+install-frontend-windows = { cmd = "pnpm install", cwd = "frontend" }
+
+setup-linux = { depends-on = ["create-venv", "install-backend-linux", "install-data-processor", "install-media-storage", "install-audit-logger", "build-frontend"] }
+setup-windows = { depends-on = ["create-venv", "install-backend-windows", "install-media-storage", "install-frontend-windows"] }
+
+seed-users-linux = { cmd = "backend/be/bin/python create_test_user.py --file seed_users.json", cwd = "backend" }
+seed-users-windows = { cmd = "be/Scripts/python.exe create_test_user.py --file seed_users.json", cwd = "backend" }
+
+start-all-linux = { cmd = "bash scripts/start-all-linux.sh" }
+
+# Legacy individual run commands (kept for reference or isolated testing)
+api-linux = { cmd = "backend/be/bin/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8002", cwd = "backend" }
+api-windows = { cmd = "be/Scripts/python.exe -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8002", cwd = "backend" }
+
+data-processor = { cmd = "python data-processor/manage.py runserver 8003", env = { DEBUG = "true", MINIO_ENDPOINT = "http://localhost:9000", MINIO_ACCESS_KEY = "minioadmin", MINIO_SECRET_KEY = "minioadmin", MINIO_BUCKET = "irc-media", BACKEND_URL = "http://localhost:8002" } }
 ui = { cmd = "pnpm dev", cwd = "frontend" }
 media-storage = { cmd = "python media-storage/app.py", env = { MINIO_ENDPOINT = "http://localhost:9000", MINIO_PUBLIC_ENDPOINT = "http://localhost:9000", MINIO_BUCKET = "irc-media", MINIO_REGION = "us-east-1", MINIO_USE_SSL = "false", MINIO_ACCESS_KEY = "minioadmin", MINIO_SECRET_KEY = "minioadmin", BACKEND_VERIFY_URL = "http://localhost:8002/auth/me", PUBLIC_BASE_URL = "http://localhost:9101", MAX_UPLOAD_MB = "10", PORT = "9101" } }
+
+[target.win-64.tasks]
 minio = { cmd = "media-storage/minio.exe server media-storage/data --console-address :9001", env = { MINIO_ROOT_USER = "minioadmin", MINIO_ROOT_PASSWORD = "minioadmin" } }
+start-all-windows = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-all-windows.ps1" }
+
+[target.linux-64.dependencies]
+redis-server = "*"
+minio-server = "*"
+
+[target.osx-64.dependencies]
+redis-server = "*"
+minio-server = "*"
+
+[target.osx-arm64.dependencies]
+redis-server = "*"
+minio-server = "*"
+
+[target.linux-64.tasks]
+minio = { cmd = "minio server media-storage/data --console-address :9001", env = { MINIO_ROOT_USER = "minioadmin", MINIO_ROOT_PASSWORD = "minioadmin" } }
+
+[target.osx-64.tasks]
+minio = { cmd = "minio server media-storage/data --console-address :9001", env = { MINIO_ROOT_USER = "minioadmin", MINIO_ROOT_PASSWORD = "minioadmin" } }
+
+[target.osx-arm64.tasks]
+minio = { cmd = "minio server media-storage/data --console-address :9001", env = { MINIO_ROOT_USER = "minioadmin", MINIO_ROOT_PASSWORD = "minioadmin" } }

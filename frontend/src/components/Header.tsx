@@ -8,79 +8,79 @@ export default function Header() {
 
   return (
     <>
-      <header className="p-4 flex items-center bg-gray-800 text-white shadow-lg">
+      <header className="p-3 sm:p-4 flex items-center bg-gray-800 text-white shadow-lg">
         <button
           onClick={() => setIsOpen(true)}
-          className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+          className="p-2 hover:bg-gray-700 rounded-lg transition-colors min-w-[44px] min-h-[44px]"
           aria-label="Open menu"
         >
           <Menu size={24} />
         </button>
-        <h1 className="ml-4 text-xl font-semibold">
+        <h1 className="ml-2 sm:ml-4 text-lg sm:text-xl font-semibold">
           <Link to="/">
             <img
               src="/tanstack-word-logo-white.svg"
               alt="TanStack Logo"
-              className="h-10"
+              className="h-8 sm:h-10"
             />
           </Link>
         </h1>
       </header>
 
       <aside
-        className={`fixed top-0 left-0 h-full w-80 bg-gray-900 text-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
+        className={`fixed top-0 left-0 h-full w-full sm:w-80 bg-gray-900 text-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h2 className="text-xl font-bold">Navigation</h2>
+        <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700">
+          <h2 className="text-lg sm:text-xl font-bold">Navigation</h2>
           <button
             onClick={() => setIsOpen(false)}
-            className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-800 rounded-lg transition-colors min-w-[44px] min-h-[44px]"
             aria-label="Close menu"
           >
             <X size={24} />
           </button>
         </div>
 
-        <nav className="flex-1 p-4 overflow-y-auto">
+        <nav className="flex-1 p-3 sm:p-4 overflow-y-auto touch-pan-y">
           <Link
             to="/"
             onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
+            className="flex items-center gap-2 sm:gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2 min-h-[44px]"
             activeProps={{
               className:
-                'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
+                'flex items-center gap-2 sm:gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2 min-h-[44px]',
             }}
           >
             <Home size={20} />
-            <span className="font-medium">Home</span>
+            <span className="font-medium text-sm sm:text-base">Home</span>
           </Link>
 
           <Link
             to="/login"
             onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
+            className="flex items-center gap-2 sm:gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2 min-h-[44px]"
             activeProps={{
               className:
-                'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
+                'flex items-center gap-2 sm:gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2 min-h-[44px]',
             }}
           >
             <LogIn size={20} />
-            <span className="font-medium">Login</span>
+            <span className="font-medium text-sm sm:text-base">Login</span>
           </Link>
 
           <Link
             to="/chat"
             onClick={() => setIsOpen(false)}
-            className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2"
+            className="flex items-center gap-2 sm:gap-3 p-3 rounded-lg hover:bg-gray-800 transition-colors mb-2 min-h-[44px]"
             activeProps={{
               className:
-                'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
+                'flex items-center gap-2 sm:gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2 min-h-[44px]',
             }}
           >
             <MessageSquare size={20} />
-            <span className="font-medium">Chat</span>
+            <span className="font-medium text-sm sm:text-base">Chat</span>
           </Link>
         </nav>
       </aside>

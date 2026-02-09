@@ -1,0 +1,14 @@
+{{/*
+ConfigMap for application configuration
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "irc-app.fullname" . }}-config
+  labels:
+    {{- include "irc-app.labels" . | nindent 4 }}
+data:
+  ADMIN_ALLOWLIST: {{ .Values.config.adminAllowlist | quote }}
+  REDIS_URL: "redis://irc-app-redis:6379/0"
+  AUDIT_LOGGER_URL: "http://irc-app-audit-logger:8004"
+  AI_RATE_LIMIT_PER_HOUR: "{{ .Values.config.aiRateLimitPerHour }}"

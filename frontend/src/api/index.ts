@@ -9,7 +9,20 @@ import type {
   AIStreamEvent,
 } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8002';
+const API_BASE_URL =
+  typeof window === 'undefined'
+    ? import.meta.env.VITE_API_URL || 'http://backend:8002'
+    : (() => {
+        const origin = window.location.origin;
+        const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
+        if (explicit) {
+          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
+            return origin;
+          }
+          return explicit;
+        }
+        return origin;
+      })();
 
 // Auth APIs
 export const login = async (username: string, password: string): Promise<void> => {
@@ -95,17 +108,22 @@ export const createDirectMessageChannel = async (userId: number): Promise<Channe
   return response.json();
 };
 
-export const createChannel = async (name: string, type: 'public' | 'private' = 'public'): Promise<Channel> => {
+export const createChannel = async (
+  name: string,
+  type: 'public' | 'private' = 'public',
+  isDataProcessor: boolean = false,
+): Promise<Channel> => {
   const response = await fetch(`${API_BASE_URL}/channels`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify({ name, type }),
+    body: JSON.stringify({ name, type, is_data_processor: isDataProcessor }),
   });
   if (!response.ok) {
-    throw new Error('Failed to create channel');
+    const error = await response.json().catch(() => ({ detail: 'Failed to create channel' }));
+    throw new Error(error.detail || 'Failed to create channel');
   }
   return response.json();
 };
@@ -225,6 +243,24 @@ export const searchUsers = async (username: string): Promise<User[]> => {
 };
 
 // Channel member APIs
+export const getChannelMembers = async (
+  channelId: number,
+  search?: string,
+): Promise<User[]> => {
+  const url = new URL(`${API_BASE_URL}/channels/${channelId}/members`);
+  if (search) {
+    url.searchParams.set('search', search);
+  }
+  const response = await fetch(url.toString(), {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to get channel members' }));
+    throw new Error(error.detail || 'Failed to get channel members');
+  }
+  return response.json();
+};
+
 export const addUserToChannel = async (
   channelId: number,
   username: string,

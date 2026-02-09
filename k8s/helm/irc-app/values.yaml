@@ -1,0 +1,38 @@
+# Default values for irc-app
+
+# Application configuration
+config:
+  # Admin allowlist - semicolon-separated usernames who can access AI and data-processor
+  # Example: "alice;bob;charlie"
+  adminAllowlist: "admina"
+  aiRateLimitPerHour: 10
+
+# Backend service
+backend:
+  replicaCount: 1
+  image:
+    repository: irc-app-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8002
+  resources: {}
+
+# Redis
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+  service:
+    port: 6379
+
+# Audit Logger (throwaway microservice for testing)
+auditLogger:
+  enabled: true
+  image:
+    repository: irc-app-audit-logger
+    tag: latest
+  service:
+    port: 8004

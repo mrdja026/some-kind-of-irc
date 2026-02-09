@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import List, Optional
 
 from src.core.database import get_db
+from src.core.config import settings
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.message import Message
@@ -18,11 +20,13 @@ router = APIRouter(prefix="/channels", tags=["channels"])
 class ChannelCreate(BaseModel):
     name: str
     type: str = "public"
+    is_data_processor: bool = False
 
 class ChannelResponse(BaseModel):
     id: int
     name: str
     type: str
+    is_data_processor: bool = False
 
     model_config = {
         "from_attributes": True
@@ -35,10 +39,11 @@ class MessageCreate(BaseModel):
 class MessageResponse(BaseModel):
     id: int
     content: str
-    sender_id: int
+    sender_id: Optional[int]
     channel_id: int
     timestamp: str
     image_url: Optional[str] = None
+    target_user_id: Optional[int] = None
 
     model_config = {
         "from_attributes": True
@@ -49,19 +54,29 @@ class MessageResponse(BaseModel):
 async def create_channel(channel: ChannelCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if channel.type == "public" and not channel.name.startswith("#"):
         raise HTTPException(status_code=400, detail="Public channel name must start with #")
+    
+    # Check if data processor feature is enabled when creating data processor channel
+    if channel.is_data_processor and not settings.data_processor_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Data processor feature is not enabled"
+        )
+    
     # For private channels/DMs, generate a unique name based on user IDs
     if channel.type == "private":
         channel.name = f"dm-{current_user.id}-{channel.name}"
     db_channel = db.query(Channel).filter(Channel.name == channel.name).first()
     if db_channel:
         raise HTTPException(status_code=400, detail="Channel already exists")
-    new_channel = Channel(name=channel.name, type=channel.type)
+    new_channel = Channel(name=channel.name, type=channel.type, is_data_processor=channel.is_data_processor)
     db.add(new_channel)
     db.commit()
     db.refresh(new_channel)
     # Add current user to channel
     membership = Membership(user_id=current_user.id, channel_id=new_channel.id)
     db.add(membership)
+    # Update WebSocket manager to include creator in this channel
+    manager.add_client_to_channel(current_user.id, new_channel.id)
     # If it's a DM, add the other user to the channel
     if channel.type == "private":
         try:
@@ -70,18 +85,63 @@ async def create_channel(channel: ChannelCreate, current_user: User = Depends(ge
             if other_user:
                 other_membership = Membership(user_id=other_user.id, channel_id=new_channel.id)
                 db.add(other_membership)
+                # Update WebSocket manager for the other user too
+                manager.add_client_to_channel(other_user.id, new_channel.id)
         except:
             pass
     db.commit()
+    
+    # Create welcome message for the channel creator
+    welcome_message = Message(
+        content=f"Welcome to {new_channel.name}!",
+        sender_id=None,  # System/admin message
+        channel_id=new_channel.id,
+        target_user_id=current_user.id,  # Only visible to the creator
+    )
+    db.add(welcome_message)
+    db.commit()
+    db.refresh(welcome_message)
+    
+    # Send welcome message via WebSocket directly to the creator
+    await manager.send_personal_message({
+        "type": "message",
+        "id": welcome_message.id,
+        "content": welcome_message.content,
+        "image_url": welcome_message.image_url,
+        "sender_id": None,
+        "channel_id": welcome_message.channel_id,
+        "timestamp": welcome_message.timestamp.isoformat(),
+        "target_user_id": welcome_message.target_user_id,
+    }, current_user.id)
+    
     log_join(current_user.id, new_channel.id, new_channel.name)
     return new_channel
 
 @router.get("/", response_model=List[ChannelResponse])
 async def get_channels(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Get all channels the user is a member of
+    # Get all public channels (visible to all logged-in users)
+    public_channels = db.query(Channel).filter(Channel.type == "public").all()
+    
+    # Get private channels the user is a member of
     memberships = db.query(Membership).filter(Membership.user_id == current_user.id).all()
-    channel_ids = [m.channel_id for m in memberships]
-    return db.query(Channel).filter(Channel.id.in_(channel_ids)).all()
+    private_channel_ids = [m.channel_id for m in memberships]
+    private_channels = db.query(Channel).filter(
+        Channel.id.in_(private_channel_ids),
+        Channel.type == "private"
+    ).all() if private_channel_ids else []
+    
+    # Combine public and private channels
+    all_channels = public_channels + private_channels
+    
+    # Remove duplicates (in case user is a member of a public channel)
+    seen_ids = set()
+    unique_channels = []
+    for channel in all_channels:
+        if channel.id not in seen_ids:
+            seen_ids.add(channel.id)
+            unique_channels.append(channel)
+    
+    return unique_channels
 
 @router.get("/search")
 async def search_channels(name: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -113,12 +173,18 @@ async def create_direct_message_channel(user_id: int, current_user: User = Depen
             Membership.channel_id == existing_channel.id
         ).first()
         if existing_membership:
+            # Update WebSocket manager for both users
+            manager.add_client_to_channel(current_user.id, existing_channel.id)
+            manager.add_client_to_channel(user_id, existing_channel.id)
             return existing_channel
         else:
             # Add current user to existing DM channel
             membership = Membership(user_id=current_user.id, channel_id=existing_channel.id)
             db.add(membership)
             db.commit()
+            # Update WebSocket manager for both users
+            manager.add_client_to_channel(current_user.id, existing_channel.id)
+            manager.add_client_to_channel(user_id, existing_channel.id)
             return existing_channel
     # Create new DM channel
     new_channel = Channel(name=dm_name1, type="private")
@@ -131,11 +197,39 @@ async def create_direct_message_channel(user_id: int, current_user: User = Depen
     db.add(membership1)
     db.add(membership2)
     db.commit()
+    # Update WebSocket manager for both users
+    manager.add_client_to_channel(current_user.id, new_channel.id)
+    manager.add_client_to_channel(user_id, new_channel.id)
     return new_channel
 
 @router.get("/{channel_id}/messages", response_model=List[MessageResponse])
-async def get_messages(channel_id: int, db: Session = Depends(get_db)):
-    messages = db.query(Message).filter(Message.channel_id == channel_id).order_by(Message.timestamp).all()
+async def get_messages(channel_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check if channel exists
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    
+    # For private channels, check if user is a member
+    if channel.type == "private":
+        membership = db.query(Membership).filter(
+            Membership.user_id == current_user.id,
+            Membership.channel_id == channel_id
+        ).first()
+        if not membership:
+            raise HTTPException(status_code=403, detail="You are not a member of this channel")
+    
+    # Get all messages for the channel, but filter system messages (sender_id is None)
+    # to only show them to the target user
+    # Public channels: all logged-in users can view messages
+    # Private channels: only members can view (already checked above)
+    messages = db.query(Message).filter(
+        Message.channel_id == channel_id,
+        # Show regular messages (sender_id is not None) OR system messages targeted to current user
+        or_(
+            Message.sender_id.isnot(None),
+            Message.target_user_id == current_user.id
+        )
+    ).order_by(Message.timestamp).all()
     # Convert datetime to string for response
     return [
         MessageResponse(
@@ -145,6 +239,7 @@ async def get_messages(channel_id: int, db: Session = Depends(get_db)):
             channel_id=msg.channel_id,
             timestamp=msg.timestamp.isoformat(),
             image_url=msg.image_url,
+            target_user_id=msg.target_user_id,
         ) for msg in messages
     ]
 
@@ -184,6 +279,7 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         channel_id=new_message.channel_id,
         timestamp=new_message.timestamp.isoformat(),
         image_url=new_message.image_url,
+        target_user_id=new_message.target_user_id,
     )
 
 @router.post("/{channel_id}/join")
@@ -197,6 +293,33 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
     db.add(new_membership)
     db.commit()
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
+
+    # Update WebSocket manager to include user in this channel
+    manager.add_client_to_channel(current_user.id, channel_id)
+
+    # Create welcome message for the joining user (system message with sender_id=None)
+    welcome_message = Message(
+        content=f"Welcome to {channel.name}!",
+        sender_id=None,  # System/admin message
+        channel_id=channel_id,
+        target_user_id=current_user.id,  # Only visible to this user
+    )
+    db.add(welcome_message)
+    db.commit()
+    db.refresh(welcome_message)
+
+    # Send welcome message via WebSocket directly to the joining user
+    await manager.send_personal_message({
+        "type": "message",
+        "id": welcome_message.id,
+        "content": welcome_message.content,
+        "image_url": welcome_message.image_url,
+        "sender_id": None,
+        "channel_id": welcome_message.channel_id,
+        "timestamp": welcome_message.timestamp.isoformat(),
+        "target_user_id": welcome_message.target_user_id,
+    }, current_user.id)
+
     await manager.broadcast({
         "type": "join",
         "user_id": current_user.id,
@@ -216,6 +339,8 @@ async def leave_channel(channel_id: int, current_user: User = Depends(get_curren
     db.delete(membership)
     db.commit()
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    # Update WebSocket manager to remove user from this channel
+    manager.remove_client_from_channel(current_user.id, channel_id)
     await manager.broadcast({
         "type": "leave",
         "user_id": current_user.id,
@@ -229,6 +354,79 @@ async def leave_channel(channel_id: int, current_user: User = Depends(get_curren
 
 class AddMemberRequest(BaseModel):
     username: str
+
+class ChannelMemberResponse(BaseModel):
+    id: int
+    username: str
+    display_name: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+@router.get("/{channel_id}/members", response_model=List[ChannelMemberResponse])
+async def get_channel_members(
+    channel_id: int,
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if current user is a member of the channel
+    current_membership = db.query(Membership).filter(
+        Membership.user_id == current_user.id,
+        Membership.channel_id == channel_id
+    ).first()
+    if not current_membership:
+        raise HTTPException(status_code=403, detail="You are not a member of this channel")
+    
+    # Get all members of the channel by joining Membership with User
+    query = db.query(User).join(
+        Membership, User.id == Membership.user_id
+    ).filter(
+        Membership.channel_id == channel_id
+    )
+    
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower().strip()
+        # Try to parse as integer for ID search
+        try:
+            search_id = int(search_lower)
+            query = query.filter(
+                or_(
+                    User.id == search_id,
+                    User.username.ilike(f"%{search_lower}%"),
+                    User.display_name.ilike(f"%{search_lower}%")
+                )
+            )
+        except ValueError:
+            # Not a number, search by username and display_name
+            query = query.filter(
+                or_(
+                    User.username.ilike(f"%{search_lower}%"),
+                    User.display_name.ilike(f"%{search_lower}%")
+                )
+            )
+    
+    # Get all users first
+    users = query.all()
+    
+    # Sort by display_name ascending (nulls last), then by username
+    def sort_key(user: User):
+        # Return a tuple: (display_name or empty string for nulls, username)
+        # Empty string sorts before other strings, so we use a large string for nulls
+        display_name = user.display_name.lower() if user.display_name else 'zzzzzzzzzz'
+        return (display_name, user.username.lower())
+    
+    sorted_users = sorted(users, key=sort_key)
+    
+    return [
+        ChannelMemberResponse(
+            id=user.id,
+            username=user.username,
+            display_name=user.display_name
+        ) for user in sorted_users
+    ]
 
 @router.post("/{channel_id}/members")
 async def add_member_to_channel(
@@ -262,6 +460,8 @@ async def add_member_to_channel(
     new_membership = Membership(user_id=user_to_add.id, channel_id=channel_id)
     db.add(new_membership)
     db.commit()
+    # Update WebSocket manager to include the added user in this channel
+    manager.add_client_to_channel(user_to_add.id, channel_id)
     
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     await manager.broadcast({

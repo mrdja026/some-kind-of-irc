@@ -141,17 +141,17 @@ export function AIChannel({
     <div className="flex-1 flex flex-col">
       {/* Channel header */}
       {showHeader && (
-        <div className="p-4 border-b chat-header">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles size={18} className="text-amber-600" />
-              <div className="font-semibold">{channelName}</div>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+        <div className="p-3 md:p-4 border-b chat-header">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Sparkles size={18} className="text-amber-600 flex-shrink-0" />
+              <div className="font-semibold text-sm md:text-base truncate">{channelName}</div>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
                 AI Agents
               </span>
             </div>
             {aiStatus && (
-              <div className="text-xs chat-meta">
+              <div className="text-xs chat-meta flex-shrink-0">
                 {aiStatus.remaining_requests}/{aiStatus.max_requests_per_hour}{' '}
                 requests left
               </div>
@@ -161,15 +161,15 @@ export function AIChannel({
       )}
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-2 md:p-4 touch-pan-y">
         {/* Welcome message */}
         {responses.length === 0 && !selectedIntent && (
-          <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-amber-100 mb-4">
-              <Bot size={32} className="text-amber-600" />
+          <div className="text-center py-6 md:py-8 px-4">
+            <div className="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-amber-100 mb-3 md:mb-4">
+              <Bot size={24} className="md:w-8 md:h-8 text-amber-600" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">Welcome to AI Agents</h2>
-            <p className="chat-meta mb-6 max-w-md mx-auto">
+            <h2 className="text-lg md:text-xl font-semibold mb-2">Welcome to AI Agents</h2>
+            <p className="chat-meta mb-4 md:mb-6 max-w-md mx-auto text-sm md:text-base">
               Get help from our AI experts. Choose what you need assistance
               with:
             </p>
@@ -178,41 +178,41 @@ export function AIChannel({
 
         {/* Previous responses */}
         {responses.map((response, index) => (
-          <div key={index} className="mb-6">
+          <div key={index} className="mb-4 md:mb-6">
             {/* User query */}
-            <div className="flex gap-3 chat-card p-3 rounded-xl mb-3">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+            <div className="flex gap-2 md:gap-3 chat-card p-2 md:p-3 rounded-xl mb-2 md:mb-3">
+              <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
                 <span className="text-xs font-semibold">You</span>
               </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold">You</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-xs md:text-sm font-semibold">You</div>
                   <span className="text-xs px-1.5 py-0.5 rounded bg-sage/30 text-brown/70">
                     {response.intent}
                   </span>
                 </div>
-                <div className="mt-1 chat-message-text">{response.query}</div>
+                <div className="mt-1 chat-message-text text-sm md:text-base break-words">{response.query}</div>
               </div>
             </div>
 
             {/* AI response */}
-            <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
-                <Bot size={16} className="text-amber-700" />
+            <div className="flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200">
+              <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
+                <Bot size={14} className="md:w-4 md:h-4 text-amber-700" />
               </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="text-sm font-semibold text-amber-800">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <div className="text-xs md:text-sm font-semibold text-amber-800">
                     {response.agent}
                   </div>
                   <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-800">
                     AI
                   </span>
                 </div>
-                <div className="text-amber-900 whitespace-pre-wrap">
+                <div className="text-amber-900 whitespace-pre-wrap text-sm md:text-base break-words">
                   {response.response}
                 </div>
-                <div className="mt-3 text-xs text-amber-700/70 italic">
+                <div className="mt-2 md:mt-3 text-xs text-amber-700/70 italic">
                   {response.disclaimer}
                 </div>
               </div>
@@ -222,29 +222,29 @@ export function AIChannel({
 
         {/* Loading skeleton */}
         {isStreaming && (
-          <div className="mb-6">
+          <div className="mb-4 md:mb-6">
             {/* User query shown immediately */}
-            <div className="flex gap-3 chat-card p-3 rounded-xl mb-3">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
+            <div className="flex gap-2 md:gap-3 chat-card p-2 md:p-3 rounded-xl mb-2 md:mb-3">
+              <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 chat-avatar">
                 <span className="text-xs font-semibold">You</span>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold">You</div>
+                  <div className="text-xs md:text-sm font-semibold">You</div>
                 </div>
-                <div className="mt-1 chat-message-text">{query}</div>
+                <div className="mt-1 chat-message-text text-sm md:text-base break-words">{query}</div>
               </div>
             </div>
 
             {/* Skeleton loader for AI response */}
-            <div className="flex gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200 animate-pulse">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
-                <Bot size={16} className="text-amber-700" />
+            <div className="flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200 animate-pulse">
+              <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
+                <Bot size={14} className="md:w-4 md:h-4 text-amber-700" />
               </div>
-              <div className="flex-1 space-y-3">
+              <div className="flex-1 space-y-2 md:space-y-3">
                 <div className="flex items-center gap-2">
-                  <div className="h-4 w-20 bg-amber-200 rounded"></div>
-                  <div className="h-4 w-8 bg-amber-200 rounded-full"></div>
+                  <div className="h-3 md:h-4 w-16 md:w-20 bg-amber-200 rounded"></div>
+                  <div className="h-3 md:h-4 w-6 md:w-8 bg-amber-200 rounded-full"></div>
                 </div>
                 <div className="space-y-2">
                   <div className="h-3 bg-amber-200/60 rounded w-full"></div>
@@ -274,9 +274,9 @@ export function AIChannel({
 
         {/* Error message */}
         {streamError && (
-          <div className="p-4 rounded-xl bg-red-50 border border-red-200 mb-4">
-            <div className="text-red-800 font-medium">Error</div>
-            <div className="text-red-700 text-sm">
+          <div className="p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 mb-4">
+            <div className="text-red-800 font-medium text-sm md:text-base">Error</div>
+            <div className="text-red-700 text-xs md:text-sm">
               {streamError || 'Something went wrong. Please try again.'}
             </div>
           </div>
@@ -284,23 +284,23 @@ export function AIChannel({
 
         {/* Intent selection - show when no intent selected and not loading */}
         {!selectedIntent && !isStreaming && (
-          <div className="grid gap-3 max-w-lg mx-auto">
+          <div className="grid gap-2 md:gap-3 max-w-lg mx-auto px-2">
             {INTENTS.map((intent) => {
               const Icon = intent.icon
               return (
                 <button
                   key={intent.id}
                   onClick={() => handleIntentSelect(intent.id)}
-                  className="flex items-center gap-4 p-4 rounded-xl chat-card hover:border-amber-300 transition-all text-left group"
+                  className="flex items-center gap-3 md:gap-4 p-3 md:p-4 rounded-xl chat-card hover:border-amber-300 transition-all text-left group min-h-[44px]"
                 >
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center bg-amber-100 group-hover:bg-amber-200 transition-colors">
-                    <Icon size={24} className="text-amber-700" />
+                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center bg-amber-100 group-hover:bg-amber-200 transition-colors flex-shrink-0">
+                    <Icon size={20} className="md:w-6 md:h-6 text-amber-700" />
                   </div>
-                  <div className="flex-1">
-                    <div className="font-semibold text-brown">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-brown text-sm md:text-base">
                       {intent.label}
                     </div>
-                    <div className="text-sm chat-meta">
+                    <div className="text-xs md:text-sm chat-meta">
                       {intent.description}
                     </div>
                   </div>
@@ -313,25 +313,25 @@ export function AIChannel({
 
       {/* Input area - show when intent is selected */}
       {selectedIntent && !isStreaming && (
-        <div className="p-4 border-t chat-input-bar">
-          <div className="mb-3 flex items-center gap-2">
+        <div className="p-2 md:p-4 border-t chat-input-bar">
+          <div className="mb-2 md:mb-3 flex items-center gap-2 flex-wrap">
             <button
               onClick={handleBack}
-              className="text-sm px-2 py-1 rounded chat-attach-button"
+              className="text-sm px-2 py-2 rounded chat-attach-button min-h-[44px]"
             >
               ← Back
             </button>
-            <span className="text-sm font-medium">
+            <span className="text-xs md:text-sm font-medium">
               {INTENTS.find((i) => i.id === selectedIntent)?.label}
             </span>
           </div>
-          <form onSubmit={handleSubmit} className="flex gap-2">
+          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={getPlaceholder(selectedIntent)}
-              className="flex-1 px-4 py-2 rounded-lg transition-all chat-input"
+              className="flex-1 px-3 md:px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-sm md:text-base"
               autoFocus
               minLength={query.trim().startsWith('/') ? 1 : 10}
             />
@@ -341,7 +341,7 @@ export function AIChannel({
                 !query.trim() ||
                 (!query.trim().startsWith('/') && query.length < 10)
               }
-              className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60"
+              className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm md:text-base w-full sm:w-auto"
             >
               Ask AI
             </button>
@@ -358,8 +358,8 @@ export function AIChannel({
 
       {/* Show prompt to select intent when viewing responses */}
       {!selectedIntent && responses.length > 0 && !isStreaming && (
-        <div className="p-4 border-t chat-input-bar text-center">
-          <p className="chat-meta text-sm">
+        <div className="p-2 md:p-4 border-t chat-input-bar text-center">
+          <p className="chat-meta text-xs md:text-sm">
             Select an option above to ask another question
           </p>
         </div>

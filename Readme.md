@@ -1,108 +1,78 @@
 # IRC Chat Application
 
-A modern, real-time IRC chat application with a clean, intuitive interface.
+A modern, real-time IRC-like chat application built with a full-stack architecture, featuring persistent channels, direct messages, and media sharing.
 
-## Tech Stack
+## 📚 Documentation & Specs
 
-### Backend
+This project follows **OpenSpec** for specification-driven development.
+- **Project Context**: `openspec/project.md`
+- **Change Proposals**: `openspec/changes/`
+- **Active Specs**: `openspec/specs/`
 
-- **Python 3.8+** - Programming language
-- **FastAPI** - Web framework for building APIs
-- **SQLAlchemy** - ORM for database operations
-- **SQLite** - Default database
-- **JWT** - Authentication
-- **WebSocket** - Real-time communication
+## 🚀 Tech Stack
 
-### Frontend
+- **Frontend**: React, TanStack Start, TanStack Query, TailwindCSS, Vite
+- **Backend**: Python (FastAPI), SQLAlchemy, SQLite
+- **Microservices**:
+  - **Media Storage**: Flask + MinIO (Object Storage)
+  - **Data Processor**: Django (OCR/Image Processing)
+  - **Audit Logger**: FastAPI
+- **Infrastructure**: Redis, MinIO, Pixi (Task Runner/Env Manager)
 
-- **React** - UI library
-- **Tanstack Start** as a meta framework
-- **TypeScript** - Type safety
-- **TanStack Router** - Routing
-- **TanStack Query** - Data fetching and caching
-- **TailwindCSS** - Styling
-- **Vite** - Build tool
+## 🛠️ Local Development
 
-## App Idea
-
-This IRC chat application provides a familiar IRC-like experience with modern features:
-
-- Public channels (starting with #)
-- Direct messages between users
-- Real-time messaging
-- Typing indicators
-- User authentication
-- Responsive design
-- Slash commands (/join, /nick, /me)
-
-## Local Development Setup & Testing Guide
+We use **[pixi](https://prefix.dev/)** to manage dependencies and run the full application stack locally.
 
 ### Prerequisites
+1. Install **[pixi](https://prefix.dev/)**.
+2. **Linux (Ubuntu)** or **Windows**.
 
-- Python 3.8+
-- Node.js 16+ & ppnpm/yarn/pppnpm
-- SQLite (default database, no extra setup needed)
+### Quick Start
 
-### 1. Backend Setup
-
-1. **Navigate to backend directory**:
+#### 🐧 Linux (Ubuntu)
+1. **Setup**: Install dependencies and build frontend.
    ```bash
-   cd backend
+   pixi run setup-linux
    ```
-2. **Create and activate a virtual environment**:
-   - **Windows**:
-     ```bash
-     python -m venv venv
-     venv\Scripts\activate
-     ```
-   - **macOS/Linux**:
-     ```bash
-     python3 -m venv venv
-     source venv/bin/activate
-     ```
-3. **Install backend dependencies**:
+2. **Run**: Start all services (Backend, Frontend, MinIO, Redis, Workers).
    ```bash
-   pip install -r requirements.txt
+   pixi run start-all-linux
    ```
-4. **Create a test user (required for testing)**:
+   - Frontend: http://localhost:3000
+   - Backend: http://localhost:8002
+   - MinIO Console: http://localhost:9001
+
+#### 🪟 Windows
+1. **Setup**: Install dependencies (excluding data-processor).
    ```bash
-   python create_test_user.py
+   pixi run setup-windows
    ```
-5. **Start the backend server**:
+2. **Run**: Start services (Powershell background jobs).
    ```bash
-   python -m src.main
+   pixi run start-all-windows
    ```
-   The backend will run on `http://localhost:8002` with WebSocket support at `ws://localhost:8002`.
+   *Note: The Data Processor service is currently disabled on Windows due to dependency issues.*
 
-### 2. Frontend Setup
+## 📋 Current Status & Next Steps
 
-1. **Open a new terminal and navigate to frontend directory**:
-   ```bash
-   cd frontend
-   ```
-2. **Install frontend dependencies**:
-   ```bash
-   pnpm install
-   ```
-3. **Start the frontend development server**:
-   ```bash
-   pnpm run dev
-   ```
-   The frontend will run on `http://localhost:5173` (or another port if 5173 is occupied).
+### Active Development
+- **Infrastructure**: Local run stabilized via `pixi`.
+- **Deployment**: Hetzner deployment active but experiencing stability issues (UI bugs, hydration errors).
 
-### 3. Testing Chat & Typing Features
+### Known Issues (TODOs)
+- **Windows Support**: Data Processor service needs Windows compatibility fixes.
+- **Production**: Fix hydration errors and image loading in production build.
+- **Stability**: Channel join bugs and UI consistency.
 
-1. **Access the frontend**: Open a browser and go to `http://localhost:5173`.
-2. **Log in**: Use the test user credentials created earlier (check `create_test_user.py` output).
-3. **Navigate to chat**: Select a channel from the sidebar or create a new one.
-4. **Test typing indicator**: Open a second browser window/tab, log in with the same or another test user, and start typing in the same channel. The first window will display a typing indicator.
-5. **Send messages**: Type and send messages in the selected channel to verify real-time chat functionality.
+## 📂 Project Structure
 
-### Troubleshooting Tips
+- `backend/` - Main API (FastAPI)
+- `frontend/` - UI (TanStack Start)
+- `media-storage/` - File upload service
+- `data-processor/` - OCR and image processing
+- `audit-logger/` - Activity logging
+- `openspec/` - Specifications and change proposals
+- `scripts/` - Helper scripts for local execution
 
-- If the WebSocket connection fails, ensure the backend server is running and check the frontend’s `VITE_WS_URL` environment variable (default: `ws://localhost:8002`).
-- If the test user creation fails, check the backend’s `src/core/database.py` for connection issues.
-
-### MINIO
-
-Download minio from https://min.io/download#/windows or https://min.io/download#/linux and put it as a child in media-storage
+---
+*Powered by OpenSpec*

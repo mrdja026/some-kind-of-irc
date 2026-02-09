@@ -1,10 +1,5 @@
-"""
-AI Agent endpoint for the #ai channel.
+"""AI Agent endpoint for the #ai channel."""
 
-Handles AI queries and rate limiting.
-"""
-
-from datetime import datetime, timedelta
 import json
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,14 +9,12 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.database import get_db
+from src.core.admin import require_admin
 from src.models.user import User
-from src.api.endpoints.auth import get_current_user
 from src.services.agent_orchestrator import orchestrator
+from src.services.rate_limiter import enforce_rate_limit, remaining_requests
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-# In-memory rate limiting (for production, use Redis)
-_rate_limit_store: dict[int, list[datetime]] = {}
 
 
 class AIQueryRequest(BaseModel):
@@ -42,38 +35,13 @@ class AIQueryResponse(BaseModel):
     disclaimer: str = "AI responses are for informational purposes only. Always verify important decisions with qualified professionals."
 
 
-def check_rate_limit(user_id: int) -> bool:
-    """Check if user has exceeded rate limit. Returns True if allowed."""
-    now = datetime.utcnow()
-    hour_ago = now - timedelta(hours=1)
-    
-    # Clean up old entries
-    if user_id in _rate_limit_store:
-        _rate_limit_store[user_id] = [
-            ts for ts in _rate_limit_store[user_id] if ts > hour_ago
-        ]
-    else:
-        _rate_limit_store[user_id] = []
-    
-    # Check limit
-    if len(_rate_limit_store[user_id]) >= settings.AI_RATE_LIMIT_PER_HOUR:
-        return False
-    
-    # Record this request
-    _rate_limit_store[user_id].append(now)
-    return True
-
-
-def get_remaining_requests(user_id: int) -> int:
+async def get_remaining_requests(user_id: int) -> int:
     """Get number of remaining AI requests for the user."""
-    now = datetime.utcnow()
-    hour_ago = now - timedelta(hours=1)
-    
-    if user_id not in _rate_limit_store:
-        return settings.AI_RATE_LIMIT_PER_HOUR
-    
-    recent = [ts for ts in _rate_limit_store[user_id] if ts > hour_ago]
-    return max(0, settings.AI_RATE_LIMIT_PER_HOUR - len(recent))
+    return await remaining_requests(
+        user_id=user_id,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
 
 
 def _validate_query(request: AIQueryRequest):
@@ -97,22 +65,21 @@ def _validate_query(request: AIQueryRequest):
 @router.post("/query", response_model=AIQueryResponse)
 async def query_ai_agents(
     request: AIQueryRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Query the AI agents with a specific intent.
+    Query the AI agents with a specific intent (admin only).
 
     Intents:
     - afford: Financial affordability analysis
     - learn: Learning material recommendations
     """
-    # Check rate limit
-    if not check_rate_limit(current_user.id):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. You can make {settings.AI_RATE_LIMIT_PER_HOUR} AI queries per hour."
-        )
+    await enforce_rate_limit(
+        user_id=current_user.id,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
     
     _validate_query(request)
 
@@ -136,14 +103,14 @@ async def query_ai_agents(
 @router.post("/query/stream")
 async def query_ai_agents_stream(
     request: AIQueryRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    if not check_rate_limit(current_user.id):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. You can make {settings.AI_RATE_LIMIT_PER_HOUR} AI queries per hour."
-        )
+    await enforce_rate_limit(
+        user_id=current_user.id,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
 
     _validate_query(request)
 
@@ -176,10 +143,10 @@ async def query_ai_agents_stream(
 
 @router.get("/status")
 async def get_ai_status(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_admin)
 ):
-    """Get AI service status and remaining requests for the user."""
-    remaining = get_remaining_requests(current_user.id)
+    """Get AI service status and remaining requests for the user (admin only)."""
+    remaining = await get_remaining_requests(current_user.id)
     configured = bool(settings.ANTHROPIC_API_KEY)
     
     return {

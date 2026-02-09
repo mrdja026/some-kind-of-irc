@@ -1,0 +1,26 @@
+# Django REST Framework
+Django>=4.2,<5.0
+djangorestframework>=3.14,<4.0
+django-cors-headers>=4.3,<5.0
+
+# Image Processing
+opencv-python-headless>=4.8,<5.0
+pytesseract>=0.3.10,<1.0
+numpy>=1.24,<2.0
+scikit-image>=0.21,<1.0
+Pillow>=10.0,<11.0
+
+# JWT validation (shared secret with monolith)
+python-jose[cryptography]==3.5.0
+
+# HTTP client for backend communication
+httpx>=0.25,<1.0
+
+# MinIO client for storage
+boto3>=1.28,<2.0
+
+# Utilities
+python-dotenv>=1.0,<2.0
+
+# Server
+gunicorn>=21.0,<23.0

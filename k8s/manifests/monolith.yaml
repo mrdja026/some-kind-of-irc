@@ -1,0 +1,88 @@
+---
+# Monolith backend deployment (existing FastAPI app)
+# Uses the existing backend Dockerfile, deployed to K3s
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monolith
+  namespace: irc-app
+  labels:
+    app: monolith
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monolith
+  template:
+    metadata:
+      labels:
+        app: monolith
+    spec:
+      containers:
+        - name: monolith
+          # Build and import this image locally:
+          #   docker build -t irc-monolith:latest ./backend
+          #   sudo k3s ctr images import <(docker save irc-monolith:latest)
+          image: irc-monolith:latest
+          imagePullPolicy: Never # Use locally imported image
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+            - secretRef:
+                name: irc-app-secret
+          env:
+            - name: DATABASE_URL
+              value: "sqlite:////data/chat.db"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /data
+      volumes:
+        - name: sqlite-data
+          persistentVolumeClaim:
+            claimName: monolith-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monolith-pvc
+  namespace: irc-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monolith
+  namespace: irc-app
+spec:
+  selector:
+    app: monolith
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP

@@ -13,3 +13,7 @@
 ## 3. Documentation
 - [x] 3.1 Document storage service configuration and environment variables
 - [x] 3.2 Provide a minimal upload example for developers
+
+## 4. Docker
+- [x] 4.1 Add media storage Dockerfile
+- [x] 4.2 Add media storage service to docker-compose with env wiring

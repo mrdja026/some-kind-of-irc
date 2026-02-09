@@ -6,19 +6,17 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from typing import Optional
-import hashlib
 
 from src.core.config import settings
 from src.core.database import get_db
 from src.models.user import User
-from src.models.channel import Channel
-from src.models.membership import Membership
-from src.services.irc_logger import log_join, log_nick_user
+from src.services.irc_logger import log_nick_user
+from src.services.event_publisher import publish_user_registered
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing with bcrypt cost factor 12
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # Pydantic models
@@ -46,48 +44,35 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 # Helper functions
-def verify_password(plain_password, hashed_password):
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password using bcrypt only. Returns False if hash is invalid."""
     try:
-        # Check if this is a SHA-256 hash (64 hex characters)
-        if len(hashed_password) == 64 and all(c in '0123456789abcdefABCDEF' for c in hashed_password):
-            return hashlib.sha256(plain_password.encode('utf-8')).hexdigest() == hashed_password
-        else:
-            # Otherwise, assume it's a bcrypt hash
-            truncated_password = plain_password.encode('utf-8')[:72].decode('utf-8', 'ignore')
-            return pwd_context.verify(truncated_password, hashed_password)
-    except Exception as e:
-        print(f"Password verification failed: {e}")
+        # bcrypt hashes start with $2a$, $2b$, or $2y$
+        if not hashed_password.startswith('$2'):
+            return False
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
         return False
 
-def get_password_hash(password):
-    # Truncate password to 72 bytes to avoid bcrypt's limit
-    # bcrypt has a maximum password length of 72 bytes //find solution that works wittout 72 byte restruiction
-    try:
-        password_bytes = password.encode('utf-8')
-        if len(password_bytes) > 72:
-            password_bytes = password_bytes[:72]
-        return pwd_context.hash(password_bytes)
-    except Exception as e:
-        # If bcrypt fails for any reason (including password length), use a fallback
-        return hashlib.sha256(password.encode('utf-8')).hexdigest()
+def get_password_hash(password: str) -> str:
+    """Hash password using bcrypt with cost factor 12."""
+    return pwd_context.hash(password)
 
 def get_user(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
 
 def authenticate_user(db: Session, username: str, password: str):
-    print(f"Getting user from DB: {username}")
+    """Authenticate user. Rejects legacy users (hash_type is None) - they must reset password."""
     user = get_user(db, username)
-    print(f"User found: {user}")
     
     if not user:
-        print("User not found")
         return False
-        
-    print(f"Verifying password hash: {user.password_hash}")
-    password_match = verify_password(password, user.password_hash)
-    print(f"Password match: {password_match}")
     
-    if not password_match:
+    # Reject legacy users - force password reset
+    if user.hash_type is None:
+        return False
+    
+    if not verify_password(password, user.password_hash):
         return False
         
     return user
@@ -140,23 +125,13 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     hashed_password = get_password_hash(user.password)
-    new_user = User(username=user.username, password_hash=hashed_password)
+    new_user = User(username=user.username, password_hash=hashed_password, hash_type="bcrypt")
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     
-    # Check if general channel exists, create if not
-    general_channel = db.query(Channel).filter(Channel.name == "#general").first()
-    if not general_channel:
-        general_channel = Channel(name="#general", type="public")
-        db.add(general_channel)
-        db.commit()
-        db.refresh(general_channel)
-    
-    # Add user to general channel
-    membership = Membership(user_id=new_user.id, channel_id=general_channel.id)
-    db.add(membership)
-    db.commit()
+    # Publish event for Channel Service to auto-join to #general
+    publish_user_registered(new_user.id, new_user.username)
     
     # Create and set JWT cookie
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -172,17 +147,12 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
         max_age=int(access_token_expires.total_seconds()),
     )
     log_nick_user(new_user.id, new_user.username)
-    log_join(new_user.id, general_channel.id, general_channel.name)
     return {"message": "Registration successful"}
 
 @router.post("/login")
 async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    print(f"Login attempt with username: {form_data.username}")
-    try:
-        user = authenticate_user(db, form_data.username, form_data.password)
-    except Exception as e:
-        print(f"Error authenticating user: {e}")
-        raise
+    user = get_user(db, form_data.username)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -190,23 +160,21 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check if general channel exists, create if not
-    general_channel = db.query(Channel).filter(Channel.name == "#general").first()
-    if not general_channel:
-        general_channel = Channel(name="#general", type="public")
-        db.add(general_channel)
-        db.commit()
-        db.refresh(general_channel)
+    # Check if legacy user (needs password reset)
+    if user.hash_type is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password reset required. Please use password reset to continue.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
-    # Add user to general channel if not already a member
-    existing_membership = db.query(Membership).filter(
-        Membership.user_id == user.id,
-        Membership.channel_id == general_channel.id
-    ).first()
-    if not existing_membership:
-        membership = Membership(user_id=user.id, channel_id=general_channel.id)
-        db.add(membership)
-        db.commit()
+    # Verify password
+    if not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -222,7 +190,6 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
         max_age=int(access_token_expires.total_seconds()),
     )
     log_nick_user(user.id, user.username)
-    log_join(user.id, general_channel.id, general_channel.name)
     return {"message": "Login successful"}
 
 @router.get("/me", response_model=UserResponse)
