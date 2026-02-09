@@ -5,12 +5,51 @@ Set-Location $ProjectRoot
 Write-Host "Working directory set to: $ProjectRoot" -ForegroundColor Gray
 Write-Host "Starting IRC Fullstack Local Environment (Windows)..." -ForegroundColor Cyan
 
+# Clean up stale jobs/processes from prior runs to avoid mixed old/new code paths.
+Get-Job -Name "Backend" -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
+Get-Job -Name "Backend" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+Get-Job -Name "AIService" -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
+Get-Job -Name "AIService" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+Get-Job -Name "Frontend" -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
+Get-Job -Name "Frontend" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+
 function Stop-AllServices {
     Write-Host "`nStopping all services..." -ForegroundColor Yellow
     Get-Job | Stop-Job
     Get-Job | Remove-Job
     Write-Host "All services stopped." -ForegroundColor Green
 }
+
+function Stop-PythonListenersOnPort {
+    param([int]$Port)
+
+    try {
+        $connections = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
+        if ($null -eq $connections) {
+            return
+        }
+
+        $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($procId in $pids) {
+            $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+            if ($null -eq $proc) {
+                continue
+            }
+
+            if ($proc.ProcessName -match '^python') {
+                Write-Host "Stopping stale python process PID $procId on port $Port..." -ForegroundColor Yellow
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    catch {
+        Write-Warning "Failed to clean port $Port listeners: $($_.Exception.Message)"
+    }
+}
+
+# Kill stale python listeners before launching fresh services.
+Stop-PythonListenersOnPort -Port 8001
+Stop-PythonListenersOnPort -Port 8002
 
 function Resolve-RedisBinary {
     param([string]$ProjectRootPath)
@@ -130,6 +169,27 @@ Start-Job -Name "Backend" -ScriptBlock {
     & $PyPath -m uvicorn src.main:app --reload --reload-dir backend --host 0.0.0.0 --port 8002 --app-dir backend
 } -ArgumentList $BackendEnv, $BackendPython, $ProjectRoot | Out-Null
 
+Write-Host "Starting AI Service..." -ForegroundColor Green
+$AiServiceEnv = @{
+    SECRET_KEY = if ($env:SECRET_KEY) { $env:SECRET_KEY } else { "your-secret-key-here" }
+    ALGORITHM = if ($env:ALGORITHM) { $env:ALGORITHM } else { "HS256" }
+    ALLOWED_ORIGINS = "http://localhost:4269,http://127.0.0.1:4269"
+    REDIS_URL = "redis://localhost:6379/0"
+    AI_ALLOWLIST = if ($env:AI_ALLOWLIST) { $env:AI_ALLOWLIST } else { "admina;guest2;guest3" }
+    AI_RATE_LIMIT_PER_HOUR = if ($env:AI_RATE_LIMIT_PER_HOUR) { $env:AI_RATE_LIMIT_PER_HOUR } else { "10" }
+    AI_DEBUG_LOG = if ($env:AI_DEBUG_LOG) { $env:AI_DEBUG_LOG } else { "true" }
+}
+if ($env:ANTHROPIC_API_KEY) {
+    $AiServiceEnv["ANTHROPIC_API_KEY"] = $env:ANTHROPIC_API_KEY
+}
+
+Start-Job -Name "AIService" -ScriptBlock {
+    param($EnvVars, $PyPath, $Root)
+    foreach ($key in $EnvVars.Keys) { Set-Item "env:$key" $EnvVars[$key] }
+    Set-Location $Root
+    & $PyPath -m uvicorn main:app --reload --reload-dir ai-service --host 0.0.0.0 --port 8001 --app-dir ai-service
+} -ArgumentList $AiServiceEnv, $BackendPython, $ProjectRoot | Out-Null
+
 if ((Test-Path $SeedUsersScript) -and (Test-Path $SeedUsersFile)) {
     Start-Sleep -Seconds 2
     Write-Host "Seeding default users from backend/seed_users.json..." -ForegroundColor Green
@@ -180,6 +240,8 @@ $FrontendEnv = @{
     VITE_WS_URL = "ws://localhost:8002"
     VITE_PUBLIC_API_URL = "http://localhost:8002"
     VITE_PUBLIC_WS_URL = "ws://localhost:8002"
+    VITE_AI_API_URL = "http://localhost:8001"
+    VITE_PUBLIC_AI_API_URL = "http://localhost:8001"
 }
 
 Start-Job -Name "Frontend" -ScriptBlock {
@@ -192,6 +254,7 @@ Start-Job -Name "Frontend" -ScriptBlock {
 Write-Host "`nAll services started! Streaming logs... (Press Ctrl+C to stop)" -ForegroundColor Cyan
 Write-Host "Frontend: http://localhost:4269" -ForegroundColor Green
 Write-Host "Backend: http://localhost:8002" -ForegroundColor Green
+Write-Host "AI Service: http://localhost:8001" -ForegroundColor Green
 Write-Host "MinIO Console: http://localhost:9001" -ForegroundColor Green
 Write-Host "Audit Logger: http://localhost:8004" -ForegroundColor Green
 
@@ -208,7 +271,7 @@ try {
 
         Start-Sleep -Milliseconds 500
 
-        $criticalJobs = @("MinIO", "Redis", "Backend", "MediaStorage", "AuditLogger", "Frontend")
+        $criticalJobs = @("MinIO", "Redis", "Backend", "AIService", "MediaStorage", "AuditLogger", "Frontend")
         $failed = @()
         foreach ($jobName in $criticalJobs) {
             $job = Get-Job -Name $jobName -ErrorAction SilentlyContinue

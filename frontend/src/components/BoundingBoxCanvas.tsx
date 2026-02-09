@@ -55,7 +55,7 @@ export function BoundingBoxCanvas({
   // Load Fabric.js dynamically (client-side only)
   useEffect(() => {
     if (typeof window !== 'undefined' && !fabric) {
-      import('fabric').then((module) => {
+      import('fabric').then((module: any) => {
         fabric = module.fabric || module
       })
     }

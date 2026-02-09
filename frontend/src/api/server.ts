@@ -58,16 +58,18 @@ export const getCurrentUserServer = createServerFn({
 
 export const getUserByIdServer = createServerFn({
   method: 'GET',
-}).handler(async ({ data }: { data: { userId: number } }) => {
-  const response = await serverFetch(
-    `${API_BASE_URL}/auth/users/${data.userId}`,
-    {},
-  )
-  if (!response.ok) {
-    throw new Error('Failed to get user')
-  }
-  return response.json() as Promise<User>
 })
+  .inputValidator((data: { userId: number }) => data)
+  .handler(async ({ data }) => {
+    const response = await serverFetch(
+      `${API_BASE_URL}/auth/users/${data.userId}`,
+      {},
+    )
+    if (!response.ok) {
+      throw new Error('Failed to get user')
+    }
+    return response.json() as Promise<User>
+  })
 
 // Channel server functions
 export const getChannelsServer = createServerFn({
@@ -93,13 +95,15 @@ export const getDirectMessagesServer = createServerFn({
 // Message server functions
 export const getMessagesServer = createServerFn({
   method: 'GET',
-}).handler(async ({ data }: { data: { channelId: number } }) => {
-  const response = await serverFetch(
-    `${API_BASE_URL}/channels/${data.channelId}/messages`,
-    {},
-  )
-  if (!response.ok) {
-    throw new Error('Failed to get messages')
-  }
-  return response.json() as Promise<Message[]>
 })
+  .inputValidator((data: { channelId: number }) => data)
+  .handler(async ({ data }) => {
+    const response = await serverFetch(
+      `${API_BASE_URL}/channels/${data.channelId}/messages`,
+      {},
+    )
+    if (!response.ok) {
+      throw new Error('Failed to get messages')
+    }
+    return response.json() as Promise<Message[]>
+  })

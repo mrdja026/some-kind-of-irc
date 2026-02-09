@@ -6,7 +6,7 @@ interface MentionAutocompleteProps {
   channelId: number | null;
   inputValue: string;
   onInputChange: (value: string) => void;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
 }
 
 export function MentionAutocomplete({

@@ -159,7 +159,27 @@ async def get_direct_messages(current_user: User = Depends(get_current_user), db
 @router.post("/dm/{user_id}", response_model=ChannelResponse)
 async def create_direct_message_channel(user_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot create direct message channel with yourself")
+        self_dm_name = f"dm-{current_user.id}-{current_user.id}"
+        existing_self_dm = db.query(Channel).filter(Channel.name == self_dm_name).first()
+        if existing_self_dm:
+            existing_membership = db.query(Membership).filter(
+                Membership.user_id == current_user.id,
+                Membership.channel_id == existing_self_dm.id,
+            ).first()
+            if not existing_membership:
+                db.add(Membership(user_id=current_user.id, channel_id=existing_self_dm.id))
+                db.commit()
+            manager.add_client_to_channel(current_user.id, existing_self_dm.id)
+            return existing_self_dm
+
+        new_self_dm = Channel(name=self_dm_name, type="private")
+        db.add(new_self_dm)
+        db.commit()
+        db.refresh(new_self_dm)
+        db.add(Membership(user_id=current_user.id, channel_id=new_self_dm.id))
+        db.commit()
+        manager.add_client_to_channel(current_user.id, new_self_dm.id)
+        return new_self_dm
     # Check if DM channel already exists
     dm_name1 = f"dm-{current_user.id}-{user_id}"
     dm_name2 = f"dm-{user_id}-{current_user.id}"

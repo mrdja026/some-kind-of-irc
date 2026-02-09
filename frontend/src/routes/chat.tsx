@@ -99,13 +99,18 @@ export const Route = createFileRoute('/chat')({
     }
   },
   headers: () => ({
-    'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+    'Cache-Control': 'private, no-store',
   }),
   staleTime: 30_000, // 30 seconds client-side cache
   component: ChatPage,
 })
 
 // Component for displaying message with avatar
+function isImageAttachment(url?: string | null): boolean {
+  if (!url) return false
+  return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(url)
+}
+
 function MessageAvatar({
   message,
   currentUser,
@@ -154,13 +159,24 @@ function MessageAvatar({
           )}
           {message.image_url && (
             <div className="mt-1">
-              <img
-                src={message.image_url}
-                alt="Attachment"
-                className="max-h-32 w-auto object-contain rounded cursor-pointer hover:opacity-90 transition-opacity chat-image"
-                onClick={() => onImageClick?.(message)}
-                loading="lazy"
-              />
+              {isImageAttachment(message.image_url) ? (
+                <img
+                  src={message.image_url}
+                  alt="Attachment"
+                  className="max-h-32 w-auto object-contain rounded cursor-pointer hover:opacity-90 transition-opacity chat-image"
+                  onClick={() => onImageClick?.(message)}
+                  loading="lazy"
+                />
+              ) : (
+                <a
+                  href={message.image_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block text-xs md:text-sm underline text-brown/80 hover:text-brown"
+                >
+                  Download attachment
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -215,13 +231,24 @@ function MessageAvatar({
         )}
         {message.image_url && (
           <div className="mt-1">
-            <img
-              src={message.image_url}
-              alt="Attachment"
-              className="max-h-32 w-auto object-contain rounded cursor-pointer hover:opacity-90 transition-opacity chat-image"
-              onClick={() => onImageClick?.(message)}
-              loading="lazy"
-            />
+            {isImageAttachment(message.image_url) ? (
+              <img
+                src={message.image_url}
+                alt="Attachment"
+                className="max-h-32 w-auto object-contain rounded cursor-pointer hover:opacity-90 transition-opacity chat-image"
+                onClick={() => onImageClick?.(message)}
+                loading="lazy"
+              />
+            ) : (
+              <a
+                href={message.image_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-xs md:text-sm underline text-brown/80 hover:text-brown"
+              >
+                Download attachment
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -330,6 +357,9 @@ function ChatPage() {
       if (!match) continue
       const first = parseInt(match[1])
       const second = parseInt(match[2])
+      if (first === user.id && second === user.id) {
+        continue
+      }
       const otherId = first === user.id ? second : first
       if (!Number.isNaN(otherId)) {
         ids.push(otherId)
@@ -364,9 +394,39 @@ function ChatPage() {
     if (!match) return null
     const id1 = parseInt(match[1])
     const id2 = parseInt(match[2])
+    if (id1 === user.id && id2 === user.id) {
+      return null
+    }
     const otherId = id1 === user.id ? id2 : id1
     return dmUsersById.get(otherId) || null
   }, [selectedChannel, user, dmUsersById])
+
+  const selectedChannelLabel = useMemo(() => {
+    if (!selectedChannel) {
+      return selectedChannelId ? `Channel ${selectedChannelId}` : 'Channel'
+    }
+
+    if (selectedChannel.type !== 'private' || !user) {
+      return selectedChannel.name
+    }
+
+    const match = selectedChannel.name.match(/dm-(\d+)-(\d+)/)
+    if (!match) {
+      return selectedChannel.name
+    }
+
+    const id1 = parseInt(match[1])
+    const id2 = parseInt(match[2])
+    if (id1 === user.id && id2 === user.id) {
+      return 'DM-Notes'
+    }
+
+    if (selectedChannelOtherUser) {
+      return `DM-${selectedChannelOtherUser.display_name || selectedChannelOtherUser.username}`
+    }
+
+    return selectedChannel.name
+  }, [selectedChannel, selectedChannelId, selectedChannelOtherUser, user])
 
   // Handle typing indicator
   const handleTyping = (channelId: number, userId: number) => {
@@ -393,7 +453,6 @@ function ChatPage() {
     sendTyping,
   } = useChatSocket(
     user?.id || 0,
-    '', // No token needed as we use cookies
     handleTyping,
   )
 
@@ -482,6 +541,23 @@ function ChatPage() {
     }
   }, [loaderData.defaultChannelId])
 
+  // Ensure current channel membership once websocket is connected.
+  // This avoids first-load races where the UI appears ready but channel events
+  // are missing until a manual refresh.
+  useEffect(() => {
+    if (!isConnected || !isReady || !selectedChannelId) {
+      return
+    }
+
+    joinChannel(selectedChannelId)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['channels'] })
+      })
+      .catch(() => {
+        // Already joined or transient failure; next reconnect/focus will retry.
+      })
+  }, [isConnected, isReady, selectedChannelId, queryClient])
+
   // Handle user not authenticated
   useEffect(() => {
     if (userError) {
@@ -492,6 +568,9 @@ function ChatPage() {
   // Handle channel selection
   const handleChannelSelect = async (channel: Channel) => {
     setSelectedChannelId(channel.id)
+    if (channel.name === '#ai') {
+      setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
+    }
     // Join channel if not already joined
     try {
       await joinChannel(channel.id)
@@ -687,6 +766,9 @@ function ChatPage() {
                 const channel = channels[0]
                 await joinChannel(channel.id)
                 await refetchChannels() // Refetch channels to update list
+                if (channel.name === '#ai') {
+                  setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
+                }
                 setSelectedChannelId(channel.id) // Join the channel
               } else {
                 console.error('Channel not found')
@@ -1072,10 +1154,7 @@ function ChatPage() {
                 >
                   <div className="w-2 h-2 rounded-full chat-dot flex-shrink-0"></div>
                   <div className="font-semibold text-sm md:text-base truncate">
-                    {selectedChannel?.type === 'private' &&
-                    selectedChannelOtherUser
-                      ? `DM-${selectedChannelOtherUser.display_name || selectedChannelOtherUser.username}`
-                      : selectedChannel?.name || `Channel ${selectedChannelId}`}
+                    {selectedChannelLabel}
                   </div>
                   <ChevronDown size={16} className="flex-shrink-0 md:hidden" />
                 </button>
@@ -1132,6 +1211,7 @@ function ChatPage() {
                 channelId={selectedChannelId}
                 channelName={selectedChannel?.name || '#ai'}
                 showHeader={false}
+                currentUserId={user?.id ?? null}
                 onCommand={(command) => {
                   if (command === 'chat') {
                     setChannelMode('chat')

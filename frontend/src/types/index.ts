@@ -59,15 +59,54 @@ export type AIIntent = 'afford' | 'learn';
 export type AIQueryRequest = {
   intent: AIIntent;
   query: string;
+  conversation_stage?: 'initial' | 'clarification';
+  clarification_state?: AIClarificationState | null;
 };
 
-export type AIQueryResponse = {
-  intent: string;
-  query: string;
-  response: string;
-  agent: string;
-  disclaimer: string;
+export type AIClarificationState = {
+  original_query: string;
+  questions: string[];
+  answers: string[];
+  fallback_flags?: boolean[];
+  max_rounds?: number;
 };
+
+export type AIAgentCandidates = {
+  [agentName: string]: string[];
+};
+
+export type AIAgentReasoning = {
+  [agentName: string]: string;
+};
+
+export type AIQueryResponse =
+  | {
+      mode: 'clarify';
+      intent: string;
+      query: string;
+      question: string;
+      questions: string[];
+      candidate_questions?: string[];
+      other_suggested_questions?: string[];
+      agent_candidates?: AIAgentCandidates;
+      agent_reasoning?: AIAgentReasoning;
+      judge_reasoning?: string;
+      chosen_from_agent?: string;
+      current_round?: number;
+      total_rounds?: number;
+      is_fallback_question?: boolean;
+      clarification_state?: AIClarificationState;
+      agent: string;
+      disclaimer: string;
+    }
+  | {
+      mode: 'final';
+      intent: string;
+      query: string;
+      response: string;
+      agent: string;
+      disclaimer: string;
+    };
 
 export type AIStreamEvent =
   | {
@@ -78,11 +117,36 @@ export type AIStreamEvent =
       disclaimer: string;
     }
   | {
+      type: 'progress';
+      stage: 'collect_candidates' | 'rank_questions' | 'prepare_final';
+      message: string;
+    }
+  | {
+      type: 'clarify_question';
+      intent: string;
+      query: string;
+      question: string;
+      questions: string[];
+      candidate_questions?: string[];
+      other_suggested_questions?: string[];
+      agent_candidates?: AIAgentCandidates;
+      agent_reasoning?: AIAgentReasoning;
+      judge_reasoning?: string;
+      chosen_from_agent?: string;
+      current_round?: number;
+      total_rounds?: number;
+      is_fallback_question?: boolean;
+      clarification_state?: AIClarificationState;
+      agent: string;
+      disclaimer: string;
+    }
+  | {
       type: 'delta';
       text: string;
     }
   | {
       type: 'done';
+      mode?: 'clarify' | 'final';
     }
   | {
       type: 'error';

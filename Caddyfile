@@ -1,8 +1,11 @@
 :80 {
   encode gzip
 
-  @api path /auth/* /channels/* /ai/* /health
+  @api path /auth/* /channels/* /health
   reverse_proxy @api backend:8002
+
+  @ai path /ai/*
+  reverse_proxy @ai ai-service:8001
 
   @ws path /ws/*
   reverse_proxy @ws backend:8002

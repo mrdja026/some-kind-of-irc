@@ -21,7 +21,10 @@ const WS_BASE_URL =
         return origin
       })();
 
-export const useChatSocket = (clientId: number, token: string, onTyping?: (channelId: number, userId: number) => void) => {
+export const useChatSocket = (
+  clientId: number,
+  onTyping?: (channelId: number, userId: number) => void,
+) => {
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const queryClientRef = useRef(queryClient);
@@ -147,6 +150,13 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
         return;
       }
 
+      if (wsRef.current) {
+        const state = wsRef.current.readyState;
+        if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+          return;
+        }
+      }
+
       const wsUrl = `${WS_BASE_URL}/ws/${clientId}`;
       const socket = new WebSocket(wsUrl);
       wsRef.current = socket;
@@ -188,8 +198,29 @@ export const useChatSocket = (clientId: number, token: string, onTyping?: (chann
     clearReconnectTimer();
     connect();
 
+    const ensureConnected = () => {
+      if (isCancelled || !clientId) {
+        return;
+      }
+
+      if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+        connect();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        ensureConnected();
+      }
+    };
+
+    window.addEventListener('focus', ensureConnected);
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       isCancelled = true;
+      window.removeEventListener('focus', ensureConnected);
+      document.removeEventListener('visibilitychange', handleVisibility);
       clearReconnectTimer();
       if (wsRef.current) {
         wsRef.current.close();
