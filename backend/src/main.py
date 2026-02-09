@@ -109,6 +109,8 @@ _default_origins = [
     "http://localhost",
     "http://localhost:80",
     "http://127.0.0.1",
+    "http://localhost:42069",
+    "http://127.0.0.1:42069",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:5173",
