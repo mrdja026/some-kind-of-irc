@@ -90,13 +90,13 @@ echo "Waiting for frontend to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/frontend -n irc-app
 
 echo ""
-echo "=== Starting frontend port-forward on port 42069 ==="
-# Kill any existing port-forward on 42069
-pkill -f "port-forward.*42069" 2>/dev/null || true
+echo "=== Starting frontend port-forward on port 4269 ==="
+# Kill any existing port-forward on 4269
+pkill -f "port-forward.*4269" 2>/dev/null || true
 # Start port-forward in background
-kubectl port-forward --address=0.0.0.0 svc/frontend -n irc-app 42069:80 &>/dev/null &
+kubectl port-forward --address=0.0.0.0 svc/frontend -n irc-app 4269:80 &>/dev/null &
 NODE_IP="$(hostname -I | awk '{print $1}')"
-echo "Frontend accessible at http://localhost:42069 (or http://${NODE_IP}:42069)"
+echo "Frontend accessible at http://localhost:4269 (or http://${NODE_IP}:4269)"
 
 echo ""
 echo "=== All services deployed ==="

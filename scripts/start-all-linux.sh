@@ -31,7 +31,7 @@ sleep 2
 # 3. Start Backend
 echo "Starting Backend..."
 export MEDIA_STORAGE_URL="http://localhost:9101"
-export ALLOWED_ORIGINS="http://localhost:42069,http://127.0.0.1:42069"
+export ALLOWED_ORIGINS="http://localhost:4269,http://127.0.0.1:4269"
 export REDIS_URL="redis://localhost:6379/0"
 export DATA_PROCESSOR_URL="http://localhost:8003"
 export AUDIT_LOGGER_URL="http://localhost:8004"
@@ -89,7 +89,7 @@ pnpm dev &
 cd ..
 
 echo "All services started!"
-echo "Frontend: http://localhost:42069"
+echo "Frontend: http://localhost:4269"
 echo "Backend: http://localhost:8002"
 echo "MinIO Console: http://localhost:9001"
 echo "Press Ctrl+C to stop."

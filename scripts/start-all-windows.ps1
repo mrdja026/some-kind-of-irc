@@ -117,7 +117,7 @@ Start-Sleep -Seconds 2
 Write-Host "Starting Backend..." -ForegroundColor Green
 $BackendEnv = @{
     MEDIA_STORAGE_URL = "http://localhost:9101"
-    ALLOWED_ORIGINS = "http://localhost:42069,http://127.0.0.1:42069"
+    ALLOWED_ORIGINS = "http://localhost:4269,http://127.0.0.1:4269"
     REDIS_URL = "redis://localhost:6379/0"
     DATA_PROCESSOR_URL = "http://localhost:8003"
     AUDIT_LOGGER_URL = "http://localhost:8004"
@@ -190,7 +190,7 @@ Start-Job -Name "Frontend" -ScriptBlock {
 } -ArgumentList $FrontendEnv, $PnpmPath, $ProjectRoot | Out-Null
 
 Write-Host "`nAll services started! Streaming logs... (Press Ctrl+C to stop)" -ForegroundColor Cyan
-Write-Host "Frontend: http://localhost:42069" -ForegroundColor Green
+Write-Host "Frontend: http://localhost:4269" -ForegroundColor Green
 Write-Host "Backend: http://localhost:8002" -ForegroundColor Green
 Write-Host "MinIO Console: http://localhost:9001" -ForegroundColor Green
 Write-Host "Audit Logger: http://localhost:8004" -ForegroundColor Green

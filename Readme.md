@@ -38,7 +38,7 @@ We use **[pixi](https://prefix.dev/)** to manage dependencies and run the full a
    ```bash
    pixi run start-all-linux
    ```
-   - Frontend: http://localhost:42069
+   - Frontend: http://localhost:4269
    - Backend: http://localhost:8002
    - MinIO Console: http://localhost:9001
 

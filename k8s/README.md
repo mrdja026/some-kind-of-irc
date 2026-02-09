@@ -102,7 +102,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ## After Success
 
-- **Frontend (SSR)**: http://localhost:42069 (port-forwarded from K3s)
+- **Frontend (SSR)**: http://localhost:4269 (port-forwarded from K3s)
 - **Backend API**: http://localhost/ (via NGINX Ingress on port 80)
 - **Argo CD**: https://localhost:8443 (after port-forward; password: `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`)
 - **Strangler routes**:
@@ -124,7 +124,7 @@ k8s/
 │   ├── ai-service.yaml     # AI Service (Deployment + Service)
 │   ├── configmap.yaml      # Shared ConfigMap for all services
 │   ├── data-processor.yaml # Data Processor (Deployment + Service)
-│   ├── frontend.yaml       # Frontend SSR (Deployment + Service, port-forward 42069)
+│   ├── frontend.yaml       # Frontend SSR (Deployment + Service, port-forward 4269)
 │   ├── ingress.yaml        # NGINX Ingress routes (core + dp rewrite)
 │   ├── monolith.yaml       # Monolith backend (Deployment + PVC + Service)
 │   ├── postgresql.yaml     # PostgreSQL

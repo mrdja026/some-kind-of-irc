@@ -1,6 +1,6 @@
 ---
 # Frontend SSR deployment — TanStack Start + Nitro (node server)
-# Access via: kubectl port-forward svc/frontend -n irc-app 42069:80
+# Access via: kubectl port-forward svc/frontend -n irc-app 4269:80
 apiVersion: apps/v1
 kind: Deployment
 metadata:
