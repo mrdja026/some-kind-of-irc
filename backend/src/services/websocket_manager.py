@@ -1,5 +1,5 @@
 from fastapi.websockets import WebSocket
-from typing import Dict, List, Set, Optional, Any
+from typing import Dict, List, Set, Optional, Any, cast
 from src.core.database import get_db
 from src.models.membership import Membership
 from src.models.user import User
@@ -18,10 +18,10 @@ class ConnectionManager:
         db = next(get_db())
         user = db.query(User).filter(User.id == client_id).first()
         if user:
-            state_store.set_nick(client_id, user.username)
+            state_store.set_nick(client_id, cast(str, user.username))  # type: ignore[arg-type]
         memberships = db.query(Membership).filter(Membership.user_id == client_id).all()
         for membership in memberships:
-            self.client_channels[client_id].add(int(membership.channel_id))
+            self.client_channels[client_id].add(cast(int, membership.channel_id))  # type: ignore[arg-type]
         db.close()
 
     def disconnect(self, client_id: int):
@@ -30,39 +30,46 @@ class ConnectionManager:
         if client_id in self.client_channels:
             del self.client_channels[client_id]
 
-    async def send_personal_message(self, message: dict, client_id: int):
+    async def send_personal_message(self, message: dict, client_id: int | Any):
         if client_id in self.active_connections:
             await self.active_connections[client_id].send_json(message)
 
-    async def broadcast(self, message: dict, channel_id: int):
+    async def broadcast(self, message: dict, channel_id: int | Any):
         for client_id, connection in self.active_connections.items():
             if client_id in self.client_channels and channel_id in self.client_channels[client_id]:
                 await connection.send_json(message)
 
-    async def broadcast_game_state(self, game_state: dict, channel_id: int):
+    async def broadcast_game_state(self, snapshot: dict, channel_id: int | Any):
         """Broadcast game state update to all members of a game channel."""
         message = {
             "type": "game_state_update",
             "channel_id": channel_id,
-            "game_state": game_state
+            "snapshot": snapshot,
         }
         await self.broadcast(message, channel_id)
 
-    async def broadcast_game_action(self, action_result: dict, channel_id: int, executor_id: int):
+    async def broadcast_game_action(
+        self,
+        action_result: dict,
+        channel_id: int | Any,
+        executor_id: int | Any,
+        snapshot: Optional[dict] = None,
+    ):
         """Broadcast a game action result to all members of a game channel."""
         message = {
             "type": "game_action",
             "channel_id": channel_id,
             "executor_id": executor_id,
-            "action": action_result
+            "action": action_result,
+            "snapshot": snapshot,
         }
         await self.broadcast(message, channel_id)
 
-    def add_client_to_channel(self, client_id: int, channel_id: int):
+    def add_client_to_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels:
             self.client_channels[client_id].add(channel_id)
 
-    def remove_client_from_channel(self, client_id: int, channel_id: int):
+    def remove_client_from_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels and channel_id in self.client_channels[client_id]:
             self.client_channels[client_id].remove(channel_id)
 

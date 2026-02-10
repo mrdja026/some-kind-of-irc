@@ -82,6 +82,30 @@ async def lifespan(app: FastAPI):
             new_channel = Channel(name=channel_name, type="public", is_data_processor=is_data_processor)
             db.add(new_channel)
     db.commit()
+
+    # Reset #game memberships and sessions, keep guest2 only
+    game_channel = db.query(Channel).filter(Channel.name == "#game").first()
+    if game_channel:
+        channel_id = game_channel.id
+        sessions = db.query(GameSession).filter(GameSession.channel_id == channel_id).all()
+        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id]
+        for session in sessions:
+            db.delete(session)
+        if game_state_ids:
+            db.query(GameState).filter(GameState.id.in_(game_state_ids)).delete(synchronize_session=False)
+        db.query(Membership).filter(Membership.channel_id == channel_id).delete(synchronize_session=False)
+
+        guest_users = db.query(User).filter(
+            User.username.like("guest_%"),
+            User.username != "guest2",
+        ).all()
+        npc_users = db.query(User).filter(User.username.like("npc_%")).all()
+        for user in guest_users + npc_users:
+            db.query(Membership).filter(Membership.user_id == user.id).delete(synchronize_session=False)
+            db.query(GameSession).filter(GameSession.user_id == user.id).delete(synchronize_session=False)
+            db.query(GameState).filter(GameState.user_id == user.id).delete(synchronize_session=False)
+            db.delete(user)
+        db.commit()
     db.close()
     
     # Start Redis event subscriber for auto-join functionality
