@@ -1,0 +1,165 @@
+import logging
+import random
+from typing import Any, Dict, List, Set, Tuple
+
+
+GRID_SIZE = 64
+BUFFER_THICKNESS = 6
+PLAY_MIN = BUFFER_THICKNESS
+PLAY_MAX = GRID_SIZE - BUFFER_THICKNESS - 1
+BLOCKING_TREE_COUNT = 10
+BLOCKING_ROCK_COUNT = 8
+BUFFER_PROP_COUNT = 30
+
+
+logger = logging.getLogger(__name__)
+
+
+class BattlefieldService:
+    _channel_cache: Dict[int, Dict[str, Any]] = {}
+
+    @classmethod
+    def get_or_create(cls, channel_id: int) -> Dict[str, Any]:
+        cached = cls._channel_cache.get(channel_id)
+        if cached is not None:
+            return cached
+
+        seed = channel_id * 1009 + 17
+        rng = random.Random(seed)
+
+        blocking_props, used_positions = cls._build_blocking_props(rng)
+        buffer_props = cls._build_buffer_props(rng, used_positions)
+        props = blocking_props + buffer_props
+        obstacles = [
+            {
+                "id": prop["id"],
+                "type": prop["type"],
+                "position": dict(prop["position"]),
+            }
+            for prop in blocking_props
+        ]
+        buffer_tiles = cls._build_buffer_tiles()
+
+        generated = {
+            "battlefield": {
+                "seed": seed,
+                "props": props,
+                "buffer": {
+                    "thickness": BUFFER_THICKNESS,
+                    "tiles": buffer_tiles,
+                },
+            },
+            "obstacles": obstacles,
+        }
+
+        cls._channel_cache[channel_id] = generated
+        logger.info(
+            "Generated battlefield channel_id=%s props=%s obstacles=%s buffer_tiles=%s",
+            channel_id,
+            len(props),
+            len(obstacles),
+            len(buffer_tiles),
+        )
+        return generated
+
+    @classmethod
+    def _build_blocking_props(
+        cls,
+        rng: random.Random,
+    ) -> Tuple[List[Dict[str, Any]], Set[Tuple[int, int]]]:
+        props: List[Dict[str, Any]] = []
+        used: Set[Tuple[int, int]] = set()
+
+        for index in range(BLOCKING_TREE_COUNT):
+            pos = cls._pick_unique_play_position(rng, used)
+            props.append(
+                {
+                    "id": f"tree-{index + 1}",
+                    "type": "tree",
+                    "position": {"x": pos[0], "y": pos[1]},
+                    "is_blocking": True,
+                    "zone": "play",
+                }
+            )
+
+        for index in range(BLOCKING_ROCK_COUNT):
+            pos = cls._pick_unique_play_position(rng, used)
+            props.append(
+                {
+                    "id": f"rock-{index + 1}",
+                    "type": "rock",
+                    "position": {"x": pos[0], "y": pos[1]},
+                    "is_blocking": True,
+                    "zone": "play",
+                }
+            )
+
+        return props, used
+
+    @classmethod
+    def _build_buffer_props(
+        cls,
+        rng: random.Random,
+        used: Set[Tuple[int, int]],
+    ) -> List[Dict[str, Any]]:
+        props: List[Dict[str, Any]] = []
+        attempts = 0
+
+        while len(props) < BUFFER_PROP_COUNT and attempts < 500:
+            attempts += 1
+            x = rng.randint(0, GRID_SIZE - 1)
+            y = rng.randint(0, GRID_SIZE - 1)
+            if cls._is_play_zone(x, y):
+                continue
+            position = (x, y)
+            if position in used:
+                continue
+            used.add(position)
+            prop_type = "tree" if rng.random() < 0.6 else "rock"
+            props.append(
+                {
+                    "id": f"buffer-{prop_type}-{len(props) + 1}",
+                    "type": prop_type,
+                    "position": {"x": x, "y": y},
+                    "is_blocking": False,
+                    "zone": "buffer",
+                }
+            )
+
+        return props
+
+    @classmethod
+    def _build_buffer_tiles(cls) -> List[Dict[str, int]]:
+        tiles: List[Dict[str, int]] = []
+        for x in range(GRID_SIZE):
+            for y in range(GRID_SIZE):
+                if cls._is_play_zone(x, y):
+                    continue
+                tiles.append({"x": x, "y": y})
+        return tiles
+
+    @classmethod
+    def _pick_unique_play_position(
+        cls,
+        rng: random.Random,
+        used: Set[Tuple[int, int]],
+    ) -> Tuple[int, int]:
+        for _ in range(300):
+            x = rng.randint(PLAY_MIN, PLAY_MAX)
+            y = rng.randint(PLAY_MIN, PLAY_MAX)
+            position = (x, y)
+            if position in used:
+                continue
+            used.add(position)
+            return position
+        fallback = (GRID_SIZE // 2, GRID_SIZE // 2)
+        used.add(fallback)
+        return fallback
+
+    @staticmethod
+    def _is_play_zone(x: int, y: int) -> bool:
+        return PLAY_MIN <= x <= PLAY_MAX and PLAY_MIN <= y <= PLAY_MAX
+
+    @classmethod
+    def is_play_zone(cls, x: int, y: int) -> bool:
+        return cls._is_play_zone(x, y)

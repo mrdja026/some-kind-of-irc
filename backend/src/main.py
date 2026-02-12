@@ -1,10 +1,12 @@
 import os
 import logging
+from datetime import datetime
 from urllib.parse import urlparse
+from typing import cast
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from src.core.database import Base, engine
+from src.core.database import Base, engine, get_db
 from src.core.config import settings as app_settings
 from src.api.endpoints.auth import router as auth_router
 from src.api.endpoints.channels import router as channels_router
@@ -88,7 +90,7 @@ async def lifespan(app: FastAPI):
     if game_channel:
         channel_id = game_channel.id
         sessions = db.query(GameSession).filter(GameSession.channel_id == channel_id).all()
-        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id]
+        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id is not None]
         for session in sessions:
             db.delete(session)
         if game_state_ids:
@@ -185,16 +187,121 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
 
     await manager.connect(client_id, websocket)
     try:
+        # If user is in #game, send initial full snapshot only to this client.
+        db = next(get_db())
+        game_channel = db.query(Channel).filter(Channel.name == "#game").first()
+        if game_channel is not None:
+            game_channel_id = cast(int, game_channel.id)
+            joined_channels = manager.client_channels.get(client_id, set())
+            if game_channel_id in joined_channels:
+                game_service = GameService(db)
+                snapshot = game_service.get_game_snapshot(game_channel_id)
+                await manager.send_game_state_to_client(snapshot, game_channel_id, client_id)
+        db.close()
+
         while True:
             data = await websocket.receive_json()
+            message_type = data.get("type")
             # Handle incoming WebSocket messages
-            if data["type"] == "message":
+            if message_type == "message":
                 log_privmsg(client_id, data.get("channel_id"), data.get("content", ""))
                 await manager.broadcast(data, data["channel_id"])
-            elif data["type"] == "typing":
+            elif message_type == "typing":
                 # Add user_id to typing message
                 data["user_id"] = client_id
                 await manager.broadcast(data, data["channel_id"])
+            elif message_type == "game_command":
+                channel_id = data.get("channel_id")
+                if channel_id is None:
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "missing_channel_id",
+                                "message": "game_command requires channel_id",
+                                "details": {},
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                try:
+                    resolved_channel_id = int(channel_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "invalid_channel_id",
+                                "message": "game_command channel_id must be an integer",
+                                "details": {"channel_id": channel_id},
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                db = next(get_db())
+                game_service = GameService(db)
+
+                payload = data.get("payload", {})
+                command = payload.get("command")
+                target_username = payload.get("target_username")
+
+                if command:
+                    result = game_service.execute_command(
+                        command=command,
+                        executor_id=client_id,
+                        target_username=target_username,
+                        channel_id=resolved_channel_id,
+                    )
+
+                    state_update = None
+                    if result["success"]:
+                        state_update = game_service.get_game_state_update(resolved_channel_id)
+
+                    await manager.broadcast_game_action(
+                        action_result=result,
+                        channel_id=resolved_channel_id,
+                        executor_id=client_id,
+                        snapshot=state_update,
+                    )
+                else:
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": resolved_channel_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "missing_command",
+                                "message": "game_command payload requires command",
+                                "details": {},
+                            },
+                        },
+                        client_id,
+                    )
+                db.close()
+            elif message_type == "ping":
+                ping_payload = data.get("payload", {})
+                sent_at_ms = None
+                if isinstance(ping_payload, dict):
+                    sent_at_ms = ping_payload.get("sent_at_ms")
+                await manager.send_personal_message(
+                    {
+                        "type": "pong",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "payload": {
+                            "sent_at_ms": sent_at_ms,
+                        },
+                    },
+                    client_id,
+                )
+
     except WebSocketDisconnect as exc:
         logger.info(
             "WebSocket disconnect client_id=%s host=%s code=%s",
@@ -205,7 +312,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
     except Exception:
         logger.exception("WebSocket error client_id=%s host=%s", client_id, client_host)
     finally:
-        manager.disconnect(client_id)
+        manager.disconnect(client_id, websocket)
+
 
 if __name__ == "__main__":
     import uvicorn

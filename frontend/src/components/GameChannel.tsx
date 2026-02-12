@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { getCurrentUser } from '../api'
-import type { GameState, GameCommandResponse, User } from '../types'
+import type { User, Player, GameSnapshotPayload, Obstacle, BattlefieldProp } from '../types'
 import {
   ArrowUp,
   ArrowDown,
@@ -19,6 +19,7 @@ const API_BASE_URL =
 interface GameChannelProps {
   channelId: number
   channelName: string
+  sendGameCommand: (channelId: number, command: string, targetUsername?: string) => void
 }
 
 // API functions for game
@@ -31,44 +32,6 @@ async function getGameCommands(): Promise<string[]> {
   return data.commands
 }
 
-async function getMyGameState(): Promise<GameState> {
-  const response = await fetch(`${API_BASE_URL}/game/state`, {
-    credentials: 'include',
-  })
-  if (!response.ok) throw new Error('Failed to fetch game state')
-  return response.json()
-}
-
-async function getChannelGameStates(channelId: number): Promise<GameState[]> {
-  const response = await fetch(
-    `${API_BASE_URL}/game/channel/${channelId}/states`,
-    {
-      credentials: 'include',
-    },
-  )
-  if (!response.ok) throw new Error('Failed to fetch channel game states')
-  return response.json()
-}
-
-async function executeGameCommand(
-  command: string,
-  targetUsername?: string,
-  channelId?: number,
-): Promise<GameCommandResponse> {
-  const response = await fetch(`${API_BASE_URL}/game/command`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      command,
-      target_username: targetUsername,
-      channel_id: channelId,
-    }),
-  })
-  if (!response.ok) throw new Error('Failed to execute command')
-  return response.json()
-}
-
 async function joinGameChannel(channelId: number): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/game/join/${channelId}`, {
     method: 'POST',
@@ -77,12 +40,10 @@ async function joinGameChannel(channelId: number): Promise<void> {
   if (!response.ok) throw new Error('Failed to join game channel')
 }
 
-export function GameChannel({ channelId, channelName }: GameChannelProps) {
-  const queryClient = useQueryClient()
+export function GameChannel({ channelId, channelName, sendGameCommand }: GameChannelProps) {
   const [targetUsername, setTargetUsername] = useState('')
-  const [actionLog, setActionLog] = useState<string[]>([])
-  const [isExecuting, setIsExecuting] = useState(false)
-
+  const [actionLog] = useState<string[]>([])
+  
   // Fetch current user
   const { data: user } = useQuery<User>({
     queryKey: ['currentUser'],
@@ -95,24 +56,18 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
     queryFn: getGameCommands,
   })
 
-  // Fetch my game state
-  const { data: myGameState, refetch: refetchMyState } = useQuery<GameState>({
-    queryKey: ['myGameState'],
-    queryFn: getMyGameState,
-    enabled: !!user,
-    staleTime: 0, // Treat as immediately stale for game state
-    refetchInterval: 500, // Poll every 500ms for responsive gameplay
+  // Get players from query cache (populated by WebSocket)
+  const { data: players } = useQuery<Player[]>({
+    queryKey: ['channelGameStates', channelId],
+    queryFn: async () => [],
+    enabled: false, // Purely client-side cache
+    initialData: [],
   })
 
-  // Fetch all players in channel
-  const { data: channelStates, refetch: refetchChannelStates } = useQuery<
-    GameState[]
-  >({
-    queryKey: ['channelGameStates', channelId],
-    queryFn: () => getChannelGameStates(channelId),
-    enabled: !!channelId,
-    staleTime: 0, // Treat as immediately stale
-    refetchInterval: 500, // Poll every 500ms for responsive gameplay
+  const { data: snapshot } = useQuery<GameSnapshotPayload | undefined>({
+    queryKey: ['gameSnapshot', channelId],
+    queryFn: async () => undefined,
+    enabled: false,
   })
 
   // Join game channel on mount
@@ -122,57 +77,82 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
     }
   }, [channelId])
 
-  const executeCommand = async (command: string) => {
-    if (isExecuting) return
-    setIsExecuting(true)
-
-    try {
-      const target = ['attack'].includes(command)
-        ? targetUsername || undefined
-        : undefined
-      const result = await executeGameCommand(command, target, channelId)
-
-      if (result.success) {
-        setActionLog((prev) => [...prev.slice(-9), `✓ ${result.message}`])
-        // Refetch states
-        await Promise.all([refetchMyState(), refetchChannelStates()])
-      } else {
-        setActionLog((prev) => [...prev.slice(-9), `✗ ${result.error}`])
-      }
-    } catch (error) {
-      setActionLog((prev) => [...prev.slice(-9), `✗ Error: ${error}`])
-    } finally {
-      setIsExecuting(false)
-    }
+  const executeCommand = (command: string) => {
+    if (!channelId) return
+    
+    const target = ['attack'].includes(command)
+      ? targetUsername || undefined
+      : undefined
+      
+    // Send via WebSocket - no awaiting result here, feedback comes via WS events
+    sendGameCommand(channelId, command, target)
+    
+    // Optimistic log (or wait for action_result)
+    // setActionLog((prev) => [...prev.slice(-9), `> ${command}`])
   }
 
   // Grid visualization - show full 64x64 grid
   const gridSize = 64 // Full 64x64 visible grid
-  const showInfiniteGrid = false // Static grid view
 
-  // Get current user's state from channelStates for consistency
-  const currentUserState = channelStates?.find((s) => s.user_id === user?.id)
+  const obstacles: Obstacle[] = snapshot?.obstacles || []
+  const battlefieldProps: BattlefieldProp[] = snapshot?.battlefield?.props || []
+  const bufferTiles = snapshot?.battlefield?.buffer?.tiles || []
 
-  // Use channelStates position as single source of truth for grid centering
-  const effectiveGameState = currentUserState || myGameState
+  const playersByPosition = useMemo(() => {
+    const map = new Map<string, Player>()
+    for (const player of players || []) {
+      map.set(`${player.position.x}:${player.position.y}`, player)
+    }
+    return map
+  }, [players])
+
+  const obstaclesByPosition = useMemo(() => {
+    const map = new Map<string, Obstacle>()
+    for (const obstacle of obstacles) {
+      map.set(`${obstacle.position.x}:${obstacle.position.y}`, obstacle)
+    }
+    return map
+  }, [obstacles])
+
+  const propsByPosition = useMemo(() => {
+    const map = new Map<string, BattlefieldProp>()
+    for (const prop of battlefieldProps) {
+      map.set(`${prop.position.x}:${prop.position.y}`, prop)
+    }
+    return map
+  }, [battlefieldProps])
+
+  const bufferPositionSet = useMemo(() => {
+    const set = new Set<string>()
+    for (const tile of bufferTiles) {
+      set.add(`${tile.x}:${tile.y}`)
+    }
+    return set
+  }, [bufferTiles])
+
+  // Get current user's state from players list
+  const currentUserState = players?.find((s) => s.user_id === user?.id)
+
+  type GridCell = {
+    player: Player | null
+    obstacle: Obstacle | null
+    prop: BattlefieldProp | null
+    isBuffer: boolean
+  }
 
   const getVisibleGrid = () => {
-    if (!channelStates) return []
-
-    const grid: (GameState | null)[][] = []
+    const grid: GridCell[][] = []
 
     for (let y = 0; y < gridSize; y++) {
-      const row: (GameState | null)[] = []
+      const row: GridCell[] = []
       for (let x = 0; x < gridSize; x++) {
-        // Full 64x64 grid - show all coordinates (0-63, 0-63)
-        const worldX = x
-        const worldY = y
-
-        // Check if any player is at this position
-        const player = channelStates.find(
-          (s) => s.position_x === worldX && s.position_y === worldY,
-        )
-        row.push(player || null)
+        const key = `${x}:${y}`
+        row.push({
+          player: playersByPosition.get(key) || null,
+          obstacle: obstaclesByPosition.get(key) || null,
+          prop: propsByPosition.get(key) || null,
+          isBuffer: bufferPositionSet.has(key),
+        })
       }
       grid.push(row)
     }
@@ -190,6 +170,9 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
         <p className="text-sm chat-meta">
           Available commands: {commands?.join(', ') || 'Loading...'}
         </p>
+        <p className="text-sm chat-meta">
+          Battlefield: players {players?.length || 0}, obstacles {obstacles.length}, props {battlefieldProps.length}, buffer markers {bufferTiles.length}
+        </p>
       </div>
 
       <div className="flex-1 flex flex-col md:flex-row gap-4 p-4 overflow-auto">
@@ -197,12 +180,12 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
         <div className="flex-1 flex flex-col items-center">
           <div className="mb-4 text-center">
             <div className="text-sm font-semibold">
-              Position: ({effectiveGameState?.position_x ?? '?'},{' '}
-              {effectiveGameState?.position_y ?? '?'})
+              Position: ({currentUserState?.position.x ?? '?'},{' '}
+              {currentUserState?.position.y ?? '?'})
             </div>
             <div className="text-sm">
-              Health: {effectiveGameState?.health ?? '?'}/
-              {effectiveGameState?.max_health ?? '?'}
+              Health: {currentUserState?.health ?? '?'}/
+              {currentUserState?.max_health ?? '?'}
             </div>
           </div>
 
@@ -220,31 +203,50 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
             >
               {visibleGrid.map((row, y) =>
                 row.map((cell, x) => {
-                  const isCurrentUser = cell?.user_id === user?.id
+                   const isCurrentUser = cell.player?.user_id === user?.id
 
-                  return (
-                    <div
-                      key={`${x}-${y}`}
-                      className={`w-3 h-3 flex items-center justify-center text-[8px] font-bold ${
-                        cell
-                          ? isCurrentUser
-                            ? 'bg-green-500 text-white'
-                            : 'bg-red-500 text-white'
-                          : 'bg-gray-100'
-                      }`}
-                      title={
-                        cell
-                          ? `${cell.display_name || cell.username} (HP: ${cell.health})`
-                          : `(${x}, ${y})`
-                      }
-                    >
-                      {cell
-                        ? (cell.display_name ||
-                            cell.username)?.[0]?.toUpperCase()
-                        : ''}
-                    </div>
-                  )
-                }),
+                   return (
+                     <div
+                       key={`${x}-${y}`}
+                       className={`w-3 h-3 flex items-center justify-center text-[8px] font-bold ${
+                         cell.player
+                           ? isCurrentUser
+                             ? 'bg-green-500 text-white'
+                             : cell.player.is_npc
+                               ? 'bg-blue-500 text-white'
+                               : 'bg-red-500 text-white'
+                           : cell.obstacle
+                             ? 'bg-amber-700 text-white'
+                             : cell.prop
+                               ? 'bg-emerald-700 text-white'
+                               : cell.isBuffer
+                                 ? 'bg-slate-300'
+                                 : 'bg-gray-100'
+                       }`}
+                       title={
+                         cell.player
+                           ? `${cell.player.display_name || cell.player.username} (HP: ${cell.player.health})`
+                           : cell.obstacle
+                             ? `Obstacle: ${cell.obstacle.type} (${x}, ${y})`
+                             : cell.prop
+                               ? `Prop: ${cell.prop.type} (${x}, ${y})`
+                               : cell.isBuffer
+                                 ? `Buffer (${x}, ${y})`
+                                 : `(${x}, ${y})`
+                       }
+                     >
+                       {cell.player
+                         ? (cell.player.display_name || cell.player.username)?.[0]?.toUpperCase()
+                         : cell.obstacle
+                           ? 'X'
+                           : cell.prop
+                             ? cell.prop.type === 'tree'
+                               ? 'T'
+                               : 'R'
+                             : ''}
+                     </div>
+                   )
+                 }),
               )}
             </div>
           </div>
@@ -253,7 +255,7 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
           <div className="mt-4 w-full max-w-xs">
             <h3 className="font-semibold text-sm mb-2">Players in Channel:</h3>
             <div className="space-y-1">
-              {channelStates?.map((state) => (
+              {players?.map((state) => (
                 <div
                   key={state.user_id}
                   className={`flex justify-between text-sm p-1 rounded ${
@@ -279,7 +281,6 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
               <div />
               <button
                 onClick={() => executeCommand('move up')}
-                disabled={isExecuting}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Up"
               >
@@ -288,19 +289,17 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
               <div />
               <button
                 onClick={() => executeCommand('move left')}
-                disabled={isExecuting}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Left"
               >
                 <ArrowLeft size={20} />
               </button>
               <div className="p-3 flex items-center justify-center text-xs">
-                {effectiveGameState?.position_x},
-                {effectiveGameState?.position_y}
+                {currentUserState?.position.x ?? '?'},
+                {currentUserState?.position.y ?? '?'}
               </div>
               <button
                 onClick={() => executeCommand('move right')}
-                disabled={isExecuting}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Right"
               >
@@ -309,7 +308,6 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
               <div />
               <button
                 onClick={() => executeCommand('move down')}
-                disabled={isExecuting}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Down"
               >
@@ -334,7 +332,7 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
             <div className="flex gap-2">
               <button
                 onClick={() => executeCommand('attack')}
-                disabled={isExecuting || !targetUsername}
+                disabled={!targetUsername}
                 className="flex-1 p-2 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-2"
                 title="Attack target"
               >
@@ -343,7 +341,6 @@ export function GameChannel({ channelId, channelName }: GameChannelProps) {
               </button>
               <button
                 onClick={() => executeCommand('heal')}
-                disabled={isExecuting}
                 className="flex-1 p-2 rounded bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 flex items-center justify-center gap-2"
                 title="Heal yourself"
               >

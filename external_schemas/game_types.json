@@ -30,6 +30,40 @@
         "position": { "$ref": "#/definitions/Position" }
       },
       "required": ["id", "type", "position"]
+    },
+    "Prop": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["tree", "rock"] },
+        "position": { "$ref": "#/definitions/Position" },
+        "is_blocking": { "type": "boolean" },
+        "zone": { "type": "string", "enum": ["play", "buffer"] }
+      },
+      "required": ["id", "type", "position", "is_blocking", "zone"]
+    },
+    "BufferZone": {
+      "type": "object",
+      "properties": {
+        "thickness": { "type": "integer" },
+        "tiles": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Position" }
+        }
+      },
+      "required": ["thickness", "tiles"]
+    },
+    "Battlefield": {
+      "type": "object",
+      "properties": {
+        "seed": { "type": "integer" },
+        "props": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Prop" }
+        },
+        "buffer": { "$ref": "#/definitions/BufferZone" }
+      },
+      "required": ["seed", "props", "buffer"]
     }
   }
 }

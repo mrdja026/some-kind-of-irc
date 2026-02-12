@@ -4,6 +4,7 @@
       "type": "object",
       "properties": {
         "type": { "const": "game_command" },
+        "channel_id": { "type": "integer" },
         "payload": {
           "type": "object",
           "properties": {
@@ -17,7 +18,7 @@
           "required": ["command"]
         }
       },
-      "required": ["type", "payload"]
+      "required": ["type", "channel_id", "payload"]
     }
   }
 }

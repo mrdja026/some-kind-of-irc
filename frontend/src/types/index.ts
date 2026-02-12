@@ -38,8 +38,94 @@ export type AuthResponse = {
   token_type: string;
 };
 
+// Game types matching external_schemas
+export type Position = {
+  x: number;
+  y: number;
+};
+
+export type Player = {
+  user_id: number;
+  username: string;
+  display_name?: string;
+  position: Position;
+  health: number;
+  max_health: number;
+  is_active: boolean;
+  is_npc: boolean;
+};
+
+export type Obstacle = {
+  id: string;
+  type: string;
+  position: Position;
+};
+
+export type BattlefieldProp = {
+  id: string;
+  type: 'tree' | 'rock';
+  position: Position;
+  is_blocking: boolean;
+  zone: 'play' | 'buffer';
+};
+
+export type BufferZone = {
+  thickness: number;
+  tiles: Position[];
+};
+
+export type Battlefield = {
+  seed: number;
+  props: BattlefieldProp[];
+  buffer: BufferZone;
+};
+
+export type GameSnapshotPayload = {
+  map: { width: number; height: number };
+  players: Player[];
+  obstacles: Obstacle[];
+  battlefield: Battlefield;
+  active_turn_user_id: number | null;
+};
+
+export type GameStateUpdatePayload = {
+  active_turn_user_id: number | null;
+  players: Player[];
+};
+
+export type ActionResultPayload = {
+  success: boolean;
+  action_type: string;
+  executor_id: number;
+  target_id: number | null;
+  message: string;
+  error: { code: string; message: string; details: any } | null;
+};
+
+// WebSocket Events
+export type GameSnapshotEvent = {
+  type: 'game_snapshot';
+  timestamp: string;
+  payload: GameSnapshotPayload;
+  channel_id: number; // Injected by WS handler for routing
+};
+
+export type GameStateUpdateEvent = {
+  type: 'game_state_update';
+  timestamp: string;
+  payload: GameStateUpdatePayload;
+  channel_id: number;
+};
+
+export type ActionResultEvent = {
+  type: 'action_result';
+  timestamp: string;
+  payload: ActionResultPayload;
+  channel_id: number;
+};
+
 export type WebSocketMessage = {
-  type: 'message' | 'join' | 'leave' | 'typing' | 'game_action' | 'game_state_update';
+  type: 'message' | 'join' | 'leave' | 'typing' | 'game_snapshot' | 'game_state_update' | 'action_result' | 'error';
   id?: number;
   content?: string;
   image_url?: string | null;
@@ -51,7 +137,9 @@ export type WebSocketMessage = {
   display_name?: string | null;
   channel_name?: string;
   target_user_id?: number | null;
+  payload?: any; // For game events
 };
+
 
 // AI Agent types
 export type AIIntent = 'afford' | 'learn';
@@ -168,6 +256,8 @@ export type GameState = {
   position_y: number;
   health: number;
   max_health: number;
+  is_active: boolean;
+  is_npc: boolean;
 };
 
 export type GameCommandRequest = {

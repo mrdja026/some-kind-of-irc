@@ -1,5 +1,6 @@
 from fastapi.websockets import WebSocket
 from typing import Dict, List, Set, Optional, Any, cast
+from datetime import datetime
 from src.core.database import get_db
 from src.models.membership import Membership
 from src.models.user import User
@@ -24,7 +25,10 @@ class ConnectionManager:
             self.client_channels[client_id].add(cast(int, membership.channel_id))  # type: ignore[arg-type]
         db.close()
 
-    def disconnect(self, client_id: int):
+    def disconnect(self, client_id: int, websocket: Optional[WebSocket] = None):
+        active = self.active_connections.get(client_id)
+        if websocket is not None and active is not websocket:
+            return
         if client_id in self.active_connections:
             del self.active_connections[client_id]
         if client_id in self.client_channels:
@@ -41,12 +45,24 @@ class ConnectionManager:
 
     async def broadcast_game_state(self, snapshot: dict, channel_id: int | Any):
         """Broadcast game state update to all members of a game channel."""
-        message = {
-            "type": "game_state_update",
-            "channel_id": channel_id,
-            "snapshot": snapshot,
-        }
+        message = dict(snapshot)
+        message["channel_id"] = int(channel_id)
+        if "timestamp" in message:
+            message["timestamp"] = datetime.utcnow().isoformat()
         await self.broadcast(message, channel_id)
+
+    async def send_game_state_to_client(
+        self,
+        snapshot: dict,
+        channel_id: int | Any,
+        client_id: int | Any,
+    ) -> None:
+        """Send a full game state snapshot to a single client."""
+        message = dict(snapshot)
+        message["channel_id"] = int(channel_id)
+        if "timestamp" in message:
+            message["timestamp"] = datetime.utcnow().isoformat()
+        await self.send_personal_message(message, client_id)
 
     async def broadcast_game_action(
         self,
@@ -55,15 +71,29 @@ class ConnectionManager:
         executor_id: int | Any,
         snapshot: Optional[dict] = None,
     ):
-        """Broadcast a game action result to all members of a game channel."""
+        """Send action result to executor and push state update to channel."""
         message = {
-            "type": "game_action",
-            "channel_id": channel_id,
-            "executor_id": executor_id,
-            "action": action_result,
-            "snapshot": snapshot,
+            "type": "action_result",
+            "channel_id": int(channel_id),
+            "timestamp": datetime.utcnow().isoformat(),
+            "payload": {
+                "success": action_result.get("success", False),
+                "action_type": action_result.get("command", "unknown"),
+                "executor_id": executor_id,
+                "target_id": action_result.get("target_id"),
+                "message": action_result.get("message", ""),
+                "error": {"code": "game_error", "message": action_result.get("error")} if action_result.get("error") else None
+            }
         }
-        await self.broadcast(message, channel_id)
+        await self.send_personal_message(message, executor_id)
+        
+        # If there's a snapshot/update, broadcast that too
+        if snapshot:
+            update_message = dict(snapshot)
+            update_message["channel_id"] = int(channel_id)
+            if "timestamp" in update_message:
+                update_message["timestamp"] = datetime.utcnow().isoformat()
+            await self.broadcast(update_message, channel_id)
 
     def add_client_to_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels:

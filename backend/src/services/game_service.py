@@ -2,6 +2,7 @@
 Game Service Module
 Handles game state management, command parsing, and game logic for the #game channel.
 """
+import logging
 import random
 import re
 from typing import Optional, Tuple, Dict, Any, List, Set, cast
@@ -11,6 +12,7 @@ from src.models.game_state import GameState
 from src.models.game_session import GameSession
 from src.models.user import User
 from src.models.channel import Channel
+from src.services.battlefield_service import BattlefieldService, PLAY_MIN, PLAY_MAX
 
 
 # Grid constants
@@ -21,11 +23,11 @@ MAX_HEALTH = 100
 ATTACK_DAMAGE = 10
 HEAL_AMOUNT = 15
 
-OBSTACLES = [
-    {"id": "stone-1", "type": "stone", "x": 12, "y": 12},
-    {"id": "stone-2", "type": "stone", "x": 20, "y": 18},
-    {"id": "stone-3", "type": "stone", "x": 42, "y": 40},
-    {"id": "stone-4", "type": "stone", "x": 50, "y": 24},
+DEFAULT_OBSTACLES = [
+    {"id": "rock-1", "type": "rock", "x": 12, "y": 12},
+    {"id": "rock-2", "type": "rock", "x": 20, "y": 18},
+    {"id": "rock-3", "type": "rock", "x": 42, "y": 40},
+    {"id": "rock-4", "type": "rock", "x": 50, "y": 24},
     {"id": "tree-1", "type": "tree", "x": 16, "y": 44},
     {"id": "tree-2", "type": "tree", "x": 28, "y": 10},
     {"id": "tree-3", "type": "tree", "x": 36, "y": 30},
@@ -36,6 +38,9 @@ NPC_PREFIX = "npc_"
 GUEST_PREFIX = "guest_"
 GUEST_USERNAME = "guest2"
 ADMIN_NPC_USERNAME = "admina"
+
+
+logger = logging.getLogger(__name__)
 
 
 # Available game commands
@@ -71,6 +76,15 @@ class GameService:
                 max_health=MAX_HEALTH,
             )
             self.db.add(game_state)
+            self.db.commit()
+            self.db.refresh(game_state)
+        elif channel_id is not None and not BattlefieldService.is_play_zone(
+            cast(int, game_state.position_x),
+            cast(int, game_state.position_y),
+        ):
+            safe_position = self._get_random_spawn_position(channel_id)
+            setattr(game_state, "position_x", safe_position[0])
+            setattr(game_state, "position_y", safe_position[1])
             self.db.commit()
             self.db.refresh(game_state)
         
@@ -136,6 +150,16 @@ class GameService:
         Execute a game command.
         Returns a dict with the result and updated state.
         """
+        if command not in GAME_COMMANDS:
+            return {
+                "success": False,
+                "error": f"Invalid command: {command}",
+                "game_state": None,
+                "active_turn_user_id": self.get_active_turn_user_id(channel_id)
+                if channel_id is not None
+                else None,
+            }
+
         if channel_id is not None and not force:
             active_turn_user = self.get_active_turn_user_id(channel_id)
             if active_turn_user and active_turn_user != executor_id:
@@ -226,6 +250,10 @@ class GameService:
         if result["success"]:
             result["game_state"] = {
                 "user_id": game_state_user_id,
+                "position": {
+                    "x": cast(int, game_state.position_x),
+                    "y": cast(int, game_state.position_y),
+                },
                 "position_x": cast(int, game_state.position_x),
                 "position_y": cast(int, game_state.position_y),
                 "health": cast(int, game_state.health),
@@ -263,12 +291,6 @@ class GameService:
             username = user.username
             username_value = str(username) if username is not None else ""
             username_lower = username_value.lower()
-            if not (
-                username_lower == GUEST_USERNAME
-                or username_lower.startswith(NPC_PREFIX)
-                or username_lower == ADMIN_NPC_USERNAME
-            ):
-                continue
             is_npc = bool(
                 username_lower.startswith(NPC_PREFIX)
                 or username_lower == ADMIN_NPC_USERNAME
@@ -277,10 +299,13 @@ class GameService:
                 "user_id": cast(int, user.id),
                 "username": user.username,
                 "display_name": user.display_name or user.username,
-                "position_x": cast(int, game_state.position_x),
-                "position_y": cast(int, game_state.position_y),
+                "position": {
+                    "x": cast(int, game_state.position_x),
+                    "y": cast(int, game_state.position_y)
+                },
                 "health": cast(int, game_state.health),
                 "max_health": cast(int, game_state.max_health),
+                "is_active": True,
                 "is_npc": is_npc,
             })
         
@@ -288,11 +313,45 @@ class GameService:
 
     def get_game_snapshot(self, channel_id: int) -> Dict[str, Any]:
         """Return a snapshot for the #game channel."""
+        self._normalize_channel_positions(channel_id)
+        players = self.get_all_game_states_in_channel(channel_id)
+        battlefield = self.get_battlefield(channel_id)
+        obstacles = self.get_obstacles(channel_id)
+        buffer = cast(Dict[str, Any], battlefield.get("buffer", {}))
+        props = cast(List[Dict[str, Any]], battlefield.get("props", []))
+        buffer_tiles = cast(List[Dict[str, int]], buffer.get("tiles", []))
+        logger.info(
+            "Snapshot channel_id=%s players=%s obstacles=%s props=%s buffer_tiles=%s",
+            channel_id,
+            len(players),
+            len(obstacles),
+            len(props),
+            len(buffer_tiles),
+        )
         return {
-            "map": {"width": GRID_SIZE, "height": GRID_SIZE, "center": GRID_CENTER},
-            "players": self.get_all_game_states_in_channel(channel_id),
-            "obstacles": self.get_obstacles(channel_id),
-            "active_turn_user_id": self.get_active_turn_user_id(channel_id),
+            "type": "game_snapshot",
+            "timestamp": None,  # To be filled by websocket manager
+            "payload": {
+                "map": {"width": GRID_SIZE, "height": GRID_SIZE},
+                "players": players,
+                "obstacles": obstacles,
+                "battlefield": battlefield,
+                "active_turn_user_id": self.get_active_turn_user_id(channel_id),
+            }
+        }
+
+    def get_game_state_update(self, channel_id: int) -> Dict[str, Any]:
+        """Return an incremental update for the game channel.
+
+        Note: Battlefield payload is snapshot-only to keep updates lightweight.
+        """
+        return {
+            "type": "game_state_update",
+            "timestamp": None,
+            "payload": {
+                "active_turn_user_id": self.get_active_turn_user_id(channel_id),
+                "players": self.get_all_game_states_in_channel(channel_id),
+            }
         }
     
     def get_available_commands(self) -> List[str]:
@@ -316,8 +375,8 @@ class GameService:
         
         # Find center of all players
         if len(states) > 0:
-            avg_x = sum(s["position_x"] for s in states) // len(states)
-            avg_y = sum(s["position_y"] for s in states) // len(states)
+            avg_x = sum(int(cast(Dict[str, Any], s["position"])["x"]) for s in states) // len(states)
+            avg_y = sum(int(cast(Dict[str, Any], s["position"])["y"]) for s in states) // len(states)
         else:
             avg_x, avg_y = GRID_SIZE // 2, GRID_SIZE // 2
         
@@ -329,12 +388,17 @@ class GameService:
         end_y = min(GRID_SIZE, start_y + grid_size)
         
         obstacles = self.get_obstacles(channel_id)
-        obstacle_map = {(o["x"], o["y"]): o["type"] for o in obstacles}
+        obstacle_map = {
+            (o["position"]["x"], o["position"]["y"]): o["type"]
+            for o in obstacles
+        }
 
         # Build player position map
         player_map = {}
         for state in states:
-            x, y = state["position_x"], state["position_y"]
+            position = cast(Dict[str, Any], state["position"])
+            x = int(position["x"])
+            y = int(position["y"])
             if start_x <= x < end_x and start_y <= y < end_y:
                 # Use first letter of username
                 symbol = state["username"][0].upper()
@@ -364,7 +428,11 @@ class GameService:
         lines.append("\nPlayers:")
         for state in states:
             hp_bar = "█" * (state["health"] // 10) + "░" * ((100 - state["health"]) // 10)
-            lines.append(f"  {state['username'][0].upper()} = {state['username']} ({state['position_x']},{state['position_y']}) HP: [{hp_bar}] {state['health']}/100")
+            position = cast(Dict[str, Any], state["position"])
+            lines.append(
+                f"  {state['username'][0].upper()} = {state['username']} "
+                f"({position['x']},{position['y']}) HP: [{hp_bar}] {state['health']}/100"
+            )
         
         return "\n".join(lines)
     
@@ -385,7 +453,21 @@ class GameService:
 
     def get_obstacles(self, channel_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return the obstacle list for a channel."""
-        return [obstacle.copy() for obstacle in OBSTACLES]
+        if channel_id is not None:
+            generated = BattlefieldService.get_or_create(channel_id)
+            return cast(List[Dict[str, Any]], generated.get("obstacles", []))
+        return [
+            {
+                "id": obstacle["id"],
+                "type": obstacle["type"],
+                "position": {"x": obstacle["x"], "y": obstacle["y"]}
+            }
+            for obstacle in DEFAULT_OBSTACLES
+        ]
+
+    def get_battlefield(self, channel_id: int) -> Dict[str, Any]:
+        generated = BattlefieldService.get_or_create(channel_id)
+        return cast(Dict[str, Any], generated.get("battlefield", {}))
 
     def get_active_turn_user_id(self, channel_id: int) -> Optional[int]:
         """Return the active turn user ID for a channel."""
@@ -449,13 +531,7 @@ class GameService:
         ).all()
         user_ids: List[int] = []
         for session in sessions:
-            user = self.db.query(User).filter(User.id == session.user_id).first()
-            if not user:
-                continue
-            username = cast(str, user.username)
-            username_lower = username.lower()
-            if username_lower == GUEST_USERNAME or username_lower.startswith(NPC_PREFIX):
-                user_ids.append(cast(int, session.user_id))
+            user_ids.append(cast(int, session.user_id))
         return sorted(user_ids)
 
     def _is_user_in_channel(self, user_id: int, channel_id: int) -> bool:
@@ -467,17 +543,21 @@ class GameService:
         return session is not None
 
     def _get_obstacle_positions(self, channel_id: Optional[int]) -> Set[Tuple[int, int]]:
-        return {(obstacle["x"], obstacle["y"]) for obstacle in self.get_obstacles(channel_id)}
+        return {
+            (obstacle["position"]["x"], obstacle["position"]["y"])
+            for obstacle in self.get_obstacles(channel_id)
+        }
 
     def _get_random_spawn_position(self, channel_id: Optional[int]) -> Tuple[int, int]:
         obstacle_positions = self._get_obstacle_positions(channel_id)
         occupied_positions = set()
         if channel_id is not None:
             for state in self.get_all_game_states_in_channel(channel_id):
-                occupied_positions.add((state["position_x"], state["position_y"]))
+                position = cast(Dict[str, Any], state["position"])
+                occupied_positions.add((int(position["x"]), int(position["y"])))
 
         for _ in range(50):
-            candidate = (random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1))
+            candidate = (random.randint(PLAY_MIN, PLAY_MAX), random.randint(PLAY_MIN, PLAY_MAX))
             if candidate in obstacle_positions or candidate in occupied_positions:
                 continue
             return candidate
@@ -496,7 +576,8 @@ class GameService:
         for state in self.get_all_game_states_in_channel(channel_id):
             if exclude_user_id is not None and state["user_id"] == exclude_user_id:
                 continue
-            if (state["position_x"], state["position_y"]) == position:
+            state_position = cast(Dict[str, Any], state["position"])
+            if (int(state_position["x"]), int(state_position["y"])) == position:
                 return True
         return False
 
@@ -508,9 +589,9 @@ class GameService:
         result: Dict[str, Any],
     ) -> Dict[str, Any]:
         new_x, new_y = new_position
-        if new_x < 0 or new_x >= GRID_SIZE or new_y < 0 or new_y >= GRID_SIZE:
+        if not BattlefieldService.is_play_zone(new_x, new_y):
             result["success"] = False
-            result["error"] = "Cannot move - at grid boundary"
+            result["error"] = "Cannot move - outside battle zone"
             return result
         if self._is_blocked_position(new_position, channel_id, cast(int, game_state.user_id)):
             result["success"] = False
@@ -543,8 +624,11 @@ class GameService:
                 continue
             if state.get("is_npc", False):
                 continue
-            position_x = state.get("position_x")
-            position_y = state.get("position_y")
+            position = state.get("position")
+            if not isinstance(position, dict):
+                continue
+            position_x = position.get("x")
+            position_y = position.get("y")
             if position_x is None or position_y is None:
                 continue
             if self._is_adjacent_position(
@@ -588,6 +672,27 @@ class GameService:
         right: Tuple[int, int],
     ) -> bool:
         return abs(left[0] - right[0]) + abs(left[1] - right[1]) == 1
+
+    def _normalize_channel_positions(self, channel_id: int) -> None:
+        sessions = self.db.query(GameSession).filter(
+            GameSession.channel_id == channel_id,
+            GameSession.is_active == True,
+        ).all()
+        changed = False
+        for session in sessions:
+            game_state = session.game_state
+            if game_state is None:
+                continue
+            current_x = cast(int, game_state.position_x)
+            current_y = cast(int, game_state.position_y)
+            if BattlefieldService.is_play_zone(current_x, current_y):
+                continue
+            new_x, new_y = self._get_random_spawn_position(channel_id)
+            setattr(game_state, "position_x", new_x)
+            setattr(game_state, "position_y", new_y)
+            changed = True
+        if changed:
+            self.db.commit()
 
     def _process_npc_turns(self, channel_id: int) -> None:
         active_ids = self._get_active_user_ids(channel_id)
