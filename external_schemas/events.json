@@ -18,7 +18,13 @@
                 "height": { "type": "integer" },
                 "grid_max_index": { "type": "integer" }
               },
-              "required": ["board_type", "layout", "width", "height", "grid_max_index"]
+              "required": [
+                "board_type",
+                "layout",
+                "width",
+                "height",
+                "grid_max_index"
+              ]
             },
             "players": {
               "type": "array",
@@ -28,9 +34,13 @@
               "type": "array",
               "items": { "$ref": "game_types.json#/definitions/Obstacle" }
             },
-            "battlefield": { "$ref": "game_types.json#/definitions/Battlefield" },
+            "battlefield": {
+              "$ref": "game_types.json#/definitions/Battlefield"
+            },
             "active_turn_user_id": { "type": ["integer", "null"] },
-            "turn_context": { "$ref": "game_types.json#/definitions/TurnContext" },
+            "turn_context": {
+              "$ref": "game_types.json#/definitions/TurnContext"
+            },
             "status_history": {
               "type": "array",
               "items": {
@@ -51,7 +61,14 @@
               }
             }
           },
-          "required": ["map", "players", "obstacles", "battlefield", "active_turn_user_id", "turn_context"]
+          "required": [
+            "map",
+            "players",
+            "obstacles",
+            "battlefield",
+            "active_turn_user_id",
+            "turn_context"
+          ]
         }
       },
       "required": ["type", "channel_id", "timestamp", "payload"]
@@ -70,7 +87,9 @@
               "type": "array",
               "items": { "$ref": "game_types.json#/definitions/Player" }
             },
-            "turn_context": { "$ref": "game_types.json#/definitions/TurnContext" },
+            "turn_context": {
+              "$ref": "game_types.json#/definitions/TurnContext"
+            },
             "status_history": {
               "type": "array",
               "items": {
@@ -151,7 +170,12 @@
               }
             }
           },
-          "required": ["success", "action_type", "executor_id", "active_turn_user_id"]
+          "required": [
+            "success",
+            "action_type",
+            "executor_id",
+            "active_turn_user_id"
+          ]
         }
       },
       "required": ["type", "channel_id", "timestamp", "payload"]

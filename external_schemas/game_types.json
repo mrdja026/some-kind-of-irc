@@ -57,7 +57,10 @@
       "type": "object",
       "properties": {
         "entity_id": { "type": "string" },
-        "entity_type": { "type": "string", "enum": ["player", "obstacle", "prop"] },
+        "entity_type": {
+          "type": "string",
+          "enum": ["player", "obstacle", "prop"]
+        },
         "distance": { "type": "integer" },
         "position": { "$ref": "#/definitions/Position" },
         "user_id": { "type": ["integer", "null"] },
@@ -105,7 +108,12 @@
           "required": ["revision", "added", "removed", "changed"]
         }
       },
-      "required": ["actor_user_id", "attackable_target_ids", "surroundings", "surroundings_diff"]
+      "required": [
+        "actor_user_id",
+        "attackable_target_ids",
+        "surroundings",
+        "surroundings_diff"
+      ]
     },
     "Battlefield": {
       "type": "object",
