@@ -1,0 +1,35 @@
+{
+  "definitions": {
+    "Position": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" }
+      },
+      "required": ["x", "y"]
+    },
+    "Player": {
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "integer" },
+        "username": { "type": "string" },
+        "display_name": { "type": "string" },
+        "position": { "$ref": "#/definitions/Position" },
+        "health": { "type": "integer" },
+        "max_health": { "type": "integer" },
+        "is_active": { "type": "boolean" },
+        "is_npc": { "type": "boolean" }
+      },
+      "required": ["user_id", "username", "position", "health", "max_health"]
+    },
+    "Obstacle": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "position": { "$ref": "#/definitions/Position" }
+      },
+      "required": ["id", "type", "position"]
+    }
+  }
+}

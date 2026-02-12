@@ -1,0 +1,23 @@
+{
+  "definitions": {
+    "GameCommand": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_command" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": ["move up", "move down", "move left", "move right", "attack", "heal"]
+            },
+            "target_username": { "type": ["string", "null"] },
+            "timestamp": { "type": "integer" }
+          },
+          "required": ["command"]
+        }
+      },
+      "required": ["type", "payload"]
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "definitions": {
+    "GameSnapshot": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_snapshot" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "map": {
+              "type": "object",
+              "properties": {
+                "width": { "type": "integer" },
+                "height": { "type": "integer" }
+              }
+            },
+            "players": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Player" }
+            },
+            "obstacles": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Obstacle" }
+            },
+            "active_turn_user_id": { "type": ["integer", "null"] }
+          }
+        }
+      },
+      "required": ["type", "timestamp", "payload"]
+    },
+    "GameStateUpdate": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_state_update" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "active_turn_user_id": { "type": ["integer", "null"] },
+            "players": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Player" }
+            }
+          }
+        }
+      },
+      "required": ["type", "timestamp", "payload"]
+    },
+    "ActionResult": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "action_result" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "action_type": { "type": "string" },
+            "executor_id": { "type": "integer" },
+            "target_id": { "type": ["integer", "null"] },
+            "message": { "type": "string" },
+            "error": {
+              "type": ["object", "null"],
+              "properties": {
+                "code": { "type": "string" },
+                "message": { "type": "string" },
+                "details": { "type": "object" }
+              }
+            }
+          },
+          "required": ["success", "action_type", "executor_id"]
+        }
+      },
+      "required": ["type", "timestamp", "payload"]
+    }
+  }
+}
