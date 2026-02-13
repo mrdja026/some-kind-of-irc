@@ -5,8 +5,6 @@ import type { User, Player, GameSnapshotPayload, Obstacle, BattlefieldProp } fro
 import {
   ArrowUp,
   ArrowDown,
-  ArrowLeft,
-  ArrowRight,
   Sword,
   Heart,
 } from 'lucide-react'
@@ -283,42 +281,52 @@ export function GameChannel({ channelId, channelName, sendGameCommand, sendGameJ
           <div className="flex flex-col items-center gap-2">
             <h3 className="font-semibold text-sm">Movement</h3>
             <div className="grid grid-cols-3 gap-1">
-              <div />
               <button
-                onClick={() => executeCommand('move_up')}
+                onClick={() => executeCommand('move_nw')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-                title="Move Up"
+                title="Move North-West"
+              >
+                NW
+              </button>
+              <button
+                onClick={() => executeCommand('move_n')}
+                className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+                title="Move North"
               >
                 <ArrowUp size={20} />
               </button>
-              <div />
               <button
-                onClick={() => executeCommand('move_left')}
+                onClick={() => executeCommand('move_ne')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-                title="Move Left"
+                title="Move North-East"
               >
-                <ArrowLeft size={20} />
+                NE
               </button>
-              <div className="p-3 flex items-center justify-center text-xs">
-                {currentUserState?.position.x ?? '?'},
-                {currentUserState?.position.y ?? '?'}
-              </div>
               <button
-                onClick={() => executeCommand('move_right')}
+                onClick={() => executeCommand('move_sw')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-                title="Move Right"
+                title="Move South-West"
               >
-                <ArrowRight size={20} />
+                SW
               </button>
-              <div />
               <button
-                onClick={() => executeCommand('move_down')}
+                onClick={() => executeCommand('move_s')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-                title="Move Down"
+                title="Move South"
               >
                 <ArrowDown size={20} />
               </button>
-              <div />
+              <button
+                onClick={() => executeCommand('move_se')}
+                className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+                title="Move South-East"
+              >
+                SE
+              </button>
+              <div className="col-span-3 p-2 flex items-center justify-center text-xs">
+                {currentUserState?.position.x ?? '?'},
+                {currentUserState?.position.y ?? '?'}
+              </div>
             </div>
           </div>
 

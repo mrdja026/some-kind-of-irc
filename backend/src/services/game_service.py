@@ -14,12 +14,11 @@ from src.models.game_state import GameState
 from src.models.game_session import GameSession
 from src.models.user import User
 from src.models.channel import Channel
-from src.services.battlefield_service import BattlefieldService, PLAY_MIN, PLAY_MAX
+from src.services.battlefield_service import BattlefieldService, PLAY_MIN, PLAY_MAX, GRID_SIZE
 from src.services.websocket_manager import manager as ws_manager
 
 
 # Grid constants
-GRID_SIZE = 64
 GRID_CENTER = GRID_SIZE // 2
 DEFAULT_HEALTH = 100
 MAX_HEALTH = 100
@@ -40,7 +39,6 @@ DEFAULT_OBSTACLES = [
 NPC_PREFIX = "npc_"
 GUEST_PREFIX = "guest_"
 GUEST_USERNAME = "guest2"
-ADMIN_NPC_USERNAME = "admina"
 
 
 logger = logging.getLogger(__name__)
@@ -48,13 +46,22 @@ logger = logging.getLogger(__name__)
 
 # Available game commands
 GAME_COMMANDS = [
-    "move_up",
-    "move_down",
-    "move_left",
-    "move_right",
+    "move_n",
+    "move_ne",
+    "move_se",
+    "move_s",
+    "move_sw",
+    "move_nw",
     "attack",
     "heal"
 ]
+
+LEGACY_COMMAND_ALIASES: Dict[str, str] = {
+    "move_up": "move_n",
+    "move_down": "move_s",
+    "move_left": "move_sw",
+    "move_right": "move_se",
+}
 
 
 class GameService:
@@ -65,6 +72,8 @@ class GameService:
     _channel_priority_turns: Dict[int, deque[int]] = {}
     _channel_priority_resume_from: Dict[int, int] = {}
     _channel_status_history: Dict[int, deque[Dict[str, Any]]] = {}
+    _channel_human_user: Dict[int, int] = {}
+    _channel_forced_npc_users: Dict[int, Set[int]] = {}
     
     def __init__(self, db: Session):
         self.db = db
@@ -109,8 +118,6 @@ class GameService:
             GameSession.channel_id == channel_id,
             GameSession.is_active == True
         ).first()
-        created = False
-        
         if not session:
             game_state = self.get_or_create_game_state(user_id, channel_id)
             session = GameSession(
@@ -122,19 +129,22 @@ class GameService:
             self.db.add(session)
             self.db.commit()
             self.db.refresh(session)
-            created = True
 
         self._ensure_turn_user(channel_id)
-        if created and self._is_admina_user(user_id):
-            self._enqueue_priority_turns(channel_id, user_id, 2)
-            self._record_status_note(
-                channel_id,
-                "turn_priority_inserted",
-                "admina joined: queued 2 bonus turns",
-                user_id,
-            )
         
         return session
+
+    def bootstrap_small_arena_join(self, user_id: int, channel_id: int) -> None:
+        """Initialize/refresh small-arena state for a successful game_join handshake."""
+        self.get_battlefield(channel_id)
+        self.get_or_create_game_session(user_id, channel_id)
+        self.get_or_create_game_state(user_id, channel_id)
+        self._assign_joiner_role(user_id, channel_id)
+
+        if channel_id not in self._channel_turn_user:
+            human_id = self._channel_human_user.get(channel_id)
+            if human_id is not None and self._is_user_in_channel(human_id, channel_id):
+                self._channel_turn_user[channel_id] = human_id
     
     def parse_command(self, message: str) -> Optional[Tuple[str, Optional[str]]]:
         """
@@ -144,7 +154,7 @@ class GameService:
         message_lower = message.lower().strip()
         
         # Pattern: command @username or just command
-        # e.g., "move_up @john" or "move up"
+        # e.g., "move_ne @john" or "move ne"
         mention_pattern = r'@(\w+)'
         mention_match = re.search(mention_pattern, message)
         target_username = mention_match.group(1) if mention_match else None
@@ -153,6 +163,7 @@ class GameService:
         command_text = re.sub(mention_pattern, '', message_lower).strip()
         
         normalized_command = re.sub(r"\s+", "_", command_text)
+        normalized_command = LEGACY_COMMAND_ALIASES.get(normalized_command, normalized_command)
 
         # Check if it's a valid command
         if normalized_command in GAME_COMMANDS:
@@ -184,6 +195,7 @@ class GameService:
             }
 
         normalized_command = re.sub(r"\s+", "_", command.lower().strip())
+        normalized_command = LEGACY_COMMAND_ALIASES.get(normalized_command, normalized_command)
 
         if normalized_command not in GAME_COMMANDS:
             return {
@@ -269,24 +281,17 @@ class GameService:
             "actor_max_health": None,
             "npc_actions": [],
         }
-        
-        current_x = cast(int, game_state.position_x)
-        current_y = cast(int, game_state.position_y)
-        if command == "move_up":
-            new_position = (current_x, current_y - 1)
-            result = self._try_move(game_state, new_position, channel_id, result)
-                
-        elif command == "move_down":
-            new_position = (current_x, current_y + 1)
-            result = self._try_move(game_state, new_position, channel_id, result)
-                
-        elif command == "move_left":
-            new_position = (current_x - 1, current_y)
-            result = self._try_move(game_state, new_position, channel_id, result)
-                
-        elif command == "move_right":
-            new_position = (current_x + 1, current_y)
-            result = self._try_move(game_state, new_position, channel_id, result)
+
+        if command.startswith("move_"):
+            new_position = self._resolve_move_target(
+                (cast(int, game_state.position_x), cast(int, game_state.position_y)),
+                command,
+            )
+            if new_position is None:
+                result["success"] = False
+                result["error"] = f"Invalid movement command: {command}"
+            else:
+                result = self._try_move(game_state, new_position, channel_id, result)
                 
         elif command == "attack":
             if target_id == executor_id:
@@ -372,8 +377,7 @@ class GameService:
             if not game_state or not user:
                 continue
             username = user.username
-            username_value = str(username) if username is not None else ""
-            is_npc = self._is_npc_username(username_value)
+            is_npc = self._is_npc_user(cast(int, user.id), channel_id)
             states.append({
                 "user_id": cast(int, user.id),
                 "username": user.username,
@@ -412,6 +416,8 @@ class GameService:
             "timestamp": None,  # To be filled by websocket manager
             "payload": {
                 "map": {
+                    "board_type": "staggered_hex",
+                    "layout": "odd_r",
                     "width": GRID_SIZE,
                     "height": GRID_SIZE,
                     "grid_max_index": GRID_SIZE - 1,
@@ -541,6 +547,14 @@ class GameService:
             setattr(session, "is_active", False)
             self.db.commit()
 
+        forced_npcs = self._channel_forced_npc_users.get(channel_id)
+        if forced_npcs is not None:
+            forced_npcs.discard(user_id)
+
+        current_human = self._channel_human_user.get(channel_id)
+        if current_human == user_id:
+            self._channel_human_user.pop(channel_id, None)
+
         if channel_id in self._channel_turn_user:
             self._ensure_turn_user(channel_id)
 
@@ -618,7 +632,7 @@ class GameService:
             candidate_id = int(priority_queue.popleft())
             if candidate_id not in user_ids:
                 continue
-            if self._is_npc_user(candidate_id) or not ws_manager.is_client_stale(candidate_id):
+            if self._is_npc_user(candidate_id, channel_id) or not ws_manager.is_client_stale(candidate_id):
                 self._channel_turn_user[channel_id] = candidate_id
                 return candidate_id
 
@@ -633,7 +647,7 @@ class GameService:
             candidate_id = user_ids[candidate_index]
             
             # NPCs are never stale (they don't have WebSocket connections)
-            if self._is_npc_user(candidate_id):
+            if self._is_npc_user(candidate_id, channel_id):
                 self._channel_turn_user[channel_id] = candidate_id
                 return candidate_id
             
@@ -661,6 +675,8 @@ class GameService:
             self._channel_priority_turns.pop(channel_id, None)
             self._channel_priority_resume_from.pop(channel_id, None)
             self._channel_status_history.pop(channel_id, None)
+            self._channel_human_user.pop(channel_id, None)
+            self._channel_forced_npc_users.pop(channel_id, None)
             return
         current = self._channel_turn_user.get(channel_id)
         if current not in user_ids:
@@ -670,11 +686,11 @@ class GameService:
         sessions = self.db.query(GameSession).filter(
             GameSession.channel_id == channel_id,
             GameSession.is_active == True,
-        ).all()
+        ).order_by(GameSession.id.asc()).all()
         user_ids: List[int] = []
         for session in sessions:
             user_ids.append(cast(int, session.user_id))
-        return sorted(user_ids)
+        return user_ids
 
     def _get_active_user_ids(self, channel_id: int) -> List[int]:
         active_user_ids = self._get_active_user_ids_from_sessions(channel_id)
@@ -751,19 +767,13 @@ class GameService:
             return None
         queue: deque[Tuple[int, int]] = deque([start])
         visited: Set[Tuple[int, int]] = {start}
-        directions: Tuple[Tuple[int, int], ...] = ((0, -1), (0, 1), (-1, 0), (1, 0))
         while queue:
             x, y = queue.popleft()
             current = (x, y)
             if current not in occupied_positions:
                 return current
-            for dx, dy in directions:
-                nx = x + dx
-                ny = y + dy
-                neighbor = (nx, ny)
+            for neighbor in self._neighbor_positions(current):
                 if neighbor in visited:
-                    continue
-                if not BattlefieldService.is_play_zone(nx, ny):
                     continue
                 visited.add(neighbor)
                 queue.append(neighbor)
@@ -835,7 +845,66 @@ class GameService:
         result["message"] = f"Moved to ({new_x}, {new_y})"
         return result
 
-    def _is_npc_user(self, user_id: int) -> bool:
+    def _resolve_move_target(
+        self,
+        current_position: Tuple[int, int],
+        command: str,
+    ) -> Optional[Tuple[int, int]]:
+        direction_vectors: Dict[str, Tuple[int, int]] = {
+            "move_n": (0, -1),
+            "move_ne": (1, -1),
+            "move_se": (1, 0),
+            "move_s": (0, 1),
+            "move_sw": (-1, 1),
+            "move_nw": (-1, 0),
+        }
+        direction = direction_vectors.get(command)
+        if direction is None:
+            return None
+
+        current_axial = self._offset_to_axial(current_position)
+        next_axial = (current_axial[0] + direction[0], current_axial[1] + direction[1])
+        return self._axial_to_offset(next_axial)
+
+    def _offset_to_axial(self, position: Tuple[int, int]) -> Tuple[int, int]:
+        x, y = position
+        q = x - ((y - (y & 1)) // 2)
+        r = y
+        return (q, r)
+
+    def _axial_to_offset(self, axial: Tuple[int, int]) -> Tuple[int, int]:
+        q, r = axial
+        x = q + ((r - (r & 1)) // 2)
+        y = r
+        return (x, y)
+
+    def _hex_distance_offset(self, left: Tuple[int, int], right: Tuple[int, int]) -> int:
+        left_axial = self._offset_to_axial(left)
+        right_axial = self._offset_to_axial(right)
+        dq = left_axial[0] - right_axial[0]
+        dr = left_axial[1] - right_axial[1]
+        ds = -(left_axial[0] + left_axial[1]) + (right_axial[0] + right_axial[1])
+        return max(abs(dq), abs(dr), abs(ds))
+
+    def _neighbor_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
+        base_axial = self._offset_to_axial(position)
+        vectors = [(0, -1), (1, -1), (1, 0), (0, 1), (-1, 1), (-1, 0)]
+        neighbors: List[Tuple[int, int]] = []
+        for vector in vectors:
+            axial = (base_axial[0] + vector[0], base_axial[1] + vector[1])
+            offset = self._axial_to_offset(axial)
+            if BattlefieldService.is_play_zone(offset[0], offset[1]):
+                neighbors.append(offset)
+        return neighbors
+
+    def _is_npc_user(self, user_id: int, channel_id: Optional[int] = None) -> bool:
+        if channel_id is not None:
+            human_user_id = self._channel_human_user.get(channel_id)
+            if human_user_id == user_id:
+                return False
+            forced_npcs = self._channel_forced_npc_users.get(channel_id, set())
+            if user_id in forced_npcs:
+                return True
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
@@ -844,14 +913,26 @@ class GameService:
 
     def _is_npc_username(self, username: str) -> bool:
         username_lower = username.lower()
-        return username_lower.startswith(NPC_PREFIX) or username_lower == ADMIN_NPC_USERNAME
+        return username_lower.startswith(NPC_PREFIX)
 
-    def _is_admina_user(self, user_id: int) -> bool:
-        user = self.db.query(User).filter(User.id == user_id).first()
-        if not user:
-            return False
-        username = cast(str, user.username)
-        return username.lower() == ADMIN_NPC_USERNAME
+    def _assign_joiner_role(self, user_id: int, channel_id: int) -> str:
+        forced_npcs = self._channel_forced_npc_users.setdefault(channel_id, set())
+        current_human = self._channel_human_user.get(channel_id)
+        if current_human is not None and not self._is_user_in_channel(current_human, channel_id):
+            self._channel_human_user.pop(channel_id, None)
+            current_human = None
+
+        if current_human is None:
+            self._channel_human_user[channel_id] = user_id
+            forced_npcs.discard(user_id)
+            return "human"
+
+        if current_human == user_id:
+            forced_npcs.discard(user_id)
+            return "human"
+
+        forced_npcs.add(user_id)
+        return "npc"
 
     def _enqueue_priority_turns(self, channel_id: int, user_id: int, turns: int) -> None:
         if turns <= 0:
@@ -947,19 +1028,13 @@ class GameService:
         if adjacent_targets:
             return ("attack", random.choice(adjacent_targets))
 
-        directions = [
-            ("move_up", (0, -1)),
-            ("move_down", (0, 1)),
-            ("move_left", (-1, 0)),
-            ("move_right", (1, 0)),
-        ]
+        directions = ["move_n", "move_ne", "move_se", "move_s", "move_sw", "move_nw"]
         valid_moves: List[str] = []
-        for command, offset in directions:
-            new_x = npc_x + offset[0]
-            new_y = npc_y + offset[1]
-            if new_x < 0 or new_x >= GRID_SIZE or new_y < 0 or new_y >= GRID_SIZE:
+        for command in directions:
+            resolved = self._resolve_move_target((npc_x, npc_y), command)
+            if resolved is None:
                 continue
-            if self._is_blocked_position((new_x, new_y), channel_id, user_id):
+            if self._is_blocked_position(resolved, channel_id, user_id):
                 continue
             valid_moves.append(command)
 
@@ -976,7 +1051,7 @@ class GameService:
         left: Tuple[int, int],
         right: Tuple[int, int],
     ) -> bool:
-        return abs(left[0] - right[0]) + abs(left[1] - right[1]) == 1
+        return self._hex_distance_offset(left, right) == 1
 
     def _normalize_channel_positions(self, channel_id: int) -> None:
         """Ensure all active players are inside play zone and not on blocked cells.
@@ -1023,23 +1098,34 @@ class GameService:
             self.db.commit()
 
     def _process_npc_turns(self, channel_id: int) -> List[Dict[str, Any]]:
+        """Resolve contiguous NPC turns until control reaches a non-NPC actor.
+
+        This prevents stalls where turn ownership lands on another NPC and no
+        human client can progress the loop.
+        """
         npc_actions: List[Dict[str, Any]] = []
         active_ids = self._get_active_user_ids(channel_id)
+        if not active_ids:
+            return npc_actions
+
         priority_queue = self._channel_priority_turns.get(channel_id)
         priority_count = len(priority_queue) if priority_queue is not None else 0
         max_steps = max(1, len(active_ids) + priority_count)
         steps = 0
+
         while steps < max_steps:
             active_user = self.get_active_turn_user_id(channel_id)
             if active_user is None:
-                return npc_actions
-            if not self._is_npc_user(active_user):
-                return npc_actions
+                break
+            if not self._is_npc_user(active_user, channel_id):
+                break
+
             command, target_username = self._choose_npc_action(active_user, channel_id)
             if not command:
                 self._advance_turn_user(channel_id)
                 steps += 1
                 continue
+
             result = self.execute_command(
                 command,
                 active_user,
@@ -1048,9 +1134,10 @@ class GameService:
                 force=False,
                 skip_npc=True,
             )
-            if not result.get("success"):
-                self._advance_turn_user(channel_id)
-            else:
+            if result.get("success"):
                 npc_actions.append(result)
+            else:
+                self._advance_turn_user(channel_id)
             steps += 1
+
         return npc_actions

@@ -28,7 +28,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 GUEST_PREFIX = "guest_"
 NPC_PREFIX = "npc_"
-NPC_SEED_COUNT = 4
+NPC_SEED_COUNT = 2
 GAME_CHANNEL_NAME = "#game"
 GUEST_USERNAME = "guest2"
 
@@ -170,16 +170,14 @@ def _ensure_npc_sessions(db: Session, game_service: GameService, channel_id: int
     states = game_service.get_all_game_states_in_channel(channel_id)
     npc_count = 0
     for state in states:
-        username = str(state.get("username", ""))
-        if username.lower().startswith(NPC_PREFIX):
+        if bool(state.get("is_npc", False)):
             npc_count += 1
     to_create = max(0, NPC_SEED_COUNT - npc_count)
     for _ in range(to_create):
         npc_user = _create_guest_user(db, NPC_PREFIX)
         npc_user_id = cast(int, npc_user.id)
         _ensure_membership(db, npc_user_id, channel_id)
-        game_service.get_or_create_game_session(npc_user_id, channel_id)
-        game_service.get_or_create_game_state(npc_user_id, channel_id)
+        game_service.bootstrap_small_arena_join(npc_user_id, channel_id)
 
 async def get_current_user(
     request: Request,

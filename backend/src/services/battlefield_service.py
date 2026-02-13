@@ -3,12 +3,16 @@ import random
 from typing import Any, Dict, List, Set, Tuple
 
 
-GRID_SIZE = 64
+GRID_SIZE = 10
 BUFFER_THICKNESS = 0
 PLAY_MIN = 0
 PLAY_MAX = GRID_SIZE - 1
-BLOCKING_TREE_COUNT = 10
-BLOCKING_ROCK_COUNT = 8
+TREE_CLUSTER_COUNT = 2
+ROCK_CLUSTER_COUNT = 2
+CLUSTER_MIN_SIZE = 2
+CLUSTER_MAX_SIZE = 3
+BLOCKING_TREE_COUNT = 6
+BLOCKING_ROCK_COUNT = 4
 
 # TODO(TD-Buffer): Revisit optional buffer-ring generation after spawn/move consistency issues are fully resolved.
 
@@ -77,8 +81,13 @@ class BattlefieldService:
         props: List[Dict[str, Any]] = []
         used: Set[Tuple[int, int]] = set()
 
-        for index in range(BLOCKING_TREE_COUNT):
-            pos = cls._pick_unique_play_position(rng, used)
+        tree_positions = cls._build_clump_positions(
+            rng,
+            used,
+            TREE_CLUSTER_COUNT,
+            BLOCKING_TREE_COUNT,
+        )
+        for index, pos in enumerate(tree_positions):
             props.append(
                 {
                     "id": f"tree-{index + 1}",
@@ -89,8 +98,13 @@ class BattlefieldService:
                 }
             )
 
-        for index in range(BLOCKING_ROCK_COUNT):
-            pos = cls._pick_unique_play_position(rng, used)
+        rock_positions = cls._build_clump_positions(
+            rng,
+            used,
+            ROCK_CLUSTER_COUNT,
+            BLOCKING_ROCK_COUNT,
+        )
+        for index, pos in enumerate(rock_positions):
             props.append(
                 {
                     "id": f"rock-{index + 1}",
@@ -104,6 +118,67 @@ class BattlefieldService:
         return props, used
 
     @classmethod
+    def _build_clump_positions(
+        cls,
+        rng: random.Random,
+        used: Set[Tuple[int, int]],
+        cluster_count: int,
+        total_target: int,
+    ) -> List[Tuple[int, int]]:
+        positions: List[Tuple[int, int]] = []
+        if total_target <= 0:
+            return positions
+
+        for _ in range(cluster_count):
+            if len(positions) >= total_target:
+                break
+            center = cls._pick_unique_play_position(rng, used)
+            positions.append(center)
+            remaining = total_target - len(positions)
+            if remaining <= 0:
+                break
+            target_size = min(remaining + 1, rng.randint(CLUSTER_MIN_SIZE, CLUSTER_MAX_SIZE))
+            cluster_count_now = 1
+            frontier: List[Tuple[int, int]] = [center]
+            while frontier and len(positions) < total_target and cluster_count_now < target_size:
+                base = frontier.pop(0)
+                neighbors = cls._shuffle_neighbors(rng, base)
+                for candidate in neighbors:
+                    if len(positions) >= total_target:
+                        break
+                    if candidate in used:
+                        continue
+                    if not cls._is_play_zone(candidate[0], candidate[1]):
+                        continue
+                    used.add(candidate)
+                    positions.append(candidate)
+                    frontier.append(candidate)
+                    cluster_count_now += 1
+                    if cluster_count_now >= target_size:
+                        break
+
+        while len(positions) < total_target:
+            positions.append(cls._pick_unique_play_position(rng, used))
+        return positions
+
+    @classmethod
+    def _shuffle_neighbors(
+        cls,
+        rng: random.Random,
+        position: Tuple[int, int],
+    ) -> List[Tuple[int, int]]:
+        x, y = position
+        candidates = [
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1),
+            (x + 1, y - 1),
+            (x - 1, y + 1),
+        ]
+        rng.shuffle(candidates)
+        return candidates
+
     @classmethod
     def _pick_unique_play_position(
         cls,

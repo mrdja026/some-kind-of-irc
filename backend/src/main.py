@@ -286,13 +286,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         )
                         continue
 
-                    # WS-first game initialization sequence:
-                    # 1) Generate deterministic 64x64 battlefield + obstacle clumps
-                    # 2) Ensure player sessions/states (baseline NPC seeds)
-                    # 3) Normalize spawns with blocked-check + BFS nearest free tile
-                    game_service.get_battlefield(resolved_channel_id)
-                    game_service.get_or_create_game_session(client_id, resolved_channel_id)
-                    game_service.get_or_create_game_state(client_id, resolved_channel_id)
+                    # WS-first small arena initialization sequence:
+                    # 1) Generate deterministic 10x10 staggered battlefield + obstacle clumps
+                    # 2) Ensure joining participant session/state and role assignment
+                    # 3) Seed baseline NPCs and normalize spawns with blocked-check + BFS
+                    game_service.bootstrap_small_arena_join(client_id, resolved_channel_id)
                     _ensure_npc_sessions(db, game_service, resolved_channel_id)
 
                     snapshot = game_service.get_game_snapshot(resolved_channel_id)

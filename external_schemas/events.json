@@ -12,9 +12,13 @@
             "map": {
               "type": "object",
               "properties": {
+                "board_type": { "type": "string" },
+                "layout": { "type": "string" },
                 "width": { "type": "integer" },
-                "height": { "type": "integer" }
-              }
+                "height": { "type": "integer" },
+                "grid_max_index": { "type": "integer" }
+              },
+              "required": ["board_type", "layout", "width", "height", "grid_max_index"]
             },
             "players": {
               "type": "array",
@@ -145,7 +149,7 @@
               }
             }
           },
-          "required": ["success", "action_type", "executor_id"]
+          "required": ["success", "action_type", "executor_id", "active_turn_user_id"]
         }
       },
       "required": ["type", "channel_id", "timestamp", "payload"]
