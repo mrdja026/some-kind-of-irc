@@ -280,7 +280,7 @@ export function GameChannel({ channelId, channelName, sendGameCommand }: GameCha
             <div className="grid grid-cols-3 gap-1">
               <div />
               <button
-                onClick={() => executeCommand('move up')}
+                onClick={() => executeCommand('move_up')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Up"
               >
@@ -288,7 +288,7 @@ export function GameChannel({ channelId, channelName, sendGameCommand }: GameCha
               </button>
               <div />
               <button
-                onClick={() => executeCommand('move left')}
+                onClick={() => executeCommand('move_left')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Left"
               >
@@ -299,7 +299,7 @@ export function GameChannel({ channelId, channelName, sendGameCommand }: GameCha
                 {currentUserState?.position.y ?? '?'}
               </div>
               <button
-                onClick={() => executeCommand('move right')}
+                onClick={() => executeCommand('move_right')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Right"
               >
@@ -307,7 +307,7 @@ export function GameChannel({ channelId, channelName, sendGameCommand }: GameCha
               </button>
               <div />
               <button
-                onClick={() => executeCommand('move down')}
+                onClick={() => executeCommand('move_down')}
                 className="p-3 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
                 title="Move Down"
               >

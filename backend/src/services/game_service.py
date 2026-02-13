@@ -46,10 +46,10 @@ logger = logging.getLogger(__name__)
 
 # Available game commands
 GAME_COMMANDS = [
-    "move up",
-    "move down", 
-    "move left",
-    "move right",
+    "move_up",
+    "move_down",
+    "move_left",
+    "move_right",
     "attack",
     "heal"
 ]
@@ -123,7 +123,7 @@ class GameService:
         message_lower = message.lower().strip()
         
         # Pattern: command @username or just command
-        # e.g., "move up @john" or "move up"
+        # e.g., "move_up @john" or "move up"
         mention_pattern = r'@(\w+)'
         mention_match = re.search(mention_pattern, message)
         target_username = mention_match.group(1) if mention_match else None
@@ -131,10 +131,11 @@ class GameService:
         # Remove the mention to get the command
         command_text = re.sub(mention_pattern, '', message_lower).strip()
         
+        normalized_command = re.sub(r"\s+", "_", command_text)
+
         # Check if it's a valid command
-        for cmd in GAME_COMMANDS:
-            if command_text == cmd:
-                return (cmd, target_username)
+        if normalized_command in GAME_COMMANDS:
+            return (normalized_command, target_username)
         
         return None
     
@@ -151,7 +152,7 @@ class GameService:
         Execute a game command.
         Returns a dict with the result and updated state.
         """
-        if command not in GAME_COMMANDS:
+        if not isinstance(command, str):
             return {
                 "success": False,
                 "error": f"Invalid command: {command}",
@@ -160,6 +161,20 @@ class GameService:
                 if channel_id is not None
                 else None,
             }
+
+        normalized_command = re.sub(r"\s+", "_", command.lower().strip())
+
+        if normalized_command not in GAME_COMMANDS:
+            return {
+                "success": False,
+                "error": f"Invalid command: {command}",
+                "game_state": None,
+                "active_turn_user_id": self.get_active_turn_user_id(channel_id)
+                if channel_id is not None
+                else None,
+            }
+
+        command = normalized_command
 
         if channel_id is not None and not force:
             active_turn_user = self.get_active_turn_user_id(channel_id)
@@ -205,19 +220,19 @@ class GameService:
         
         current_x = cast(int, game_state.position_x)
         current_y = cast(int, game_state.position_y)
-        if command == "move up":
+        if command == "move_up":
             new_position = (current_x, current_y - 1)
             result = self._try_move(game_state, new_position, channel_id, result)
                 
-        elif command == "move down":
+        elif command == "move_down":
             new_position = (current_x, current_y + 1)
             result = self._try_move(game_state, new_position, channel_id, result)
                 
-        elif command == "move left":
+        elif command == "move_left":
             new_position = (current_x - 1, current_y)
             result = self._try_move(game_state, new_position, channel_id, result)
                 
-        elif command == "move right":
+        elif command == "move_right":
             new_position = (current_x + 1, current_y)
             result = self._try_move(game_state, new_position, channel_id, result)
                 
@@ -725,10 +740,10 @@ class GameService:
             return ("attack", random.choice(adjacent_targets))
 
         directions = [
-            ("move up", (0, -1)),
-            ("move down", (0, 1)),
-            ("move left", (-1, 0)),
-            ("move right", (1, 0)),
+            ("move_up", (0, -1)),
+            ("move_down", (0, 1)),
+            ("move_left", (-1, 0)),
+            ("move_right", (1, 0)),
         ]
         valid_moves: List[str] = []
         for command, offset in directions:

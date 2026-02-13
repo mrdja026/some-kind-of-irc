@@ -10,7 +10,7 @@
           "properties": {
             "command": {
               "type": "string",
-              "enum": ["move up", "move down", "move left", "move right", "attack", "heal"]
+              "enum": ["move_up", "move_down", "move_left", "move_right", "attack", "heal"]
             },
             "target_username": { "type": ["string", "null"] },
             "timestamp": { "type": "integer" }

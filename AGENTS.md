@@ -27,6 +27,8 @@ Default venv name is be if not present ask for permission to create it. When run
 ## Learned Lessons (Game Transport)
 
 - CRITICAL: Frontend game rendering and state must remain in parity with Godot behavior and backend snapshot contracts; do not introduce changes that break cross-client sync.
+- CRITICAL: `backend/tests/test_command_schema_contract.py` must always pass because it is the backend-to-Godot command contract for transport tokens.
+- CRITICAL: Both repos (Godot client and backend) must implement and emit the same transport tokens from this contract even when runtime schema validation is not yet enforced.
 - Keep backend as the single source of truth for battlefield + turn state; clients render, not generate.
 - Send full world context in `game_snapshot`, keep `game_state_update` lightweight and dynamic only.
 - Constrain spawns and movement to playable battle-zone bounds server-side to prevent dead-on-arrival sessions.

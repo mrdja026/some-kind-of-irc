@@ -114,7 +114,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move up", test_user.id)
+        result = game_service.execute_command("move_up", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_y"] == 31
@@ -133,7 +133,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move down", test_user.id)
+        result = game_service.execute_command("move_down", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_y"] == 33
@@ -152,7 +152,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move left", test_user.id)
+        result = game_service.execute_command("move_left", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_x"] == 31
@@ -171,7 +171,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move right", test_user.id)
+        result = game_service.execute_command("move_right", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_x"] == 33
@@ -190,7 +190,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move up", test_user.id)
+        result = game_service.execute_command("move_up", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_y"] == 0
@@ -208,7 +208,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move down", test_user.id)
+        result = game_service.execute_command("move_down", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_y"] == GRID_SIZE - 1
@@ -226,7 +226,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move left", test_user.id)
+        result = game_service.execute_command("move_left", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_x"] == 0
@@ -244,7 +244,7 @@ class TestMovement:
         db_session.add(game_state)
         db_session.commit()
         
-        result = game_service.execute_command("move right", test_user.id)
+        result = game_service.execute_command("move_right", test_user.id)
         
         assert result["success"] is True
         assert result["game_state"]["position_x"] == GRID_SIZE - 1
@@ -392,7 +392,7 @@ class TestCommandParsing:
     def test_parse_move_up(self, game_service):
         """Test parsing move up command"""
         parsed = game_service.parse_command("move up")
-        assert parsed == ("move up", None)
+        assert parsed == ("move_up", None)
     
     def test_parse_attack_with_mention(self, game_service):
         """Test parsing attack with @mention"""
@@ -407,7 +407,7 @@ class TestCommandParsing:
     def test_parse_case_insensitive(self, game_service):
         """Test that parsing is case-insensitive"""
         parsed = game_service.parse_command("MOVE UP")
-        assert parsed == ("move up", None)
+        assert parsed == ("move_up", None)
 
 
 class TestSpawnsAndObstacles:
