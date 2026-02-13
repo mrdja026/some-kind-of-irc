@@ -4,12 +4,13 @@ from typing import Any, Dict, List, Set, Tuple
 
 
 GRID_SIZE = 64
-BUFFER_THICKNESS = 6
-PLAY_MIN = BUFFER_THICKNESS
-PLAY_MAX = GRID_SIZE - BUFFER_THICKNESS - 1
+BUFFER_THICKNESS = 0
+PLAY_MIN = 0
+PLAY_MAX = GRID_SIZE - 1
 BLOCKING_TREE_COUNT = 10
 BLOCKING_ROCK_COUNT = 8
-BUFFER_PROP_COUNT = 30
+
+# TODO(TD-Buffer): Revisit optional buffer-ring generation after spawn/move consistency issues are fully resolved.
 
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,8 @@ class BattlefieldService:
         seed = channel_id * 1009 + 17
         rng = random.Random(seed)
 
-        blocking_props, used_positions = cls._build_blocking_props(rng)
-        buffer_props = cls._build_buffer_props(rng, used_positions)
-        props = blocking_props + buffer_props
+        blocking_props, _used_positions = cls._build_blocking_props(rng)
+        props = blocking_props
         obstacles = [
             {
                 "id": prop["id"],
@@ -38,7 +38,7 @@ class BattlefieldService:
             }
             for prop in blocking_props
         ]
-        buffer_tiles = cls._build_buffer_tiles()
+        buffer_tiles: List[Dict[str, int]] = []
 
         # P2/P3: Precompute static obstacle positions for O(1) collision checks
         obstacle_positions: Set[Tuple[int, int]] = {
@@ -104,47 +104,6 @@ class BattlefieldService:
         return props, used
 
     @classmethod
-    def _build_buffer_props(
-        cls,
-        rng: random.Random,
-        used: Set[Tuple[int, int]],
-    ) -> List[Dict[str, Any]]:
-        props: List[Dict[str, Any]] = []
-        attempts = 0
-
-        while len(props) < BUFFER_PROP_COUNT and attempts < 500:
-            attempts += 1
-            x = rng.randint(0, GRID_SIZE - 1)
-            y = rng.randint(0, GRID_SIZE - 1)
-            if cls._is_play_zone(x, y):
-                continue
-            position = (x, y)
-            if position in used:
-                continue
-            used.add(position)
-            prop_type = "tree" if rng.random() < 0.6 else "rock"
-            props.append(
-                {
-                    "id": f"buffer-{prop_type}-{len(props) + 1}",
-                    "type": prop_type,
-                    "position": {"x": x, "y": y},
-                    "is_blocking": False,
-                    "zone": "buffer",
-                }
-            )
-
-        return props
-
-    @classmethod
-    def _build_buffer_tiles(cls) -> List[Dict[str, int]]:
-        tiles: List[Dict[str, int]] = []
-        for x in range(GRID_SIZE):
-            for y in range(GRID_SIZE):
-                if cls._is_play_zone(x, y):
-                    continue
-                tiles.append({"x": x, "y": y})
-        return tiles
-
     @classmethod
     def _pick_unique_play_position(
         cls,

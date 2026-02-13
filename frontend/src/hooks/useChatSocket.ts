@@ -32,6 +32,7 @@ export const useChatSocket = (
   const [isConnected, setIsConnected] = useState(false);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const pendingGameJoinChannelsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     queryClientRef.current = queryClient;
@@ -109,6 +110,21 @@ export const useChatSocket = (
             queryClientRef.current.invalidateQueries({ queryKey: ['channels'] });
             // Invalidate channel members to update mention autocomplete
             queryClientRef.current.invalidateQueries({ queryKey: ['channelMembers', message.channel_id] });
+            if (
+              message.type === 'join' &&
+              message.user_id === clientId &&
+              message.channel_name === '#game'
+            ) {
+              pendingGameJoinChannelsRef.current.add(message.channel_id);
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: 'game_join',
+                    channel_id: message.channel_id,
+                  }),
+                );
+              }
+            }
           }
           break;
         case 'typing':
@@ -217,6 +233,14 @@ export const useChatSocket = (
         reconnectAttemptRef.current = 0;
         logWsInfo('connected', { clientId, wsUrl });
         setIsConnected(true);
+        for (const channelId of pendingGameJoinChannelsRef.current) {
+          socket.send(
+            JSON.stringify({
+              type: 'game_join',
+              channel_id: channelId,
+            }),
+          );
+        }
       };
 
       socket.onclose = (event) => {
@@ -316,10 +340,26 @@ export const useChatSocket = (
       });
   };
 
+  const sendGameJoin = (channelId: number) => {
+    if (!channelId || channelId <= 0) {
+      return;
+    }
+    pendingGameJoinChannelsRef.current.add(channelId);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'game_join',
+          channel_id: channelId,
+        }),
+      );
+    }
+  };
+
   return {
     isConnected,
     sendMessage,
     sendTyping,
-    sendGameCommand
+    sendGameCommand,
+    sendGameJoin,
   };
 };

@@ -63,7 +63,7 @@ class AuthGameResponse(BaseModel):
     user_id: int
     username: str
     channel_id: int
-    snapshot: Dict[str, Any]
+    snapshot: Optional[Dict[str, Any]] = None
 
 # Helper functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -295,19 +295,11 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
 
 @router.post("/auth_game", response_model=AuthGameResponse)
 async def auth_game(response: Response, db: Session = Depends(get_db)):
-    game_service = GameService(db)
     channel = _get_or_create_game_channel(db)
     guest_user = _get_or_create_fixed_user(db, GUEST_USERNAME)
     guest_user_id = cast(int, guest_user.id)
     channel_id = cast(int, channel.id)
     _ensure_membership(db, guest_user_id, channel_id)
-    game_service.get_or_create_game_session(guest_user_id, channel_id)
-    game_service.get_or_create_game_state(guest_user_id, channel_id)
-    _ensure_npc_sessions(db, game_service, channel_id)
-
-    game_service.deactivate_other_guests(channel_id, guest_user_id)
-    game_service.set_active_turn_user(channel_id, guest_user_id)
-    game_service._process_npc_turns(channel_id)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -322,14 +314,13 @@ async def auth_game(response: Response, db: Session = Depends(get_db)):
         max_age=int(access_token_expires.total_seconds()),
     )
 
-    snapshot = game_service.get_game_snapshot(channel_id)
     return AuthGameResponse(
         access_token=access_token,
         token_type="bearer",
         user_id=guest_user_id,
         username=cast(str, guest_user.username),
         channel_id=channel_id,
-        snapshot=snapshot,
+        snapshot=None,
     )
 
 @router.get("/me", response_model=UserResponse)

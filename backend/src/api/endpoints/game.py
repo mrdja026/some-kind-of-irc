@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
-from src.api.endpoints.auth import get_current_user, _ensure_npc_sessions
+from src.api.endpoints.auth import get_current_user
+from src.models.game_state import GameState
 from src.models.user import User
 from src.models.channel import Channel
 from src.services.game_service import GameService
@@ -67,8 +68,9 @@ async def get_my_game_state(
     db: Session = Depends(get_db)
 ):
     """Get the current user's game state."""
-    game_service = GameService(db)
-    game_state = game_service.get_or_create_game_state(cast(int, current_user.id))
+    game_state = db.query(GameState).filter(GameState.user_id == cast(int, current_user.id)).first()
+    if game_state is None:
+        raise HTTPException(status_code=404, detail="Game state not initialized. Connect WebSocket and send game_join first.")
     is_npc = bool(cast(str, current_user.username).lower().startswith("npc_"))
     
     return GameStateResponse(
@@ -168,6 +170,7 @@ async def execute_game_command(
         request.channel_id,
         force=request.force,
     )
+    npc_actions = result.get("npc_actions", [])
     
     if result["success"]:
         game_state = result.get("game_state")
@@ -176,7 +179,21 @@ async def execute_game_command(
         snapshot = None
         if request.channel_id:
             snapshot = game_service.get_game_state_update(request.channel_id)
-            await manager.broadcast_game_action(result, request.channel_id, cast(int, current_user.id), snapshot)
+            await manager.broadcast_game_action(result, request.channel_id, cast(int, current_user.id), None)
+            if isinstance(npc_actions, list):
+                for npc_action in npc_actions:
+                    if not isinstance(npc_action, dict):
+                        continue
+                    npc_executor_id = int(npc_action.get("executor_id", 0))
+                    if npc_executor_id <= 0:
+                        continue
+                    await manager.broadcast_game_action(
+                        npc_action,
+                        request.channel_id,
+                        npc_executor_id,
+                        None,
+                    )
+            await manager.broadcast_game_state(snapshot, request.channel_id)
         
         return GameCommandResponse(
             success=True,
@@ -209,29 +226,14 @@ async def join_game_channel(
     if not game_service.is_game_channel(cast(str, channel.name)):
         raise HTTPException(status_code=400, detail="Not a game channel")
     
-    # Create or get game session
-    game_service.get_or_create_game_session(cast(int, current_user.id), channel_id)
-    game_state = game_service.get_or_create_game_state(cast(int, current_user.id), channel_id)
-    _ensure_npc_sessions(db, game_service, channel_id)
+    # HTTP join no longer initializes game state/session.
+    # Initialization happens via WebSocket game_join handshake.
     manager.add_client_to_channel(cast(int, current_user.id), channel_id)
 
-    # Full sync for joiner only, incremental push for channel.
-    snapshot = game_service.get_game_snapshot(channel_id)
-    await manager.send_game_state_to_client(snapshot, channel_id, cast(int, current_user.id))
-
-    update = game_service.get_game_state_update(channel_id)
-    await manager.broadcast_game_state(update, channel_id)
-
     return {
-        "message": f"Joined game channel #{channel.name}",
+        "message": f"Joined game channel #{channel.name}; awaiting WebSocket game_join handshake",
         "channel_id": channel_id,
-        "game_state": {
-            "user_id": cast(int, game_state.user_id),
-            "position_x": cast(int, game_state.position_x),
-            "position_y": cast(int, game_state.position_y),
-            "health": cast(int, game_state.health),
-            "max_health": cast(int, game_state.max_health),
-        },
+        "game_ready": False,
     }
 
 

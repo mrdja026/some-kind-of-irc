@@ -452,6 +452,7 @@ function ChatPage() {
     sendMessage: sendSocketMessage,
     sendTyping,
     sendGameCommand,
+    sendGameJoin,
   } = useChatSocket(
     user?.id || 0,
     handleTyping,
@@ -1230,6 +1231,7 @@ function ChatPage() {
                 channelId={selectedChannelId}
                 channelName={selectedChannel?.name || '#game'}
                 sendGameCommand={sendGameCommand}
+                sendGameJoin={sendGameJoin}
               />
             ) : (
               <>

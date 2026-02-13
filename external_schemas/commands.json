@@ -1,5 +1,13 @@
 {
   "definitions": {
+    "GameJoin": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_join" },
+        "channel_id": { "type": "integer" }
+      },
+      "required": ["type", "channel_id"]
+    },
     "GameCommand": {
       "type": "object",
       "properties": {

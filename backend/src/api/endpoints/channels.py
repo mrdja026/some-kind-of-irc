@@ -12,7 +12,7 @@ from src.models.user import User
 from src.models.channel import Channel
 from src.models.message import Message
 from src.models.membership import Membership
-from src.api.endpoints.auth import get_current_user, _ensure_npc_sessions
+from src.api.endpoints.auth import get_current_user
 from src.services.websocket_manager import manager
 from src.services.irc_logger import log_join, log_part, log_privmsg
 from src.services.game_service import GameService
@@ -399,11 +399,8 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
     manager.add_client_to_channel(current_user_id, channel_id)
 
     if game_service.is_game_channel(channel_name):
-        game_service.get_or_create_game_session(current_user_id, channel_id)
-        game_service.get_or_create_game_state(current_user_id, channel_id)
-        _ensure_npc_sessions(db, game_service, channel_id)
-        snapshot = game_service.get_game_snapshot(channel_id)
-        await manager.broadcast_game_state(snapshot, channel_id)
+        # Game state/session initialization is WS-first via game_join handshake.
+        pass
 
     # Create welcome message for the joining user (system message with sender_id=None)
     welcome_message = Message(

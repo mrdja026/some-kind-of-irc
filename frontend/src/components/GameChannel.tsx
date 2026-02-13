@@ -20,6 +20,7 @@ interface GameChannelProps {
   channelId: number
   channelName: string
   sendGameCommand: (channelId: number, command: string, targetUsername?: string) => void
+  sendGameJoin: (channelId: number) => void
 }
 
 // API functions for game
@@ -40,7 +41,7 @@ async function joinGameChannel(channelId: number): Promise<void> {
   if (!response.ok) throw new Error('Failed to join game channel')
 }
 
-export function GameChannel({ channelId, channelName, sendGameCommand }: GameChannelProps) {
+export function GameChannel({ channelId, channelName, sendGameCommand, sendGameJoin }: GameChannelProps) {
   const [targetUsername, setTargetUsername] = useState('')
   const [actionLog] = useState<string[]>([])
   
@@ -73,9 +74,13 @@ export function GameChannel({ channelId, channelName, sendGameCommand }: GameCha
   // Join game channel on mount
   useEffect(() => {
     if (channelId) {
-      joinGameChannel(channelId).catch(console.error)
+      joinGameChannel(channelId)
+        .then(() => {
+          sendGameJoin(channelId)
+        })
+        .catch(console.error)
     }
-  }, [channelId])
+  }, [channelId, sendGameJoin])
 
   const executeCommand = (command: string) => {
     if (!channelId) return

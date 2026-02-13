@@ -83,7 +83,7 @@ class ConnectionManager:
         executor_id: int | Any,
         snapshot: Optional[dict] = None,
     ):
-        """Send action result to executor and push state update to channel."""
+        """Broadcast action result and push state update to channel."""
         message = {
             "type": "action_result",
             "channel_id": int(channel_id),
@@ -92,12 +92,23 @@ class ConnectionManager:
                 "success": action_result.get("success", False),
                 "action_type": action_result.get("command", "unknown"),
                 "executor_id": executor_id,
+                "active_turn_user_id": action_result.get("active_turn_user_id"),
                 "target_id": action_result.get("target_id"),
+                "executor_username": action_result.get("executor_username"),
+                "target_username": action_result.get("target_username"),
+                "position": action_result.get("position"),
+                "target_health": action_result.get("target_health"),
+                "target_max_health": action_result.get("target_max_health"),
+                "actor_health": action_result.get("actor_health"),
+                "actor_max_health": action_result.get("actor_max_health"),
                 "message": action_result.get("message", ""),
                 "error": {"code": "game_error", "message": action_result.get("error")} if action_result.get("error") else None
             }
         }
-        await self.send_personal_message(message, executor_id)
+        if bool(action_result.get("success", False)):
+            await self.broadcast(message, channel_id)
+        else:
+            await self.send_personal_message(message, executor_id)
         
         # If there's a snapshot/update, broadcast that too
         if snapshot:
