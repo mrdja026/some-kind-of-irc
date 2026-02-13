@@ -1,20 +1,29 @@
 from fastapi.websockets import WebSocket
 from typing import Dict, List, Set, Optional, Any, cast
 from datetime import datetime
+import time
 from src.core.database import get_db
 from src.models.membership import Membership
 from src.models.user import User
 from src.services.irc_logger import state_store
 
+# P6: Stale client detection constants
+STALE_CLIENT_TIMEOUT_SEC: float = 30.0  # Clients without pong for 30s are considered stale
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[int, WebSocket] = {}
         self.client_channels: Dict[int, Set[int]] = {}  # client_id -> set of channel_ids
+        # P6: Track last pong timestamp per client for stale detection
+        self._client_last_pong: Dict[int, float] = {}  # client_id -> timestamp (time.time())
 
     async def connect(self, client_id: int, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[client_id] = websocket
         self.client_channels[client_id] = set()
+        # P6: Initialize last pong to now (assume fresh connection is alive)
+        self._client_last_pong[client_id] = time.time()
         # Load existing channel memberships for the client
         db = next(get_db())
         user = db.query(User).filter(User.id == client_id).first()
@@ -33,6 +42,9 @@ class ConnectionManager:
             del self.active_connections[client_id]
         if client_id in self.client_channels:
             del self.client_channels[client_id]
+        # P6: Clean up heartbeat tracking
+        if client_id in self._client_last_pong:
+            del self._client_last_pong[client_id]
 
     async def send_personal_message(self, message: dict, client_id: int | Any):
         if client_id in self.active_connections:
@@ -102,6 +114,31 @@ class ConnectionManager:
     def remove_client_from_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels and channel_id in self.client_channels[client_id]:
             self.client_channels[client_id].remove(channel_id)
+
+    # P6: Heartbeat tracking methods
+    def record_client_pong(self, client_id: int) -> None:
+        """P6: Record that a client responded to heartbeat ping."""
+        self._client_last_pong[client_id] = time.time()
+
+    def is_client_stale(self, client_id: int) -> bool:
+        """P6: Check if client hasn't responded to heartbeat within timeout.
+        
+        Returns True if client is stale (no pong in STALE_CLIENT_TIMEOUT_SEC).
+        Returns False if client is active or not tracked.
+        """
+        last_pong = self._client_last_pong.get(client_id)
+        if last_pong is None:
+            # Not tracked = not connected = stale
+            return client_id not in self.active_connections
+        return (time.time() - last_pong) > STALE_CLIENT_TIMEOUT_SEC
+
+    def get_stale_clients_in_channel(self, channel_id: int) -> List[int]:
+        """P6: Return list of stale client IDs in a specific channel."""
+        stale: List[int] = []
+        for client_id, channels in self.client_channels.items():
+            if channel_id in channels and self.is_client_stale(client_id):
+                stale.append(client_id)
+        return stale
 
     # Data Processor WebSocket Events
     

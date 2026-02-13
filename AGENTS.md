@@ -37,3 +37,4 @@ Default venv name is be if not present ask for permission to create it. When run
 - Runtime JSON-schema validation for `external_schemas/` is still not enforced in backend/Godot/frontend.
 - Frontend still has broader socket/state cleanup opportunities beyond current duplicate-connection fixes.
 - Add automated integration tests for snapshot battlefield parity across backend, web, and Godot.
+- Battlefield blocking is only partially unified: backend is authoritative for spawn/move collisions, while Godot still uses a local `is_blocked` layer for hover/adjacency UI and only supports 4 cardinal move commands (hex click-to-move for all 6 neighbors is not yet implemented).

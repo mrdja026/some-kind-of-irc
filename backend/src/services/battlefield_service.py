@@ -40,6 +40,12 @@ class BattlefieldService:
         ]
         buffer_tiles = cls._build_buffer_tiles()
 
+        # P2/P3: Precompute static obstacle positions for O(1) collision checks
+        obstacle_positions: Set[Tuple[int, int]] = {
+            (prop["position"]["x"], prop["position"]["y"])
+            for prop in blocking_props
+        }
+
         generated = {
             "battlefield": {
                 "seed": seed,
@@ -50,6 +56,7 @@ class BattlefieldService:
                 },
             },
             "obstacles": obstacles,
+            "obstacle_positions": obstacle_positions,  # P2/P3: Static set for fast lookup
         }
 
         cls._channel_cache[channel_id] = generated
@@ -163,3 +170,12 @@ class BattlefieldService:
     @classmethod
     def is_play_zone(cls, x: int, y: int) -> bool:
         return cls._is_play_zone(x, y)
+
+    @classmethod
+    def get_obstacle_positions(cls, channel_id: int) -> Set[Tuple[int, int]]:
+        """P2/P3: Return precomputed static obstacle positions for O(1) collision checks.
+        
+        This is cached and never changes after generation (static obstacles only).
+        """
+        cached = cls.get_or_create(channel_id)
+        return cached.get("obstacle_positions", set())

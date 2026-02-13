@@ -287,6 +287,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                     )
                 db.close()
             elif message_type == "ping":
+                # P6: Record client heartbeat for stale detection
+                manager.record_client_pong(client_id)
                 ping_payload = data.get("payload", {})
                 sent_at_ms = None
                 if isinstance(ping_payload, dict):
