@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.core.database import get_db
 from src.api.endpoints.auth import get_current_user
+from src.models.game_state import GameState
 from src.models.user import User
 from src.models.channel import Channel
 from src.services.game_service import GameService
@@ -67,8 +68,9 @@ async def get_my_game_state(
     db: Session = Depends(get_db)
 ):
     """Get the current user's game state."""
-    game_service = GameService(db)
-    game_state = game_service.get_or_create_game_state(cast(int, current_user.id))
+    game_state = db.query(GameState).filter(GameState.user_id == cast(int, current_user.id)).first()
+    if game_state is None:
+        raise HTTPException(status_code=404, detail="Game state not initialized. Connect WebSocket and send game_join first.")
     is_npc = bool(cast(str, current_user.username).lower().startswith("npc_"))
     
     return GameStateResponse(
@@ -100,7 +102,22 @@ async def get_channel_game_states(
         raise HTTPException(status_code=400, detail="Not a game channel")
     
     states = game_service.get_all_game_states_in_channel(channel_id)
-    return [GameStateResponse(**state) for state in states]
+    response_items: List[GameStateResponse] = []
+    for state in states:
+        position = cast(Dict[str, int], state.get("position", {}))
+        response_items.append(
+            GameStateResponse(
+                user_id=cast(int, state.get("user_id", 0)),
+                username=cast(Optional[str], state.get("username")),
+                display_name=cast(Optional[str], state.get("display_name")),
+                position_x=int(position.get("x", 0)),
+                position_y=int(position.get("y", 0)),
+                health=cast(int, state.get("health", 0)),
+                max_health=cast(int, state.get("max_health", 0)),
+                is_npc=cast(Optional[bool], state.get("is_npc")),
+            )
+        )
+    return response_items
 
 
 @router.get("/channel/{channel_id}/snapshot")
@@ -117,8 +134,10 @@ async def get_channel_game_snapshot(
     if not game_service.is_game_channel(cast(str, channel.name)):
         raise HTTPException(status_code=400, detail="Not a game channel")
 
-    snapshot = game_service.get_game_snapshot(channel_id)
-    return snapshot
+    raise HTTPException(
+        status_code=410,
+        detail="HTTP game snapshots are disabled. Use WebSocket push events.",
+    )
 
 
 @router.post("/command", response_model=GameCommandResponse)
@@ -158,8 +177,32 @@ async def execute_game_command(
         # Broadcast game action to channel if channel_id provided
         snapshot = None
         if request.channel_id:
-            snapshot = game_service.get_game_snapshot(request.channel_id)
-            await manager.broadcast_game_action(result, request.channel_id, cast(int, current_user.id), snapshot)
+            snapshot = game_service.get_game_state_update(request.channel_id)
+            await manager.broadcast_game_action(result, request.channel_id, cast(int, current_user.id), None)
+            await manager.broadcast_game_state(snapshot, request.channel_id)
+
+            if game_service.is_npc_turn(request.channel_id):
+                npc_steps = game_service.process_npc_turn_chain(request.channel_id)
+                for step in npc_steps:
+                    if not isinstance(step, dict):
+                        continue
+                    npc_action = step.get("action_result", {})
+                    npc_update = step.get("state_update", {})
+                    if not isinstance(npc_action, dict):
+                        continue
+                    if not isinstance(npc_update, dict):
+                        continue
+                    npc_executor_id = int(npc_action.get("executor_id", 0))
+                    if npc_executor_id <= 0:
+                        continue
+                    await manager.broadcast_game_action(
+                        npc_action,
+                        request.channel_id,
+                        npc_executor_id,
+                        None,
+                        True,
+                    )
+                    await manager.broadcast_game_state(npc_update, request.channel_id)
         
         return GameCommandResponse(
             success=True,
@@ -192,33 +235,14 @@ async def join_game_channel(
     if not game_service.is_game_channel(cast(str, channel.name)):
         raise HTTPException(status_code=400, detail="Not a game channel")
     
-    # Create or get game session
-    session = game_service.get_or_create_game_session(cast(int, current_user.id), channel_id)
-    game_state = game_service.get_or_create_game_state(cast(int, current_user.id), channel_id)
-    snapshot = game_service.get_game_snapshot(channel_id)
-
-    await manager.send_personal_message(
-        {
-            "type": "game_state_update",
-            "channel_id": channel_id,
-            "snapshot": snapshot,
-        },
-        cast(int, current_user.id),
-    )
-
-    await manager.broadcast_game_state(snapshot, channel_id)
+    # HTTP join no longer initializes game state/session.
+    # Initialization happens via WebSocket game_join handshake.
+    manager.add_client_to_channel(cast(int, current_user.id), channel_id)
 
     return {
-        "message": f"Joined game channel #{channel.name}",
+        "message": f"Joined game channel #{channel.name}; awaiting WebSocket game_join handshake",
         "channel_id": channel_id,
-        "game_state": {
-            "user_id": cast(int, game_state.user_id),
-            "position_x": cast(int, game_state.position_x),
-            "position_y": cast(int, game_state.position_y),
-            "health": cast(int, game_state.health),
-            "max_health": cast(int, game_state.max_health),
-        },
-        "snapshot": snapshot,
+        "game_ready": False,
     }
 
 
@@ -235,9 +259,10 @@ async def leave_game_channel(
     
     game_service = GameService(db)
     game_service.deactivate_session(cast(int, current_user.id), channel_id)
+    manager.remove_client_from_channel(cast(int, current_user.id), channel_id)
 
-    snapshot = game_service.get_game_snapshot(channel_id)
-    await manager.broadcast_game_state(snapshot, channel_id)
+    update = game_service.get_game_state_update(channel_id)
+    await manager.broadcast_game_state(update, channel_id)
     
     return {"message": f"Left game channel #{channel.name}"}
 

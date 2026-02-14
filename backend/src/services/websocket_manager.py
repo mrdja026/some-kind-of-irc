@@ -1,19 +1,29 @@
 from fastapi.websockets import WebSocket
 from typing import Dict, List, Set, Optional, Any, cast
+from datetime import datetime
+import time
 from src.core.database import get_db
 from src.models.membership import Membership
 from src.models.user import User
 from src.services.irc_logger import state_store
 
+# P6: Stale client detection constants
+STALE_CLIENT_TIMEOUT_SEC: float = 30.0  # Clients without pong for 30s are considered stale
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[int, WebSocket] = {}
         self.client_channels: Dict[int, Set[int]] = {}  # client_id -> set of channel_ids
+        # P6: Track last pong timestamp per client for stale detection
+        self._client_last_pong: Dict[int, float] = {}  # client_id -> timestamp (time.time())
 
     async def connect(self, client_id: int, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[client_id] = websocket
         self.client_channels[client_id] = set()
+        # P6: Initialize last pong to now (assume fresh connection is alive)
+        self._client_last_pong[client_id] = time.time()
         # Load existing channel memberships for the client
         db = next(get_db())
         user = db.query(User).filter(User.id == client_id).first()
@@ -24,11 +34,17 @@ class ConnectionManager:
             self.client_channels[client_id].add(cast(int, membership.channel_id))  # type: ignore[arg-type]
         db.close()
 
-    def disconnect(self, client_id: int):
+    def disconnect(self, client_id: int, websocket: Optional[WebSocket] = None):
+        active = self.active_connections.get(client_id)
+        if websocket is not None and active is not websocket:
+            return
         if client_id in self.active_connections:
             del self.active_connections[client_id]
         if client_id in self.client_channels:
             del self.client_channels[client_id]
+        # P6: Clean up heartbeat tracking
+        if client_id in self._client_last_pong:
+            del self._client_last_pong[client_id]
 
     async def send_personal_message(self, message: dict, client_id: int | Any):
         if client_id in self.active_connections:
@@ -41,12 +57,24 @@ class ConnectionManager:
 
     async def broadcast_game_state(self, snapshot: dict, channel_id: int | Any):
         """Broadcast game state update to all members of a game channel."""
-        message = {
-            "type": "game_state_update",
-            "channel_id": channel_id,
-            "snapshot": snapshot,
-        }
+        message = dict(snapshot)
+        message["channel_id"] = int(channel_id)
+        if "timestamp" in message:
+            message["timestamp"] = datetime.utcnow().isoformat()
         await self.broadcast(message, channel_id)
+
+    async def send_game_state_to_client(
+        self,
+        snapshot: dict,
+        channel_id: int | Any,
+        client_id: int | Any,
+    ) -> None:
+        """Send a full game state snapshot to a single client."""
+        message = dict(snapshot)
+        message["channel_id"] = int(channel_id)
+        if "timestamp" in message:
+            message["timestamp"] = datetime.utcnow().isoformat()
+        await self.send_personal_message(message, client_id)
 
     async def broadcast_game_action(
         self,
@@ -54,16 +82,42 @@ class ConnectionManager:
         channel_id: int | Any,
         executor_id: int | Any,
         snapshot: Optional[dict] = None,
+        broadcast_failure_to_channel: bool = False,
     ):
-        """Broadcast a game action result to all members of a game channel."""
+        """Broadcast action result and push state update to channel."""
         message = {
-            "type": "game_action",
-            "channel_id": channel_id,
-            "executor_id": executor_id,
-            "action": action_result,
-            "snapshot": snapshot,
+            "type": "action_result",
+            "channel_id": int(channel_id),
+            "timestamp": datetime.utcnow().isoformat(),
+            "payload": {
+                "success": action_result.get("success", False),
+                "action_type": action_result.get("command", "unknown"),
+                "executor_id": executor_id,
+                "active_turn_user_id": action_result.get("active_turn_user_id"),
+                "target_id": action_result.get("target_id"),
+                "executor_username": action_result.get("executor_username"),
+                "target_username": action_result.get("target_username"),
+                "position": action_result.get("position"),
+                "target_health": action_result.get("target_health"),
+                "target_max_health": action_result.get("target_max_health"),
+                "actor_health": action_result.get("actor_health"),
+                "actor_max_health": action_result.get("actor_max_health"),
+                "message": action_result.get("message", ""),
+                "error": {"code": "game_error", "message": action_result.get("error")} if action_result.get("error") else None
+            }
         }
-        await self.broadcast(message, channel_id)
+        if bool(action_result.get("success", False)) or broadcast_failure_to_channel:
+            await self.broadcast(message, channel_id)
+        else:
+            await self.send_personal_message(message, executor_id)
+        
+        # If there's a snapshot/update, broadcast that too
+        if snapshot:
+            update_message = dict(snapshot)
+            update_message["channel_id"] = int(channel_id)
+            if "timestamp" in update_message:
+                update_message["timestamp"] = datetime.utcnow().isoformat()
+            await self.broadcast(update_message, channel_id)
 
     def add_client_to_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels:
@@ -72,6 +126,31 @@ class ConnectionManager:
     def remove_client_from_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels and channel_id in self.client_channels[client_id]:
             self.client_channels[client_id].remove(channel_id)
+
+    # P6: Heartbeat tracking methods
+    def record_client_pong(self, client_id: int) -> None:
+        """P6: Record that a client responded to heartbeat ping."""
+        self._client_last_pong[client_id] = time.time()
+
+    def is_client_stale(self, client_id: int) -> bool:
+        """P6: Check if client hasn't responded to heartbeat within timeout.
+        
+        Returns True if client is stale (no pong in STALE_CLIENT_TIMEOUT_SEC).
+        Returns False if client is active or not tracked.
+        """
+        last_pong = self._client_last_pong.get(client_id)
+        if last_pong is None:
+            # Not tracked = not connected = stale
+            return client_id not in self.active_connections
+        return (time.time() - last_pong) > STALE_CLIENT_TIMEOUT_SEC
+
+    def get_stale_clients_in_channel(self, channel_id: int) -> List[int]:
+        """P6: Return list of stale client IDs in a specific channel."""
+        stale: List[int] = []
+        for client_id, channels in self.client_channels.items():
+            if channel_id in channels and self.is_client_stale(client_id):
+                stale.append(client_id)
+        return stale
 
     # Data Processor WebSocket Events
     

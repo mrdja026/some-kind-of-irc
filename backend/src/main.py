@@ -1,12 +1,14 @@
 import os
 import logging
+from datetime import datetime
 from urllib.parse import urlparse
+from typing import cast
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from src.core.database import Base, engine
+from src.core.database import Base, engine, get_db
 from src.core.config import settings as app_settings
-from src.api.endpoints.auth import router as auth_router
+from src.api.endpoints.auth import router as auth_router, _ensure_npc_sessions
 from src.api.endpoints.channels import router as channels_router
 from src.api.endpoints.media import router as media_router
 from src.api.endpoints.ai import router as ai_router
@@ -88,7 +90,7 @@ async def lifespan(app: FastAPI):
     if game_channel:
         channel_id = game_channel.id
         sessions = db.query(GameSession).filter(GameSession.channel_id == channel_id).all()
-        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id]
+        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id is not None]
         for session in sessions:
             db.delete(session)
         if game_state_ids:
@@ -187,14 +189,247 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
     try:
         while True:
             data = await websocket.receive_json()
+            message_type = data.get("type")
             # Handle incoming WebSocket messages
-            if data["type"] == "message":
+            if message_type == "message":
                 log_privmsg(client_id, data.get("channel_id"), data.get("content", ""))
                 await manager.broadcast(data, data["channel_id"])
-            elif data["type"] == "typing":
+            elif message_type == "typing":
                 # Add user_id to typing message
                 data["user_id"] = client_id
                 await manager.broadcast(data, data["channel_id"])
+            elif message_type == "game_join":
+                channel_id = data.get("channel_id")
+                if channel_id is None:
+                    await manager.send_personal_message(
+                        {
+                            "type": "game_join_ack",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "status_code": 400,
+                                "ready": False,
+                                "message": "game_join requires channel_id",
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+                try:
+                    resolved_channel_id = int(channel_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {
+                            "type": "game_join_ack",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "status_code": 400,
+                                "ready": False,
+                                "message": "game_join channel_id must be an integer",
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                joined_channels = manager.client_channels.get(client_id, set())
+                if resolved_channel_id not in joined_channels:
+                    await manager.send_personal_message(
+                        {
+                            "type": "game_join_ack",
+                            "channel_id": resolved_channel_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "status_code": 403,
+                                "ready": False,
+                                "message": "User is not a member of this channel",
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                db = next(get_db())
+                try:
+                    channel = db.query(Channel).filter(Channel.id == resolved_channel_id).first()
+                    if channel is None:
+                        await manager.send_personal_message(
+                            {
+                                "type": "game_join_ack",
+                                "channel_id": resolved_channel_id,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "payload": {
+                                    "status_code": 404,
+                                    "ready": False,
+                                    "message": "Channel not found",
+                                },
+                            },
+                            client_id,
+                        )
+                        continue
+
+                    game_service = GameService(db)
+                    if not game_service.is_game_channel(cast(str, channel.name)):
+                        await manager.send_personal_message(
+                            {
+                                "type": "game_join_ack",
+                                "channel_id": resolved_channel_id,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "payload": {
+                                    "status_code": 400,
+                                    "ready": False,
+                                    "message": "Not a game channel",
+                                },
+                            },
+                            client_id,
+                        )
+                        continue
+
+                    # WS-first small arena initialization sequence:
+                    # 1) Generate deterministic 10x10 staggered battlefield + obstacle clumps
+                    # 2) Ensure joining participant session/state and role assignment
+                    # 3) Seed baseline NPCs and normalize spawns with blocked-check + BFS
+                    game_service.bootstrap_small_arena_join(client_id, resolved_channel_id)
+                    _ensure_npc_sessions(db, game_service, resolved_channel_id)
+
+                    snapshot = game_service.get_game_snapshot(resolved_channel_id)
+
+                    await manager.send_personal_message(
+                        {
+                            "type": "game_join_ack",
+                            "channel_id": resolved_channel_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "status_code": 200,
+                                "ready": True,
+                                "message": "game ready",
+                            },
+                        },
+                        client_id,
+                    )
+                    await manager.send_game_state_to_client(snapshot, resolved_channel_id, client_id)
+
+                    update = game_service.get_game_state_update(resolved_channel_id)
+                    await manager.broadcast_game_state(update, resolved_channel_id)
+                finally:
+                    db.close()
+            elif message_type == "game_command":
+                channel_id = data.get("channel_id")
+                if channel_id is None:
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "missing_channel_id",
+                                "message": "game_command requires channel_id",
+                                "details": {},
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                try:
+                    resolved_channel_id = int(channel_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": None,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "invalid_channel_id",
+                                "message": "game_command channel_id must be an integer",
+                                "details": {"channel_id": channel_id},
+                            },
+                        },
+                        client_id,
+                    )
+                    continue
+
+                db = next(get_db())
+                game_service = GameService(db)
+
+                payload = data.get("payload", {})
+                command = payload.get("command")
+                target_username = payload.get("target_username")
+
+                if command:
+                    result = game_service.execute_command(
+                        command=command,
+                        executor_id=client_id,
+                        target_username=target_username,
+                        channel_id=resolved_channel_id,
+                    )
+
+                    await manager.broadcast_game_action(
+                        action_result=result,
+                        channel_id=resolved_channel_id,
+                        executor_id=client_id,
+                        snapshot=None,
+                    )
+                    if result.get("success"):
+                        state_update = game_service.get_game_state_update(resolved_channel_id)
+                        await manager.broadcast_game_state(state_update, resolved_channel_id)
+
+                        if game_service.is_npc_turn(resolved_channel_id):
+                            npc_steps = game_service.process_npc_turn_chain(resolved_channel_id)
+                            for step in npc_steps:
+                                if not isinstance(step, dict):
+                                    continue
+                                npc_action = step.get("action_result", {})
+                                npc_update = step.get("state_update", {})
+                                if not isinstance(npc_action, dict):
+                                    continue
+                                if not isinstance(npc_update, dict):
+                                    continue
+                                npc_executor_id = int(npc_action.get("executor_id", 0))
+                                if npc_executor_id <= 0:
+                                    continue
+                                await manager.broadcast_game_action(
+                                    action_result=npc_action,
+                                    channel_id=resolved_channel_id,
+                                    executor_id=npc_executor_id,
+                                    snapshot=None,
+                                    broadcast_failure_to_channel=True,
+                                )
+                                await manager.broadcast_game_state(npc_update, resolved_channel_id)
+                else:
+                    await manager.send_personal_message(
+                        {
+                            "type": "error",
+                            "channel_id": resolved_channel_id,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "payload": {
+                                "code": "missing_command",
+                                "message": "game_command payload requires command",
+                                "details": {},
+                            },
+                        },
+                        client_id,
+                    )
+                db.close()
+            elif message_type == "ping":
+                # P6: Record client heartbeat for stale detection
+                manager.record_client_pong(client_id)
+                ping_payload = data.get("payload", {})
+                sent_at_ms = None
+                if isinstance(ping_payload, dict):
+                    sent_at_ms = ping_payload.get("sent_at_ms")
+                await manager.send_personal_message(
+                    {
+                        "type": "pong",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "payload": {
+                            "sent_at_ms": sent_at_ms,
+                        },
+                    },
+                    client_id,
+                )
+
     except WebSocketDisconnect as exc:
         logger.info(
             "WebSocket disconnect client_id=%s host=%s code=%s",
@@ -205,7 +440,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
     except Exception:
         logger.exception("WebSocket error client_id=%s host=%s", client_id, client_host)
     finally:
-        manager.disconnect(client_id)
+        manager.disconnect(client_id, websocket)
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -28,7 +28,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 GUEST_PREFIX = "guest_"
 NPC_PREFIX = "npc_"
-NPC_SEED_COUNT = 4
+NPC_SEED_COUNT = 2
 GAME_CHANNEL_NAME = "#game"
 GUEST_USERNAME = "guest2"
 
@@ -63,7 +63,7 @@ class AuthGameResponse(BaseModel):
     user_id: int
     username: str
     channel_id: int
-    snapshot: Dict[str, Any]
+    snapshot: Optional[Dict[str, Any]] = None
 
 # Helper functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -170,16 +170,14 @@ def _ensure_npc_sessions(db: Session, game_service: GameService, channel_id: int
     states = game_service.get_all_game_states_in_channel(channel_id)
     npc_count = 0
     for state in states:
-        username = str(state.get("username", ""))
-        if username.lower().startswith(NPC_PREFIX):
+        if bool(state.get("is_npc", False)):
             npc_count += 1
     to_create = max(0, NPC_SEED_COUNT - npc_count)
     for _ in range(to_create):
         npc_user = _create_guest_user(db, NPC_PREFIX)
         npc_user_id = cast(int, npc_user.id)
         _ensure_membership(db, npc_user_id, channel_id)
-        game_service.get_or_create_game_session(npc_user_id, channel_id)
-        game_service.get_or_create_game_state(npc_user_id, channel_id)
+        game_service.bootstrap_small_arena_join(npc_user_id, channel_id)
 
 async def get_current_user(
     request: Request,
@@ -295,19 +293,11 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
 
 @router.post("/auth_game", response_model=AuthGameResponse)
 async def auth_game(response: Response, db: Session = Depends(get_db)):
-    game_service = GameService(db)
     channel = _get_or_create_game_channel(db)
     guest_user = _get_or_create_fixed_user(db, GUEST_USERNAME)
     guest_user_id = cast(int, guest_user.id)
     channel_id = cast(int, channel.id)
     _ensure_membership(db, guest_user_id, channel_id)
-    game_service.get_or_create_game_session(guest_user_id, channel_id)
-    game_service.get_or_create_game_state(guest_user_id, channel_id)
-    _ensure_npc_sessions(db, game_service, channel_id)
-
-    game_service.deactivate_other_guests(channel_id, guest_user_id)
-    game_service.set_active_turn_user(channel_id, guest_user_id)
-    game_service._process_npc_turns(channel_id)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -322,14 +312,13 @@ async def auth_game(response: Response, db: Session = Depends(get_db)):
         max_age=int(access_token_expires.total_seconds()),
     )
 
-    snapshot = game_service.get_game_snapshot(channel_id)
     return AuthGameResponse(
         access_token=access_token,
         token_type="bearer",
         user_id=guest_user_id,
         username=cast(str, guest_user.username),
         channel_id=channel_id,
-        snapshot=snapshot,
+        snapshot=None,
     )
 
 @router.get("/me", response_model=UserResponse)

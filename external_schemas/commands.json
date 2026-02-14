@@ -1,0 +1,32 @@
+{
+  "definitions": {
+    "GameJoin": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_join" },
+        "channel_id": { "type": "integer" }
+      },
+      "required": ["type", "channel_id"]
+    },
+    "GameCommand": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_command" },
+        "channel_id": { "type": "integer" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "enum": ["move_n", "move_ne", "move_se", "move_s", "move_sw", "move_nw", "attack", "heal", "end_turn"]
+            },
+            "target_username": { "type": ["string", "null"] },
+            "timestamp": { "type": "integer" }
+          },
+          "required": ["command"]
+        }
+      },
+      "required": ["type", "channel_id", "payload"]
+    }
+  }
+}

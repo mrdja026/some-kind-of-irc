@@ -325,23 +325,44 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
         parsed = game_service.parse_command(message.content)
         if parsed:
             command, target_username = parsed
-            username = _as_str(current_user.username).lower()
-            force_command = username == "admina"
             result = game_service.execute_command(
                 command,
                 current_user_id,
                 target_username,
                 channel_id,
-                force=force_command,
             )
             if result.get("success"):
-                snapshot = game_service.get_game_snapshot(channel_id)
                 await manager.broadcast_game_action(
                     result,
                     channel_id,
                     current_user_id,
-                    snapshot,
+                    None,
                 )
+                update = game_service.get_game_state_update(channel_id)
+                await manager.broadcast_game_state(update, channel_id)
+
+                if game_service.is_npc_turn(channel_id):
+                    npc_steps = game_service.process_npc_turn_chain(channel_id)
+                    for step in npc_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        npc_action = step.get("action_result", {})
+                        npc_update = step.get("state_update", {})
+                        if not isinstance(npc_action, dict):
+                            continue
+                        if not isinstance(npc_update, dict):
+                            continue
+                        npc_executor_id = int(npc_action.get("executor_id", 0))
+                        if npc_executor_id <= 0:
+                            continue
+                        await manager.broadcast_game_action(
+                            npc_action,
+                            channel_id,
+                            npc_executor_id,
+                            None,
+                            True,
+                        )
+                        await manager.broadcast_game_state(npc_update, channel_id)
             else:
                 await manager.send_personal_message(
                     {
@@ -399,10 +420,8 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
     manager.add_client_to_channel(current_user_id, channel_id)
 
     if game_service.is_game_channel(channel_name):
-        game_service.get_or_create_game_session(current_user_id, channel_id)
-        game_service.get_or_create_game_state(current_user_id, channel_id)
-        snapshot = game_service.get_game_snapshot(channel_id)
-        await manager.broadcast_game_state(snapshot, channel_id)
+        # Game state/session initialization is WS-first via game_join handshake.
+        pass
 
     # Create welcome message for the joining user (system message with sender_id=None)
     welcome_message = Message(

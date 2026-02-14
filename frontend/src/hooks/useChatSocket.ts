@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Message, WebSocketMessage, GameAction, GameStateUpdate } from '../types';
+import type { Message, WebSocketMessage, GameStateUpdateEvent, GameSnapshotEvent, ActionResultEvent, Player, GameSnapshotPayload } from '../types';
 
 const WS_BASE_URL =
   typeof window === 'undefined'
@@ -32,6 +32,7 @@ export const useChatSocket = (
   const [isConnected, setIsConnected] = useState(false);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const pendingGameJoinChannelsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     queryClientRef.current = queryClient;
@@ -109,6 +110,21 @@ export const useChatSocket = (
             queryClientRef.current.invalidateQueries({ queryKey: ['channels'] });
             // Invalidate channel members to update mention autocomplete
             queryClientRef.current.invalidateQueries({ queryKey: ['channelMembers', message.channel_id] });
+            if (
+              message.type === 'join' &&
+              message.user_id === clientId &&
+              message.channel_name === '#game'
+            ) {
+              pendingGameJoinChannelsRef.current.add(message.channel_id);
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: 'game_join',
+                    channel_id: message.channel_id,
+                  }),
+                );
+              }
+            }
           }
           break;
         case 'typing':
@@ -122,23 +138,72 @@ export const useChatSocket = (
             onTypingRef.current(message.channel_id, message.user_id);
           }
           break;
-        case 'game_action':
-        case 'game_state_update':
-          // Handle game-related WebSocket messages
-          // Invalidate game state queries to trigger refetch
+        case 'game_snapshot':
           {
-            const gameMessage = message as unknown as (GameAction | GameStateUpdate);
-            if (gameMessage.channel_id) {
-              // Invalidate channel game states to get latest positions
-              queryClientRef.current.invalidateQueries({
-                queryKey: ['channelGameStates', gameMessage.channel_id]
-              });
-              // Also invalidate personal game state
-              queryClientRef.current.invalidateQueries({
-                queryKey: ['myGameState']
-              });
+            const snapshotEvent = message as unknown as GameSnapshotEvent;
+            const channelId = snapshotEvent.channel_id;
+            if (channelId && snapshotEvent.payload) {
+                // Update players list in cache directly
+                queryClientRef.current.setQueryData(
+                    ['channelGameStates', channelId],
+                    snapshotEvent.payload.players
+                );
+                // Also update snapshot cache if needed
+                queryClientRef.current.setQueryData(
+                    ['gameSnapshot', channelId],
+                    snapshotEvent.payload
+                );
             }
           }
+          break;
+        case 'game_state_update':
+          {
+            const updateEvent = message as unknown as GameStateUpdateEvent;
+            const channelId = updateEvent.channel_id;
+            if (channelId && updateEvent.payload && updateEvent.payload.players) {
+                 queryClientRef.current.setQueryData(
+                    ['channelGameStates', channelId],
+                    (oldPlayers: Player[] = []) => {
+                         const updatedPlayers = [...oldPlayers];
+                         for (const newPlayer of updateEvent.payload.players) {
+                             const index = updatedPlayers.findIndex(p => p.user_id === newPlayer.user_id);
+                             if (index !== -1) {
+                                 updatedPlayers[index] = newPlayer;
+                             } else {
+                                 updatedPlayers.push(newPlayer);
+                             }
+                         }
+                         return updatedPlayers;
+                    }
+                );
+                
+                // Update active turn user if present
+                if (updateEvent.payload.active_turn_user_id !== undefined) {
+                    // We might need to store this in a separate query key or merge into snapshot
+                     queryClientRef.current.setQueryData(
+                        ['gameSnapshot', channelId],
+                        (oldSnapshot: GameSnapshotPayload | undefined) => {
+                            if (!oldSnapshot) return undefined;
+                            return {
+                                ...oldSnapshot,
+                                active_turn_user_id: updateEvent.payload.active_turn_user_id
+                            };
+                        }
+                    );
+                }
+            }
+          }
+          break;
+        case 'action_result':
+           {
+               // We can use this to show toasts or update local optimistic state confirmation
+               // For now, the state update usually follows immediately
+               const actionEvent = message as unknown as ActionResultEvent;
+               // console.log("Action result:", actionEvent);
+            }
+           break;
+        case 'error':
+          // System/game errors are consumed by feature UIs if needed.
           break;
         default:
           console.warn('Unknown message type:', message.type);
@@ -162,12 +227,26 @@ export const useChatSocket = (
       wsRef.current = socket;
 
       socket.onopen = () => {
+        if (wsRef.current !== socket) {
+          return;
+        }
         reconnectAttemptRef.current = 0;
         logWsInfo('connected', { clientId, wsUrl });
         setIsConnected(true);
+        for (const channelId of pendingGameJoinChannelsRef.current) {
+          socket.send(
+            JSON.stringify({
+              type: 'game_join',
+              channel_id: channelId,
+            }),
+          );
+        }
       };
 
       socket.onclose = (event) => {
+        if (wsRef.current !== socket) {
+          return;
+        }
         logWsInfo('disconnected', {
           clientId,
           wsUrl,
@@ -181,10 +260,16 @@ export const useChatSocket = (
       };
 
       socket.onerror = () => {
+        if (wsRef.current !== socket) {
+          return;
+        }
         logWsInfo('error', { clientId, wsUrl });
       };
 
       socket.onmessage = (event) => {
+        if (wsRef.current !== socket) {
+          return;
+        }
         try {
           const data: WebSocketMessage = JSON.parse(event.data);
           handleWebSocketMessage(data);
@@ -229,7 +314,7 @@ export const useChatSocket = (
     };
   }, [clientId]);
 
-  const sendMessage = (message: WebSocketMessage) => {
+  const sendMessage = (message: any) => {
     if (wsRef.current && isConnected) {
       wsRef.current.send(JSON.stringify(message));
     }
@@ -243,9 +328,38 @@ export const useChatSocket = (
     });
   };
 
+  const sendGameCommand = (channelId: number, command: string, targetUsername?: string) => {
+      sendMessage({
+          type: 'game_command',
+          channel_id: channelId,
+          payload: {
+              command,
+              target_username: targetUsername,
+              timestamp: Date.now()
+          }
+      });
+  };
+
+  const sendGameJoin = (channelId: number) => {
+    if (!channelId || channelId <= 0) {
+      return;
+    }
+    pendingGameJoinChannelsRef.current.add(channelId);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'game_join',
+          channel_id: channelId,
+        }),
+      );
+    }
+  };
+
   return {
     isConnected,
     sendMessage,
     sendTyping,
+    sendGameCommand,
+    sendGameJoin,
   };
 };
