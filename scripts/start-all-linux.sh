@@ -38,6 +38,12 @@ export AUDIT_LOGGER_URL="http://localhost:8004"
 # We need to use the venv python for backend
 backend/be/bin/python -m uvicorn src.main:app --reload --reload-dir backend --host 0.0.0.0 --port 8002 --app-dir backend > /dev/null 2>&1 &
 
+# 3.1 Start AI Service
+echo "Starting AI Service..."
+export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest2;guest3}"
+export AI_RATE_LIMIT_PER_HOUR="${AI_RATE_LIMIT_PER_HOUR:-10}"
+backend/be/bin/python -m uvicorn main:app --reload --reload-dir ai-service --host 0.0.0.0 --port 8001 --app-dir ai-service > /dev/null 2>&1 &
+
 sleep 2
 echo "Seeding default users from backend/seed_users.json..."
 if ! backend/be/bin/python backend/create_test_user.py --file backend/seed_users.json; then
@@ -79,9 +85,11 @@ cd frontend
 unset PORT
 export VITE_API_URL="http://localhost:8002"
 export VITE_WS_URL="ws://localhost:8002"
+export VITE_AI_API_URL="http://localhost:8001"
 # TanStack Start specific env vars if needed
 export VITE_PUBLIC_API_URL="http://localhost:8002"
 export VITE_PUBLIC_WS_URL="ws://localhost:8002"
+export VITE_PUBLIC_AI_API_URL="http://localhost:8001"
 
 # Start the built production server (since we built it in setup)
 # Or use dev server if preferred for hot reload. Using dev for local dev experience.
@@ -91,6 +99,7 @@ cd ..
 echo "All services started!"
 echo "Frontend: http://localhost:4269"
 echo "Backend: http://localhost:8002"
+echo "AI Service: http://localhost:8001"
 echo "MinIO Console: http://localhost:9001"
 echo "Press Ctrl+C to stop."
 

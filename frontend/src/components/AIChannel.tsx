@@ -1,7 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { queryAIStream, getAIStatus } from '../api'
-import type { AIIntent, AIQueryResponse, AIStreamEvent } from '../types'
+import {
+  createDirectMessageChannel,
+  getAIHealth,
+  getAIStatus,
+  queryAIStream,
+  sendMessage,
+  uploadMedia,
+} from '../api'
+import type {
+  AIAgentCandidates,
+  AIAgentReasoning,
+  AIClarificationState,
+  AIIntent,
+  AIStreamEvent,
+} from '../types'
 import { DollarSign, BookOpen, Bot, Sparkles } from 'lucide-react'
 
 const INTENTS: {
@@ -28,38 +41,214 @@ interface AIChannelProps {
   channelId: number
   channelName?: string
   showHeader?: boolean
+  currentUserId?: number | null
   onCommand?: (command: string) => void
+}
+
+type ConversationEntry = {
+  id: number
+  intent: string
+  query: string
+  response: string
+  agent: string
+  disclaimer: string
+  candidateQuestions?: string[]
+  otherSuggestedQuestions?: string[]
+  judgeReasoning?: string
+  chosenFromAgent?: string
+  agentCandidates?: AIAgentCandidates
+  agentReasoning?: AIAgentReasoning
+  clarificationSummary?: Array<{ question: string; answer: string; isFallback: boolean }>
+}
+
+const DEFAULT_DISCLAIMER =
+  'AI responses are for informational purposes only. Always verify important decisions with qualified professionals.'
+
+async function buildQuizReportPdf(params: {
+  intent: AIIntent
+  originalQuery: string
+  channelName: string
+  finalResponse: string
+  clarifications: Array<{ question: string; answer: string; isFallback: boolean }>
+}): Promise<File> {
+  const { jsPDF } = await import('jspdf')
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+  const margin = 40
+  const maxWidth = 515
+  const lineHeight = 16
+  let y = 44
+
+  const addLine = (text: string, spacing = lineHeight) => {
+    const lines = doc.splitTextToSize(text, maxWidth)
+    lines.forEach((line: string) => {
+      if (y > 790) {
+        doc.addPage()
+        y = 44
+      }
+      doc.text(line, margin, y)
+      y += spacing
+    })
+  }
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  addLine('AI Quiz Report', 20)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(11)
+  addLine(`Channel: ${params.channelName}`)
+  addLine(`Intent: ${params.intent}`)
+  addLine(`Generated: ${new Date().toLocaleString()}`)
+  y += 8
+
+  doc.setFont('helvetica', 'bold')
+  addLine('Original question:')
+  doc.setFont('helvetica', 'normal')
+  addLine(params.originalQuery)
+  y += 8
+
+  if (params.clarifications.length > 0) {
+    doc.setFont('helvetica', 'bold')
+    addLine('Clarification Q&A:')
+    doc.setFont('helvetica', 'normal')
+    params.clarifications.forEach((entry, idx) => {
+      addLine(`Q${idx + 1}${entry.isFallback ? ' (fallback)' : ''}: ${entry.question}`)
+      addLine(`A${idx + 1}: ${entry.answer}`)
+      y += 6
+    })
+  }
+
+  doc.setFont('helvetica', 'bold')
+  addLine('Final recommendation:')
+  doc.setFont('helvetica', 'normal')
+  addLine(params.finalResponse)
+
+  const fileName = `ai-quiz-report-${Date.now()}.pdf`
+  const blob = doc.output('blob')
+  return new File([blob], fileName, { type: 'application/pdf' })
+}
+
+async function sendQuizReportToSelfDm(params: {
+  currentUserId: number
+  intent: AIIntent
+  originalQuery: string
+  channelName: string
+  finalResponse: string
+  clarifications: Array<{ question: string; answer: string; isFallback: boolean }>
+}): Promise<void> {
+  const pdfFile = await buildQuizReportPdf({
+    intent: params.intent,
+    originalQuery: params.originalQuery,
+    channelName: params.channelName,
+    finalResponse: params.finalResponse,
+    clarifications: params.clarifications,
+  })
+  const upload = await uploadMedia(pdfFile)
+  const selfDm = await createDirectMessageChannel(params.currentUserId)
+  const content = `Your AI quiz report is ready. Download PDF: ${upload.url}`
+  await sendMessage(selfDm.id, content, upload.url)
+}
+
+function buildClarificationSummary(
+  state: AIClarificationState,
+  latestAnswer?: string,
+): Array<{ question: string; answer: string; isFallback: boolean }> {
+  const allAnswers = [...state.answers]
+  if (latestAnswer) {
+    allAnswers.push(latestAnswer)
+  }
+  const fallbackFlags = state.fallback_flags ?? []
+
+  return state.questions
+    .map((question, idx) => ({
+      question,
+      answer: allAnswers[idx] ?? '',
+      isFallback: Boolean(fallbackFlags[idx]),
+    }))
+    .filter((item) => item.answer.trim().length > 0)
 }
 
 export function AIChannel({
   channelId,
   channelName = '#ai',
   showHeader = true,
+  currentUserId,
   onCommand,
 }: AIChannelProps) {
   const [selectedIntent, setSelectedIntent] = useState<AIIntent | null>(null)
   const [query, setQuery] = useState('')
-  const [responses, setResponses] = useState<
-    Array<AIQueryResponse & { id: number }>
-  >([])
-  const [isStreaming, setIsStreaming] = useState(false)
+  const [responses, setResponses] = useState<ConversationEntry[]>([])
+  const [clarificationState, setClarificationState] =
+    useState<AIClarificationState | null>(null)
+  const [activeQuestion, setActiveQuestion] = useState<string | null>(null)
+  const [streamProgress, setStreamProgress] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
 
+  const {
+    data: aiHealth,
+    error: aiHealthError,
+  } = useQuery({
+    queryKey: ['aiHealth', channelId],
+    queryFn: getAIHealth,
+    retry: false,
+    refetchInterval: 30000,
+  })
+
   // Get AI status (remaining requests)
-  const { data: aiStatus } = useQuery({
-    queryKey: ['aiStatus'],
+  const {
+    data: aiStatus,
+    error: aiStatusError,
+  } = useQuery({
+    queryKey: ['aiStatus', channelId],
     queryFn: getAIStatus,
+    enabled: aiHealth?.status === 'ok',
+    retry: false,
     refetchInterval: 60000, // Refresh every minute
   })
 
+  useEffect(() => {
+    if (aiHealth?.status === 'ok') {
+      console.info(`[AIChannel] health ok for ${channelName}`)
+    }
+  }, [aiHealth?.status, channelName])
+
+  useEffect(() => {
+    if (aiHealthError) {
+      console.warn('[AIChannel] health check failed', aiHealthError)
+    }
+  }, [aiHealthError])
+
+  const healthMessage =
+    aiHealthError instanceof Error ? aiHealthError.message : null
+  const aiAccessMessage =
+    aiStatusError instanceof Error ? aiStatusError.message : null
+
   const handleIntentSelect = (intent: AIIntent) => {
     setSelectedIntent(intent)
+    setClarificationState(null)
+    setActiveQuestion(null)
+    setQuery('')
+    setStreamProgress(null)
+    setStreamError(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = query.trim()
-    if (!trimmed || isStreaming) return
+    if (!trimmed || isSubmitting) return
+    if (healthMessage) {
+      setStreamError(healthMessage)
+      return
+    }
+    if (aiAccessMessage) {
+      setStreamError(aiAccessMessage)
+      return
+    }
+    if (aiStatus && !aiStatus.available) {
+      setStreamError('AI service is not configured yet. Please contact administrator.')
+      return
+    }
     if (trimmed.startsWith('/')) {
       const command = trimmed.slice(1).trim().toLowerCase()
       if (command) {
@@ -67,74 +256,232 @@ export function AIChannel({
       }
       setQuery('')
       setSelectedIntent(null)
+      setClarificationState(null)
+      setActiveQuestion(null)
+      setStreamProgress(null)
       return
     }
-    if (!selectedIntent || trimmed.length < 10) return
+    if (!selectedIntent) return
+    if (!clarificationState && trimmed.length < 10) return
 
     const responseId = Date.now()
-    const initialResponse: AIQueryResponse & { id: number } = {
+    const initialResponse: ConversationEntry = {
       id: responseId,
       intent: selectedIntent,
       query: trimmed,
       response: '',
       agent: 'JudgeBot',
-      disclaimer:
-        'AI responses are for informational purposes only. Always verify important decisions with qualified professionals.',
+      disclaimer: DEFAULT_DISCLAIMER,
     }
 
     setResponses((prev) => [...prev, initialResponse])
-    setIsStreaming(true)
+    setIsSubmitting(true)
+    setStreamProgress(null)
     setStreamError(null)
 
-    const handleEvent = (event: AIStreamEvent) => {
-      if (event.type === 'meta') {
+    let streamMode: 'clarify' | 'final' | null = null
+    let receivedClarifyEvent = false
+    const initialTurn = !clarificationState
+    let finalResponseText = ''
+
+    try {
+      if (clarificationState) {
+        const inFlightSummary = buildClarificationSummary(clarificationState, trimmed)
         setResponses((prev) =>
           prev.map((item) =>
             item.id === responseId
               ? {
                   ...item,
-                  intent: event.intent,
-                  query: event.query,
-                  agent: event.agent,
-                  disclaimer: event.disclaimer,
+                  clarificationSummary: inFlightSummary,
                 }
               : item,
           ),
         )
       }
-      if (event.type === 'delta') {
-        setResponses((prev) =>
-          prev.map((item) =>
-            item.id === responseId
-              ? { ...item, response: item.response + event.text }
-              : item,
-          ),
-        )
-      }
-      if (event.type === 'error') {
-        setStreamError(event.message)
-      }
-    }
 
-    try {
-      await queryAIStream(selectedIntent, trimmed, {
-        onEvent: handleEvent,
-        onError: (message) => setStreamError(message),
-      })
+      const handleEvent = (event: AIStreamEvent) => {
+        if (event.type === 'meta') {
+          setResponses((prev) =>
+            prev.map((item) =>
+              item.id === responseId
+                ? {
+                    ...item,
+                    intent: event.intent,
+                    query: event.query,
+                    agent: event.agent,
+                    disclaimer: event.disclaimer,
+                  }
+                : item,
+            ),
+          )
+          return
+        }
+
+        if (event.type === 'progress') {
+          setStreamProgress(event.message)
+          return
+        }
+
+        if (event.type === 'clarify_question') {
+          streamMode = 'clarify'
+          receivedClarifyEvent = true
+          const roundPrefix =
+            event.current_round && event.total_rounds
+              ? `Question ${event.current_round}/${event.total_rounds}`
+              : 'Selected question'
+          const fallbackSuffix = event.is_fallback_question ? ' (fallback)' : ''
+          setStreamProgress(`${roundPrefix}${fallbackSuffix} ready`)
+          const previousState = clarificationState
+          const resolvedState: AIClarificationState =
+            event.clarification_state ?? {
+              original_query: previousState?.original_query ?? query,
+              questions:
+                event.questions.length > 0
+                  ? event.questions
+                  : [...(previousState?.questions ?? []), event.question],
+              answers: previousState?.answers ?? [],
+              fallback_flags: (() => {
+                const prevFlags = previousState?.fallback_flags ?? []
+                const needed = (event.questions.length > 0
+                  ? event.questions.length
+                  : (previousState?.questions.length ?? 0) + 1) - prevFlags.length
+                if (needed <= 0) return prevFlags
+                return [...prevFlags, ...new Array(needed).fill(Boolean(event.is_fallback_question))]
+              })(),
+              max_rounds: event.total_rounds ?? previousState?.max_rounds ?? 3,
+            }
+
+          setClarificationState(resolvedState)
+          setActiveQuestion(`${event.question}${fallbackSuffix}`)
+          const clarificationSummary = buildClarificationSummary(
+            resolvedState,
+          )
+          const candidateQuestions = (event.candidate_questions ?? []).filter(
+            (candidate) => candidate !== event.question,
+          )
+          const otherSuggestedQuestions = (
+            event.other_suggested_questions ?? event.candidate_questions ?? []
+          ).filter((candidate) => candidate !== event.question)
+          const renderedQuestion =
+            event.current_round && event.total_rounds
+              ? `Question ${event.current_round}/${event.total_rounds}${fallbackSuffix}: ${event.question}`
+              : `${event.question}${fallbackSuffix}`
+          setResponses((prev) =>
+            prev.map((item) =>
+              item.id === responseId
+                ? {
+                    ...item,
+                    intent: event.intent,
+                    query: event.query,
+                    response: renderedQuestion,
+                    agent: event.agent,
+                    disclaimer: event.disclaimer,
+                    candidateQuestions,
+                    otherSuggestedQuestions,
+                    judgeReasoning: event.judge_reasoning,
+                    chosenFromAgent: event.chosen_from_agent,
+                    agentCandidates: event.agent_candidates,
+                    agentReasoning: event.agent_reasoning,
+                    clarificationSummary,
+                }
+              : item,
+            ),
+          )
+          return
+        }
+
+        if (event.type === 'delta') {
+          streamMode = 'final'
+          finalResponseText += event.text
+          setResponses((prev) =>
+            prev.map((item) =>
+              item.id === responseId
+                ? {
+                    ...item,
+                    response: item.response + event.text,
+                  }
+                : item,
+            ),
+          )
+          return
+        }
+
+        if (event.type === 'done') {
+          if (event.mode) {
+            streamMode = event.mode
+          }
+          return
+        }
+
+        if (event.type === 'error') {
+          setStreamError(event.message)
+        }
+      }
+
+      await queryAIStream(
+        selectedIntent,
+        trimmed,
+        {
+          onEvent: handleEvent,
+          onError: (message) => setStreamError(message),
+        },
+        {
+        conversationStage: clarificationState ? 'clarification' : 'initial',
+        clarificationState,
+        },
+      )
+
+      if (streamMode === 'final') {
+        if (initialTurn && !receivedClarifyEvent) {
+          setStreamError(
+            'AI returned a direct final answer without clarification. Check that AI requests are targeting ai-service (localhost:8001).',
+          )
+        }
+
+        if (currentUserId && selectedIntent) {
+          const clarifications = clarificationState
+            ? buildClarificationSummary(clarificationState, trimmed)
+            : []
+          const originalQuery = clarificationState?.original_query ?? trimmed
+          try {
+            await sendQuizReportToSelfDm({
+              currentUserId,
+              intent: selectedIntent,
+              originalQuery,
+              channelName,
+              finalResponse: finalResponseText,
+              clarifications,
+            })
+            console.info('[AIChannel] quiz report sent to self DM')
+          } catch (reportError) {
+            console.warn('[AIChannel] failed to send quiz report to self DM', reportError)
+          }
+        }
+
+        setStreamProgress(null)
+        setClarificationState(null)
+        setActiveQuestion(null)
+        setSelectedIntent(null)
+      }
     } catch (error) {
       setStreamError(
-        error instanceof Error ? error.message : 'AI stream failed',
+        error instanceof Error ? error.message : 'AI request failed',
       )
     } finally {
-      setIsStreaming(false)
+      if (streamMode !== 'final') {
+        setStreamProgress(null)
+      }
+      setIsSubmitting(false)
       setQuery('')
-      setSelectedIntent(null)
     }
   }
 
   const handleBack = () => {
     setSelectedIntent(null)
+    setClarificationState(null)
+    setActiveQuestion(null)
     setQuery('')
+    setStreamProgress(null)
   }
 
   return (
@@ -157,6 +504,11 @@ export function AIChannel({
               </div>
             )}
           </div>
+          {(healthMessage || aiAccessMessage) && (
+            <div className="mt-2 text-xs text-red-700">
+              {aiAccessMessage || healthMessage}
+            </div>
+          )}
         </div>
       )}
 
@@ -210,6 +562,63 @@ export function AIChannel({
                   </span>
                 </div>
                 <div className="text-amber-900 whitespace-pre-wrap text-sm md:text-base break-words">
+                  {response.chosenFromAgent && (
+                    <div className="mb-2 text-xs md:text-sm text-amber-900">
+                      <span className="font-semibold">Judge chose:</span> {response.chosenFromAgent}
+                    </div>
+                  )}
+                  {response.judgeReasoning && (
+                    <div className="mb-3 p-2 rounded bg-amber-100 border border-amber-200 text-xs md:text-sm text-amber-900">
+                      <div className="font-semibold mb-1">Judge reasoning</div>
+                      <div>{response.judgeReasoning}</div>
+                    </div>
+                  )}
+                  {response.agentCandidates && Object.keys(response.agentCandidates).length > 0 && (
+                    <div className="mb-3 p-2 rounded bg-amber-100 border border-amber-200 text-xs md:text-sm text-amber-900">
+                      <div className="font-semibold mb-1">Agent suggestions</div>
+                      {Object.entries(response.agentCandidates).map(([agentName, suggestions]) => (
+                        <div key={`${response.id}-agent-${agentName}`} className="mb-1">
+                          <span className="font-medium">{agentName}:</span>{' '}
+                          {(suggestions || []).join(' | ')}
+                          {response.agentReasoning?.[agentName] && (
+                            <div className="text-[11px] text-amber-800/80">
+                              Why: {response.agentReasoning[agentName]}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {response.otherSuggestedQuestions && response.otherSuggestedQuestions.length > 0 && (
+                    <div className="mb-3 p-2 rounded bg-amber-100 border border-amber-200 text-xs md:text-sm text-amber-900">
+                      <div className="font-semibold mb-1">Other candidate follow-ups</div>
+                      {response.otherSuggestedQuestions.map((candidate, idx) => (
+                        <div key={`${response.id}-candidate-${idx}`}>
+                          - {candidate}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {response.clarificationSummary &&
+                    response.clarificationSummary.length > 0 && (
+                      <div className="mb-3 p-2 rounded bg-amber-100 border border-amber-200 text-xs md:text-sm text-amber-900">
+                        <div className="font-semibold mb-1">Clarification recap</div>
+                        {response.clarificationSummary.map((entry, idx) => (
+                          <div key={`${response.id}-recap-${idx}`} className="mb-1">
+                            <span className="font-medium">Q{idx + 1}:</span>{' '}
+                            {entry.question}
+                            {entry.isFallback && (
+                              <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-amber-200 text-amber-900">
+                                fallback
+                              </span>
+                            )}
+                            <br />
+                            <span className="font-medium">A{idx + 1}:</span>{' '}
+                            {entry.answer}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   {response.response}
                 </div>
                 <div className="mt-2 md:mt-3 text-xs text-amber-700/70 italic">
@@ -221,7 +630,7 @@ export function AIChannel({
         ))}
 
         {/* Loading skeleton */}
-        {isStreaming && (
+        {isSubmitting && (
           <div className="mb-4 md:mb-6">
             {/* User query shown immediately */}
             <div className="flex gap-2 md:gap-3 chat-card p-2 md:p-3 rounded-xl mb-2 md:mb-3">
@@ -264,7 +673,7 @@ export function AIChannel({
                     style={{ animationDelay: '0.2s' }}
                   ></div>
                   <span className="text-xs text-amber-600 ml-1">
-                    AI is thinking...
+                    {streamProgress || 'AI is thinking...'}
                   </span>
                 </div>
               </div>
@@ -282,8 +691,17 @@ export function AIChannel({
           </div>
         )}
 
+        {(healthMessage || aiAccessMessage) && (
+          <div className="p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 mb-4">
+            <div className="text-red-800 font-medium text-sm md:text-base">AI unavailable</div>
+            <div className="text-red-700 text-xs md:text-sm">
+              {aiAccessMessage || healthMessage}
+            </div>
+          </div>
+        )}
+
         {/* Intent selection - show when no intent selected and not loading */}
-        {!selectedIntent && !isStreaming && (
+        {!selectedIntent && !isSubmitting && !healthMessage && !aiAccessMessage && aiStatus?.available !== false && (
           <div className="grid gap-2 md:gap-3 max-w-lg mx-auto px-2">
             {INTENTS.map((intent) => {
               const Icon = intent.icon
@@ -309,10 +727,19 @@ export function AIChannel({
             })}
           </div>
         )}
+
+        {aiStatus?.available === false && (
+          <div className="p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 mb-4">
+            <div className="text-red-800 font-medium text-sm md:text-base">AI unavailable</div>
+            <div className="text-red-700 text-xs md:text-sm">
+              AI service is not configured yet. Please contact administrator.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Input area - show when intent is selected */}
-      {selectedIntent && !isStreaming && (
+      {selectedIntent && !isSubmitting && (
         <div className="p-2 md:p-4 border-t chat-input-bar">
           <div className="mb-2 md:mb-3 flex items-center gap-2 flex-wrap">
             <button
@@ -324,30 +751,54 @@ export function AIChannel({
             <span className="text-xs md:text-sm font-medium">
               {INTENTS.find((i) => i.id === selectedIntent)?.label}
             </span>
+            {clarificationState && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                Question {clarificationState.answers.length + 1}/
+                {clarificationState.max_rounds ?? clarificationState.questions.length}
+              </span>
+            )}
           </div>
           <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={getPlaceholder(selectedIntent)}
+              placeholder={getPlaceholder(selectedIntent, clarificationState, activeQuestion)}
               className="flex-1 px-3 md:px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-sm md:text-base"
               autoFocus
-              minLength={query.trim().startsWith('/') ? 1 : 10}
+              minLength={query.trim().startsWith('/') ? 1 : clarificationState ? 1 : 10}
             />
             <button
               type="submit"
               disabled={
                 !query.trim() ||
-                (!query.trim().startsWith('/') && query.length < 10)
+                (!query.trim().startsWith('/') && !clarificationState && query.length < 10)
               }
               className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm md:text-base w-full sm:w-auto"
             >
-              Ask AI
+              {clarificationState ? 'Submit answer' : 'Ask AI'}
             </button>
           </form>
+          {clarificationState && clarificationState.answers.length > 0 && (
+            <div className="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-xs md:text-sm text-amber-900">
+              <div className="font-semibold mb-1">Your previous answers</div>
+              {buildClarificationSummary(clarificationState).map((entry, idx) => (
+                <div key={`active-recap-${idx}`} className="mb-1">
+                  <span className="font-medium">Q{idx + 1}:</span> {entry.question}
+                  {entry.isFallback && (
+                    <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-amber-200 text-amber-900">
+                      fallback
+                    </span>
+                  )}
+                  <br />
+                  <span className="font-medium">A{idx + 1}:</span> {entry.answer}
+                </div>
+              ))}
+            </div>
+          )}
           {query.length > 0 &&
             query.length < 10 &&
+            !clarificationState &&
             !query.trim().startsWith('/') && (
               <div className="mt-2 text-xs text-amber-600">
                 Please provide more details (at least 10 characters)
@@ -357,7 +808,7 @@ export function AIChannel({
       )}
 
       {/* Show prompt to select intent when viewing responses */}
-      {!selectedIntent && responses.length > 0 && !isStreaming && (
+      {!selectedIntent && responses.length > 0 && !isSubmitting && (
         <div className="p-2 md:p-4 border-t chat-input-bar text-center">
           <p className="chat-meta text-xs md:text-sm">
             Select an option above to ask another question
@@ -368,7 +819,15 @@ export function AIChannel({
   )
 }
 
-function getPlaceholder(intent: AIIntent): string {
+function getPlaceholder(
+  intent: AIIntent,
+  clarificationState: AIClarificationState | null,
+  activeQuestion: string | null,
+): string {
+  if (clarificationState) {
+    return activeQuestion || 'Please answer this clarification question...'
+  }
+
   switch (intent) {
     case 'afford':
       return 'e.g., Can I afford a Tesla Model 3 on a $60k salary?'

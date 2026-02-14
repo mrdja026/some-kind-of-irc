@@ -12,6 +12,7 @@ data:
   ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
   AI_RATE_LIMIT_PER_HOUR: "10"
   ADMIN_ALLOWLIST: "admina"
+  AI_ALLOWLIST: "admina;guest2;guest3"
   DATA_PROCESSOR_URL: "http://data-processor:8003"
   MEDIA_STORAGE_URL: "http://media-storage:9101"
   ANTHROPIC_API_BASE: "https://api.anthropic.com"

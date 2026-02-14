@@ -181,6 +181,14 @@ export function ChannelsSidebar({
       {directMessages?.map((dmChannel) => {
         // Parse DM channel name to get other user ID
         const match = dmChannel.name.match(/dm-(\d+)-(\d+)/)
+        const firstId = match ? parseInt(match[1]) : null
+        const secondId = match ? parseInt(match[2]) : null
+        const isSelfDm =
+          firstId !== null &&
+          secondId !== null &&
+          user?.id !== undefined &&
+          firstId === user.id &&
+          secondId === user.id
         const otherUserId = match
           ? parseInt(match[1]) === user?.id
             ? parseInt(match[2])
@@ -203,7 +211,9 @@ export function ChannelsSidebar({
             }`}
           >
             <span className="text-sm md:text-base truncate">
-              {otherUser?.display_name || otherUser?.username || dmChannel.name}
+              {isSelfDm
+                ? 'DM-Notes'
+                : otherUser?.display_name || otherUser?.username || dmChannel.name}
             </span>
           </div>
         )

@@ -24,3 +24,6 @@ node_modules/
 infra_resources/bin/
 infra_resources/cache/
 infra_resources/memourai/
+ai-service/__pycache__/
+ai-service/ai-service/__pycache__/
+media-storage/__pycache__/

@@ -18,6 +18,7 @@ ALLOWED_MIME_TYPES = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
+    "application/pdf": "pdf",
 }
 
 PIL_FORMATS = {
@@ -201,6 +202,30 @@ def upload_file():
     if not file_bytes:
         return jsonify({"detail": "Empty upload"}), 400
 
+    base_id = uuid4().hex
+    base_prefix = f"uploads/{user_id}/{base_id}"
+
+    if content_type == "application/pdf":
+        pdf_key = f"{base_prefix}/document.{extension}"
+        try:
+            s3_client.upload_fileobj(
+                io.BytesIO(file_bytes),
+                minio_bucket,
+                pdf_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+        except EndpointConnectionError:
+            return jsonify({"detail": "Storage unavailable"}), 503
+
+        return jsonify(
+            {
+                "key": pdf_key,
+                "url": _build_public_url(pdf_key),
+                "contentType": content_type,
+                "size": len(file_bytes),
+            }
+        )
+
     try:
         image = Image.open(io.BytesIO(file_bytes))
         image = ImageOps.exif_transpose(image)
@@ -244,8 +269,6 @@ def upload_file():
     else:
         display_bytes = file_bytes
 
-    base_id = uuid4().hex
-    base_prefix = f"uploads/{user_id}/{base_id}"
     original_key = f"{base_prefix}/original.{extension}"
     display_key = f"{base_prefix}/display.{extension}"
 

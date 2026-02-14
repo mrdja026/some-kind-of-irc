@@ -2,8 +2,8 @@ import type {
   User,
   Channel,
   Message,
-  AuthResponse,
   AIIntent,
+  AIClarificationState,
   AIQueryResponse,
   AIStatus,
   AIStreamEvent,
@@ -23,6 +23,61 @@ const API_BASE_URL =
         }
         return origin;
       })();
+
+const AI_API_BASE_URL =
+  typeof window === 'undefined'
+    ? import.meta.env.VITE_AI_API_URL || import.meta.env.VITE_API_URL || 'http://backend:8002'
+    : (() => {
+        const origin = window.location.origin;
+        const isLocalHost =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1';
+        const normalizeLocalAiUrl = (value: string): string => {
+          if (!isLocalHost) {
+            return value;
+          }
+          if (value.includes(':8002')) {
+            return 'http://localhost:8001';
+          }
+          return value;
+        };
+        const explicit = import.meta.env.VITE_PUBLIC_AI_API_URL?.trim();
+        if (explicit) {
+          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
+            return origin;
+          }
+          return normalizeLocalAiUrl(explicit);
+        }
+        const browserAi = import.meta.env.VITE_AI_API_URL?.trim();
+        if (browserAi) {
+          if (browserAi.includes('localhost') && window.location.hostname !== 'localhost') {
+            return origin;
+          }
+          return normalizeLocalAiUrl(browserAi);
+        }
+        const fallback = import.meta.env.VITE_PUBLIC_API_URL?.trim();
+        if (fallback) {
+          if (fallback.includes('localhost') && window.location.hostname !== 'localhost') {
+            return origin;
+          }
+          return normalizeLocalAiUrl(fallback);
+        }
+        if (isLocalHost) {
+          return 'http://localhost:8001';
+        }
+        return origin;
+      })();
+
+const parseAIError = async (response: Response, fallback: string): Promise<string> => {
+  const payload = await response.json().catch(() => null);
+  if (payload && typeof payload.detail === 'string' && payload.detail.trim()) {
+    return payload.detail;
+  }
+  if (response.status === 404) {
+    return 'AI is not enabled for this user';
+  }
+  return fallback;
+};
 
 // Auth APIs
 export const login = async (username: string, password: string): Promise<void> => {
@@ -188,7 +243,7 @@ export const sendMessage = async (
   return response.json();
 };
 
-export const uploadImage = async (file: File): Promise<{ url: string }> => {
+export const uploadMedia = async (file: File): Promise<{ url: string }> => {
   const formData = new FormData();
   formData.append('file', file);
 
@@ -205,6 +260,8 @@ export const uploadImage = async (file: File): Promise<{ url: string }> => {
   const data = await response.json();
   return { url: data.url };
 };
+
+export const uploadImage = uploadMedia;
 
 // User profile APIs
 export const updateUserProfile = async (
@@ -280,18 +337,29 @@ export const addUserToChannel = async (
 };
 
 // AI Agent APIs
-export const queryAI = async (intent: AIIntent, query: string): Promise<AIQueryResponse> => {
-  const response = await fetch(`${API_BASE_URL}/ai/query`, {
+export const queryAI = async (
+  intent: AIIntent,
+  query: string,
+  options: {
+    conversationStage?: 'initial' | 'clarification';
+    clarificationState?: AIClarificationState | null;
+  } = {},
+): Promise<AIQueryResponse> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/query`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify({ intent, query }),
+    body: JSON.stringify({
+      intent,
+      query,
+      conversation_stage: options.conversationStage ?? 'initial',
+      clarification_state: options.clarificationState ?? null,
+    }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'AI query failed' }));
-    throw new Error(error.detail || 'AI query failed');
+    throw new Error(await parseAIError(response, 'AI query failed'));
   }
   return response.json();
 };
@@ -304,20 +372,28 @@ export const queryAIStream = async (
     onError?: (message: string) => void;
     signal?: AbortSignal;
   } = {},
+  options: {
+    conversationStage?: 'initial' | 'clarification';
+    clarificationState?: AIClarificationState | null;
+  } = {},
 ): Promise<void> => {
-  const response = await fetch(`${API_BASE_URL}/ai/query/stream`, {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/query/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify({ intent, query }),
+    body: JSON.stringify({
+      intent,
+      query,
+      conversation_stage: options.conversationStage ?? 'initial',
+      clarification_state: options.clarificationState ?? null,
+    }),
     signal: handlers.signal,
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'AI stream failed' }));
-    throw new Error(error.detail || 'AI stream failed');
+    throw new Error(await parseAIError(response, 'AI stream failed'));
   }
 
   if (!response.body) {
@@ -362,11 +438,21 @@ export const queryAIStream = async (
 };
 
 export const getAIStatus = async (): Promise<AIStatus> => {
-  const response = await fetch(`${API_BASE_URL}/ai/status`, {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/status`, {
     credentials: 'include',
   });
   if (!response.ok) {
-    throw new Error('Failed to get AI status');
+    throw new Error(await parseAIError(response, 'Failed to get AI status'));
+  }
+  return response.json();
+};
+
+export const getAIHealth = async (): Promise<{ service: string; status: string }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/healthz`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error('AI service health check failed');
   }
   return response.json();
 };
