@@ -53,6 +53,60 @@
       },
       "required": ["thickness", "tiles"]
     },
+    "TurnContextEntity": {
+      "type": "object",
+      "properties": {
+        "entity_id": { "type": "string" },
+        "entity_type": { "type": "string", "enum": ["player", "obstacle", "prop"] },
+        "distance": { "type": "integer" },
+        "position": { "$ref": "#/definitions/Position" },
+        "user_id": { "type": ["integer", "null"] },
+        "username": { "type": ["string", "null"] },
+        "display_name": { "type": ["string", "null"] },
+        "is_npc": { "type": ["boolean", "null"] },
+        "health": { "type": ["integer", "null"] },
+        "max_health": { "type": ["integer", "null"] },
+        "obstacle_type": { "type": ["string", "null"] },
+        "prop_type": { "type": ["string", "null"] },
+        "is_blocking": { "type": ["boolean", "null"] },
+        "zone": { "type": ["string", "null"] }
+      },
+      "required": ["entity_id", "entity_type", "distance", "position"]
+    },
+    "TurnContext": {
+      "type": "object",
+      "properties": {
+        "actor_user_id": { "type": ["integer", "null"] },
+        "attackable_target_ids": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "surroundings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TurnContextEntity" }
+        },
+        "surroundings_diff": {
+          "type": "object",
+          "properties": {
+            "revision": { "type": "integer" },
+            "added": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            },
+            "removed": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            },
+            "changed": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            }
+          },
+          "required": ["revision", "added", "removed", "changed"]
+        }
+      },
+      "required": ["actor_user_id", "attackable_target_ids", "surroundings", "surroundings_diff"]
+    },
     "Battlefield": {
       "type": "object",
       "properties": {

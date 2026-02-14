@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Generator, Tuple, cast
+from typing import Any, Dict, Generator, List, Tuple, cast
 
 import pytest
 from sqlalchemy import create_engine
@@ -26,6 +26,8 @@ def _reset_singletons() -> Generator[None, None, None]:
     GameService._channel_status_history.clear()
     GameService._channel_human_user.clear()
     GameService._channel_forced_npc_users.clear()
+    GameService._channel_turn_budget.clear()
+    GameService._channel_turn_context_cache.clear()
     BattlefieldService._channel_cache.clear()
     yield
 
@@ -66,6 +68,19 @@ def _create_state(db_session, user_id: int, position: Tuple[int, int], health: i
     db_session.commit()
     db_session.refresh(state)
     return state
+
+
+def _create_session(db_session, user_id: int, game_state_id: int, channel_id: int) -> GameSession:
+    session = GameSession(
+        user_id=user_id,
+        game_state_id=game_state_id,
+        channel_id=channel_id,
+        is_active=True,
+    )
+    db_session.add(session)
+    db_session.commit()
+    db_session.refresh(session)
+    return session
 
 
 @pytest.fixture
@@ -177,6 +192,15 @@ class TestCombat:
         assert result["success"] is False
         assert "cannot attack yourself" in result["error"].lower()
 
+    def test_attack_fails_when_target_out_of_range(self, game_service, test_user, test_user2, db_session):
+        _create_state(db_session, test_user.id, (5, 5), health=100)
+        _create_state(db_session, test_user2.id, (8, 5), health=100)
+
+        result = game_service.execute_command("attack", test_user.id, test_user2.username)
+
+        assert result["success"] is False
+        assert "out of range" in str(result.get("error", "")).lower()
+
     def test_heal_is_capped_at_max_health(self, game_service, test_user, db_session):
         _create_state(db_session, test_user.id, (5, 5), health=95, max_health=100)
 
@@ -258,3 +282,43 @@ class TestSnapshotAndSpawns:
             int(cast(int, bad_state.position_y)),
         )
         assert normalized not in game_service._get_obstacle_positions(test_channel.id)
+
+    def test_turn_context_exposes_attackable_and_surroundings_diff(self, game_service, db_session, test_channel):
+        user_1 = _create_user(db_session, "tc_player_1")
+        user_2 = _create_user(db_session, "tc_player_2")
+        user_1_id = int(cast(int, user_1.id))
+        user_2_id = int(cast(int, user_2.id))
+
+        state_1 = _create_state(db_session, user_1_id, (5, 5), health=100)
+        state_2 = _create_state(db_session, user_2_id, (6, 5), health=100)
+        _create_session(db_session, user_1_id, int(cast(int, state_1.id)), int(cast(int, test_channel.id)))
+        _create_session(db_session, user_2_id, int(cast(int, state_2.id)), int(cast(int, test_channel.id)))
+
+        game_service.set_active_turn_user(int(cast(int, test_channel.id)), user_1_id)
+
+        first_update = game_service.get_game_state_update(int(cast(int, test_channel.id)))
+        first_context = cast(Dict[str, Any], first_update["payload"]["turn_context"])
+
+        assert int(first_context["actor_user_id"]) == user_1_id
+        assert user_2_id in cast(List[int], first_context["attackable_target_ids"])
+        assert any(
+            str(cast(Dict[str, Any], item).get("entity_id", "")) == f"player:{user_2_id}"
+            for item in cast(List[Any], first_context["surroundings"])
+        )
+        first_diff = cast(Dict[str, Any], first_context["surroundings_diff"])
+        assert int(first_diff["revision"]) >= 1
+        assert len(cast(List[Any], first_diff["added"])) >= 1
+
+        setattr(state_2, "position_x", 9)
+        setattr(state_2, "position_y", 9)
+        db_session.commit()
+
+        second_update = game_service.get_game_state_update(int(cast(int, test_channel.id)))
+        second_context = cast(Dict[str, Any], second_update["payload"]["turn_context"])
+        assert user_2_id not in cast(List[int], second_context["attackable_target_ids"])
+        second_diff = cast(Dict[str, Any], second_context["surroundings_diff"])
+        assert int(second_diff["revision"]) > int(first_diff["revision"])
+        assert any(
+            str(cast(Dict[str, Any], item).get("entity_id", "")) == f"player:{user_2_id}"
+            for item in cast(List[Any], second_diff["removed"])
+        )

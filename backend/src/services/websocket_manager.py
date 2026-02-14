@@ -82,6 +82,7 @@ class ConnectionManager:
         channel_id: int | Any,
         executor_id: int | Any,
         snapshot: Optional[dict] = None,
+        broadcast_failure_to_channel: bool = False,
     ):
         """Broadcast action result and push state update to channel."""
         message = {
@@ -105,7 +106,7 @@ class ConnectionManager:
                 "error": {"code": "game_error", "message": action_result.get("error")} if action_result.get("error") else None
             }
         }
-        if bool(action_result.get("success", False)):
+        if bool(action_result.get("success", False)) or broadcast_failure_to_channel:
             await self.broadcast(message, channel_id)
         else:
             await self.send_personal_message(message, executor_id)

@@ -30,6 +30,7 @@
             },
             "battlefield": { "$ref": "game_types.json#/definitions/Battlefield" },
             "active_turn_user_id": { "type": ["integer", "null"] },
+            "turn_context": { "$ref": "game_types.json#/definitions/TurnContext" },
             "status_history": {
               "type": "array",
               "items": {
@@ -50,7 +51,7 @@
               }
             }
           },
-          "required": ["map", "players", "obstacles", "battlefield", "active_turn_user_id"]
+          "required": ["map", "players", "obstacles", "battlefield", "active_turn_user_id", "turn_context"]
         }
       },
       "required": ["type", "channel_id", "timestamp", "payload"]
@@ -69,6 +70,7 @@
               "type": "array",
               "items": { "$ref": "game_types.json#/definitions/Player" }
             },
+            "turn_context": { "$ref": "game_types.json#/definitions/TurnContext" },
             "status_history": {
               "type": "array",
               "items": {
@@ -89,7 +91,7 @@
               }
             }
           },
-          "required": ["active_turn_user_id", "players"]
+          "required": ["active_turn_user_id", "players", "turn_context"]
         }
       },
       "required": ["type", "channel_id", "timestamp", "payload"]

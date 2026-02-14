@@ -25,3 +25,6 @@
 
 ## 5. Technical Debt
 - [ ] TD-FE-WS-01 Consolidate duplicate frontend WebSocket consumers (`chat.tsx` + `GameChannel.tsx`) into a single shared socket source.
+
+## 6. Warp Findings Closure
+- [x] 6.1 Resolve transport contract spike findings for Godot/backend parity (command timestamp int-ms normalization, strict snapshot/update shape checks, action_result required-key guardrails, and schema structural contract tests).

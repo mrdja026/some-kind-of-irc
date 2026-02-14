@@ -53,7 +53,8 @@ GAME_COMMANDS = [
     "move_sw",
     "move_nw",
     "attack",
-    "heal"
+    "heal",
+    "end_turn",
 ]
 
 LEGACY_COMMAND_ALIASES: Dict[str, str] = {
@@ -74,6 +75,8 @@ class GameService:
     _channel_status_history: Dict[int, deque[Dict[str, Any]]] = {}
     _channel_human_user: Dict[int, int] = {}
     _channel_forced_npc_users: Dict[int, Set[int]] = {}
+    _channel_turn_budget: Dict[int, Dict[str, int]] = {}
+    _channel_turn_context_cache: Dict[int, Dict[str, Any]] = {}
     
     def __init__(self, db: Session):
         self.db = db
@@ -170,6 +173,39 @@ class GameService:
             return (normalized_command, target_username)
         
         return None
+
+    def _build_command_error_result(
+        self,
+        command: str,
+        executor_id: int,
+        error: str,
+        channel_id: Optional[int],
+        executor_username: str = "",
+        target_id: Optional[int] = None,
+        target_username: str = "",
+    ) -> Dict[str, Any]:
+        resolved_target_id = target_id if target_id is not None else executor_id
+        resolved_target_username = target_username if target_username != "" else executor_username
+        return {
+            "success": False,
+            "command": command,
+            "executor_id": executor_id,
+            "target_id": resolved_target_id,
+            "message": "",
+            "error": error,
+            "game_state": None,
+            "executor_username": executor_username,
+            "target_username": resolved_target_username,
+            "position": None,
+            "target_health": None,
+            "target_max_health": None,
+            "actor_health": None,
+            "actor_max_health": None,
+            "npc_actions": [],
+            "active_turn_user_id": self.get_active_turn_user_id(channel_id)
+            if channel_id is not None
+            else None,
+        }
     
     def execute_command(
         self,
@@ -178,76 +214,107 @@ class GameService:
         target_username: Optional[str] = None,
         channel_id: Optional[int] = None,
         force: bool = False,
-        skip_npc: bool = False,
+        advance_turn: bool = True,
+        enforce_turn_budget: bool = True,
     ) -> Dict[str, Any]:
         """
         Execute a game command.
         Returns a dict with the result and updated state.
         """
+        command_token = str(command)
         if not isinstance(command, str):
-            return {
-                "success": False,
-                "error": f"Invalid command: {command}",
-                "game_state": None,
-                "active_turn_user_id": self.get_active_turn_user_id(channel_id)
-                if channel_id is not None
-                else None,
-            }
+            return self._build_command_error_result(
+                command=command_token,
+                executor_id=executor_id,
+                error=f"Invalid command: {command}",
+                channel_id=channel_id,
+            )
 
         normalized_command = re.sub(r"\s+", "_", command.lower().strip())
         normalized_command = LEGACY_COMMAND_ALIASES.get(normalized_command, normalized_command)
+        command_token = normalized_command
 
         if normalized_command not in GAME_COMMANDS:
-            return {
-                "success": False,
-                "error": f"Invalid command: {command}",
-                "game_state": None,
-                "active_turn_user_id": self.get_active_turn_user_id(channel_id)
-                if channel_id is not None
-                else None,
-            }
+            return self._build_command_error_result(
+                command=command_token,
+                executor_id=executor_id,
+                error=f"Invalid command: {command}",
+                channel_id=channel_id,
+            )
 
         command = normalized_command
         previous_turn_user_id = self.get_active_turn_user_id(channel_id) if channel_id is not None else None
 
         if channel_id is not None and not self._is_user_in_channel(executor_id, channel_id):
-            return {
-                "success": False,
-                "error": "Game session not initialized. Connect WebSocket and send game_join first.",
-                "game_state": None,
-                "active_turn_user_id": self.get_active_turn_user_id(channel_id),
-            }
+            return self._build_command_error_result(
+                command=command,
+                executor_id=executor_id,
+                error="Game session not initialized. Connect WebSocket and send game_join first.",
+                channel_id=channel_id,
+            )
 
         executor_user = self.db.query(User).filter(User.id == executor_id).first()
         if not executor_user:
-            return {
-                "success": False,
-                "error": "Executor user not found",
-                "game_state": None,
-                "active_turn_user_id": self.get_active_turn_user_id(channel_id)
-                if channel_id is not None
-                else None,
-            }
+            return self._build_command_error_result(
+                command=command,
+                executor_id=executor_id,
+                error="Executor user not found",
+                channel_id=channel_id,
+            )
         executor_username = cast(str, executor_user.username)
 
-        if channel_id is not None and not force:
+        if channel_id is not None and force:
+            return self._build_command_error_result(
+                command=command,
+                executor_id=executor_id,
+                error="Force commands are disabled in small-arena",
+                channel_id=channel_id,
+                executor_username=executor_username,
+            )
+
+        if channel_id is not None:
             active_turn_user = self.get_active_turn_user_id(channel_id)
             if active_turn_user and active_turn_user != executor_id:
-                return {
-                    "success": False,
-                    "error": "Not your turn",
-                    "active_turn_user_id": active_turn_user,
-                    "game_state": None,
-                }
+                return self._build_command_error_result(
+                    command=command,
+                    executor_id=executor_id,
+                    error="Not your turn",
+                    channel_id=channel_id,
+                    executor_username=executor_username,
+                )
+
+        if channel_id is not None and enforce_turn_budget:
+            turn_budget = self._ensure_turn_budget(channel_id)
+            moves_used = int(turn_budget.get("moves_used", 0))
+            actions_used = int(turn_budget.get("actions_used", 0))
+            if command.startswith("move_") and moves_used >= 2:
+                return self._build_command_error_result(
+                    command=command,
+                    executor_id=executor_id,
+                    error="Turn budget exceeded: maximum 2 moves per turn",
+                    channel_id=channel_id,
+                    executor_username=executor_username,
+                )
+            if command in ("attack", "heal") and actions_used >= 1:
+                return self._build_command_error_result(
+                    command=command,
+                    executor_id=executor_id,
+                    error="Turn budget exceeded: maximum 1 action per turn",
+                    channel_id=channel_id,
+                    executor_username=executor_username,
+                )
         # Get the target user (either from mention or self)
         if target_username:
             target_user = self.db.query(User).filter(User.username == target_username).first()
             if not target_user:
-                return {
-                    "success": False,
-                    "error": f"User @{target_username} not found",
-                    "game_state": None
-                }
+                return self._build_command_error_result(
+                    command=command,
+                    executor_id=executor_id,
+                    error=f"User @{target_username} not found",
+                    channel_id=channel_id,
+                    executor_username=executor_username,
+                    target_username=target_username,
+                )
             target_id = cast(int, target_user.id)
             target_username_value = cast(str, target_user.username)
         else:
@@ -255,11 +322,15 @@ class GameService:
             target_username_value = executor_username
 
         if channel_id is not None and not self._is_user_in_channel(target_id, channel_id):
-            return {
-                "success": False,
-                "error": "Target user is not in the game channel",
-                "game_state": None,
-            }
+            return self._build_command_error_result(
+                command=command,
+                executor_id=executor_id,
+                error="Target user is not in the game channel",
+                channel_id=channel_id,
+                executor_username=executor_username,
+                target_id=target_id,
+                target_username=target_username_value,
+            )
         
         # Get or create game state for the target
         game_state = self.get_or_create_game_state(target_id, channel_id)
@@ -298,14 +369,27 @@ class GameService:
                 result["success"] = False
                 result["error"] = "Cannot attack yourself! Use @username to target another player."
             else:
-                current_health = cast(int, game_state.health)
-                new_health = max(0, current_health - ATTACK_DAMAGE)
-                setattr(game_state, "health", new_health)
-                result["message"] = f"Attacked! Target health: {new_health}/{game_state.max_health}"
-                result["target_health"] = new_health
-                result["target_max_health"] = cast(int, game_state.max_health)
-                if new_health == 0:
-                    result["message"] += " - Target defeated!"
+                executor_state = self.get_or_create_game_state(executor_id, channel_id)
+                executor_position = (
+                    cast(int, executor_state.position_x),
+                    cast(int, executor_state.position_y),
+                )
+                target_position = (
+                    cast(int, game_state.position_x),
+                    cast(int, game_state.position_y),
+                )
+                if not self._is_adjacent_position(executor_position, target_position):
+                    result["success"] = False
+                    result["error"] = "Target out of range (requires 1-hex adjacency)"
+                else:
+                    current_health = cast(int, game_state.health)
+                    new_health = max(0, current_health - ATTACK_DAMAGE)
+                    setattr(game_state, "health", new_health)
+                    result["message"] = f"Attacked! Target health: {new_health}/{game_state.max_health}"
+                    result["target_health"] = new_health
+                    result["target_max_health"] = cast(int, game_state.max_health)
+                    if new_health == 0:
+                        result["message"] += " - Target defeated!"
                     
         elif command == "heal":
             old_health = cast(int, game_state.health)
@@ -316,6 +400,8 @@ class GameService:
             result["message"] = f"Healed for {healed} HP! Health: {new_health}/{max_health}"
             result["target_health"] = new_health
             result["target_max_health"] = max_health
+        elif command == "end_turn":
+            result["message"] = "Ended turn"
         
         if result["success"]:
             self.db.commit()
@@ -348,13 +434,15 @@ class GameService:
             result["game_state"] = None
 
         if result["success"] and channel_id is not None:
-            if force:
+            if enforce_turn_budget:
+                self._consume_turn_budget(channel_id, command)
+
+            if not advance_turn:
+                result["active_turn_user_id"] = self.get_active_turn_user_id(channel_id)
+            elif command.startswith("move_"):
                 result["active_turn_user_id"] = self.get_active_turn_user_id(channel_id)
             else:
                 result["active_turn_user_id"] = self._advance_turn_user(channel_id)
-                if not skip_npc:
-                    result["npc_actions"] = self._process_npc_turns(channel_id)
-                    result["active_turn_user_id"] = self.get_active_turn_user_id(channel_id)
         elif channel_id is not None:
             result["active_turn_user_id"] = self.get_active_turn_user_id(channel_id)
 
@@ -411,6 +499,12 @@ class GameService:
             len(props),
             len(buffer_tiles),
         )
+        turn_context = self._build_turn_context(
+            channel_id,
+            players=players,
+            obstacles=obstacles,
+            battlefield=battlefield,
+        )
         return {
             "type": "game_snapshot",
             "timestamp": None,  # To be filled by websocket manager
@@ -428,6 +522,7 @@ class GameService:
                 "obstacles": obstacles,
                 "battlefield": battlefield,
                 "active_turn_user_id": self.get_active_turn_user_id(channel_id),
+                "turn_context": turn_context,
                 "status_history": self.get_status_history(channel_id),
             }
         }
@@ -437,12 +532,14 @@ class GameService:
 
         Note: Battlefield payload is snapshot-only to keep updates lightweight.
         """
+        players = self.get_all_game_states_in_channel(channel_id)
         return {
             "type": "game_state_update",
             "timestamp": None,
             "payload": {
                 "active_turn_user_id": self.get_active_turn_user_id(channel_id),
-                "players": self.get_all_game_states_in_channel(channel_id),
+                "players": players,
+                "turn_context": self._build_turn_context(channel_id, players=players),
                 "status_history": self.get_status_history(channel_id),
             }
         }
@@ -558,6 +655,55 @@ class GameService:
         if channel_id in self._channel_turn_user:
             self._ensure_turn_user(channel_id)
 
+    def is_npc_turn(self, channel_id: int) -> bool:
+        active_user_id = self.get_active_turn_user_id(channel_id)
+        if active_user_id is None:
+            return False
+        return self._is_npc_user(active_user_id, channel_id)
+
+    def process_npc_turn_chain(self, channel_id: int) -> List[Dict[str, Any]]:
+        npc_steps: List[Dict[str, Any]] = []
+        active_ids = self._get_active_user_ids(channel_id)
+        if not active_ids:
+            return npc_steps
+
+        max_npc_turns = max(1, len(active_ids))
+        turns_processed = 0
+        while turns_processed < max_npc_turns:
+            active_user = self.get_active_turn_user_id(channel_id)
+            if active_user is None or not self._is_npc_user(active_user, channel_id):
+                break
+
+            step_results = self._run_npc_turn_program(active_user, channel_id)
+            if not step_results:
+                step_results = [
+                    self._build_npc_noop_result(
+                        active_user,
+                        channel_id,
+                        "NPC had no executable turn step",
+                    )
+                ]
+
+            for index, step_result in enumerate(step_results):
+                if index == len(step_results) - 1:
+                    step_result["active_turn_user_id"] = self._advance_turn_user(channel_id)
+                else:
+                    step_result["active_turn_user_id"] = active_user
+
+                if step_result.get("command") == "npc_noop":
+                    self._record_status_event(channel_id, step_result, active_user)
+
+                npc_steps.append(
+                    {
+                        "action_result": step_result,
+                        "state_update": self.get_game_state_update(channel_id),
+                    }
+                )
+
+            turns_processed += 1
+
+        return npc_steps
+
     def get_obstacles(self, channel_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return the obstacle list for a channel."""
         if channel_id is not None:
@@ -594,6 +740,7 @@ class GameService:
         if user_id not in user_ids:
             return
         self._channel_turn_user[channel_id] = user_id
+        self._reset_turn_budget(channel_id, user_id)
 
     def deactivate_other_guests(self, channel_id: int, keep_user_id: int) -> None:
         sessions = self.db.query(GameSession).filter(
@@ -634,6 +781,7 @@ class GameService:
                 continue
             if self._is_npc_user(candidate_id, channel_id) or not ws_manager.is_client_stale(candidate_id):
                 self._channel_turn_user[channel_id] = candidate_id
+                self._reset_turn_budget(channel_id, candidate_id)
                 return candidate_id
 
         resume_from = self._channel_priority_resume_from.pop(channel_id, None)
@@ -649,11 +797,13 @@ class GameService:
             # NPCs are never stale (they don't have WebSocket connections)
             if self._is_npc_user(candidate_id, channel_id):
                 self._channel_turn_user[channel_id] = candidate_id
+                self._reset_turn_budget(channel_id, candidate_id)
                 return candidate_id
             
             # P6: Skip stale human clients
             if not ws_manager.is_client_stale(candidate_id):
                 self._channel_turn_user[channel_id] = candidate_id
+                self._reset_turn_budget(channel_id, candidate_id)
                 return candidate_id
             
             logger.info(
@@ -665,6 +815,7 @@ class GameService:
         # All users are stale - fall back to simple round-robin
         next_user = user_ids[(start_index + 1) % len(user_ids)]
         self._channel_turn_user[channel_id] = next_user
+        self._reset_turn_budget(channel_id, next_user)
         return next_user
 
     def _ensure_turn_user(self, channel_id: int) -> None:
@@ -677,10 +828,13 @@ class GameService:
             self._channel_status_history.pop(channel_id, None)
             self._channel_human_user.pop(channel_id, None)
             self._channel_forced_npc_users.pop(channel_id, None)
+            self._channel_turn_budget.pop(channel_id, None)
+            self._channel_turn_context_cache.pop(channel_id, None)
             return
         current = self._channel_turn_user.get(channel_id)
         if current not in user_ids:
             self._channel_turn_user[channel_id] = user_ids[0]
+            self._reset_turn_budget(channel_id, user_ids[0])
 
     def _get_active_user_ids_from_sessions(self, channel_id: int) -> List[int]:
         sessions = self.db.query(GameSession).filter(
@@ -934,6 +1088,254 @@ class GameService:
         forced_npcs.add(user_id)
         return "npc"
 
+    def _ensure_turn_budget(self, channel_id: int) -> Dict[str, int]:
+        active_user_id = self.get_active_turn_user_id(channel_id)
+        if active_user_id is None:
+            self._channel_turn_budget.pop(channel_id, None)
+            return {"user_id": 0, "moves_used": 0, "actions_used": 0}
+
+        existing = self._channel_turn_budget.get(channel_id)
+        if existing is None or int(existing.get("user_id", 0)) != active_user_id:
+            refreshed = {
+                "user_id": active_user_id,
+                "moves_used": 0,
+                "actions_used": 0,
+            }
+            self._channel_turn_budget[channel_id] = refreshed
+            return refreshed
+        return existing
+
+    def _reset_turn_budget(self, channel_id: int, user_id: int) -> None:
+        self._channel_turn_budget[channel_id] = {
+            "user_id": user_id,
+            "moves_used": 0,
+            "actions_used": 0,
+        }
+
+    def _consume_turn_budget(self, channel_id: int, command: str) -> None:
+        turn_budget = self._ensure_turn_budget(channel_id)
+        if command.startswith("move_"):
+            turn_budget["moves_used"] = int(turn_budget.get("moves_used", 0)) + 1
+        elif command in ("attack", "heal"):
+            turn_budget["actions_used"] = int(turn_budget.get("actions_used", 0)) + 1
+
+    def _build_turn_context(
+        self,
+        channel_id: int,
+        players: Optional[List[Dict[str, Any]]] = None,
+        obstacles: Optional[List[Dict[str, Any]]] = None,
+        battlefield: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        active_turn_user_id = self.get_active_turn_user_id(channel_id)
+        if active_turn_user_id is None:
+            self._channel_turn_context_cache.pop(channel_id, None)
+            return {
+                "actor_user_id": None,
+                "attackable_target_ids": [],
+                "surroundings": [],
+                "surroundings_diff": {
+                    "revision": 0,
+                    "added": [],
+                    "removed": [],
+                    "changed": [],
+                },
+            }
+
+        player_rows = players if players is not None else self.get_all_game_states_in_channel(channel_id)
+        actor_state: Optional[Dict[str, Any]] = None
+        for entry in player_rows:
+            if int(entry.get("user_id", 0)) == active_turn_user_id:
+                actor_state = entry
+                break
+
+        if actor_state is None:
+            self._channel_turn_context_cache.pop(channel_id, None)
+            return {
+                "actor_user_id": active_turn_user_id,
+                "attackable_target_ids": [],
+                "surroundings": [],
+                "surroundings_diff": {
+                    "revision": 0,
+                    "added": [],
+                    "removed": [],
+                    "changed": [],
+                },
+            }
+
+        actor_position_data = cast(Dict[str, Any], actor_state.get("position", {}))
+        actor_position = (
+            int(actor_position_data.get("x", 0)),
+            int(actor_position_data.get("y", 0)),
+        )
+
+        attackable_target_ids: List[int] = []
+        surroundings: List[Dict[str, Any]] = []
+
+        for entry in player_rows:
+            user_id = int(entry.get("user_id", 0))
+            if user_id <= 0 or user_id == active_turn_user_id:
+                continue
+            position_data = entry.get("position")
+            if not isinstance(position_data, dict):
+                continue
+            target_position = (
+                int(position_data.get("x", 0)),
+                int(position_data.get("y", 0)),
+            )
+            if not self._is_adjacent_position(actor_position, target_position):
+                continue
+            target_health = int(entry.get("health", 0))
+            if target_health > 0:
+                attackable_target_ids.append(user_id)
+            surroundings.append(
+                {
+                    "entity_id": f"player:{user_id}",
+                    "entity_type": "player",
+                    "distance": 1,
+                    "position": {
+                        "x": target_position[0],
+                        "y": target_position[1],
+                    },
+                    "user_id": user_id,
+                    "username": str(entry.get("username", "")),
+                    "display_name": str(entry.get("display_name", "")),
+                    "is_npc": bool(entry.get("is_npc", False)),
+                    "health": target_health,
+                    "max_health": int(entry.get("max_health", 0)),
+                }
+            )
+
+        obstacle_rows = obstacles if obstacles is not None else self.get_obstacles(channel_id)
+        for obstacle in obstacle_rows:
+            position_data = obstacle.get("position")
+            if not isinstance(position_data, dict):
+                continue
+            obstacle_position = (
+                int(position_data.get("x", 0)),
+                int(position_data.get("y", 0)),
+            )
+            if not self._is_adjacent_position(actor_position, obstacle_position):
+                continue
+            obstacle_id = str(obstacle.get("id", ""))
+            if obstacle_id == "":
+                obstacle_id = f"{str(obstacle.get('type', 'obstacle'))}:{obstacle_position[0]}:{obstacle_position[1]}"
+            surroundings.append(
+                {
+                    "entity_id": f"obstacle:{obstacle_id}",
+                    "entity_type": "obstacle",
+                    "distance": 1,
+                    "position": {
+                        "x": obstacle_position[0],
+                        "y": obstacle_position[1],
+                    },
+                    "obstacle_type": str(obstacle.get("type", "obstacle")),
+                }
+            )
+
+        battlefield_payload = battlefield if battlefield is not None else self.get_battlefield(channel_id)
+        props_raw = battlefield_payload.get("props", [])
+        if isinstance(props_raw, list):
+            for raw_prop in props_raw:
+                if not isinstance(raw_prop, dict):
+                    continue
+                prop = cast(Dict[str, Any], raw_prop)
+                position_data = prop.get("position")
+                if not isinstance(position_data, dict):
+                    continue
+                prop_position = (
+                    int(position_data.get("x", 0)),
+                    int(position_data.get("y", 0)),
+                )
+                if not self._is_adjacent_position(actor_position, prop_position):
+                    continue
+                prop_id = str(prop.get("id", ""))
+                if prop_id == "":
+                    prop_id = f"{str(prop.get('type', 'prop'))}:{prop_position[0]}:{prop_position[1]}"
+                surroundings.append(
+                    {
+                        "entity_id": f"prop:{prop_id}",
+                        "entity_type": "prop",
+                        "distance": 1,
+                        "position": {
+                            "x": prop_position[0],
+                            "y": prop_position[1],
+                        },
+                        "prop_type": str(prop.get("type", "prop")),
+                        "is_blocking": bool(prop.get("is_blocking", True)),
+                        "zone": str(prop.get("zone", "play")),
+                    }
+                )
+
+        attackable_target_ids = sorted(set(attackable_target_ids))
+        surroundings.sort(key=lambda item: str(item.get("entity_id", "")))
+        return {
+            "actor_user_id": active_turn_user_id,
+            "attackable_target_ids": attackable_target_ids,
+            "surroundings": surroundings,
+            "surroundings_diff": self._build_turn_context_diff(
+                channel_id,
+                active_turn_user_id,
+                surroundings,
+            ),
+        }
+
+    def _build_turn_context_diff(
+        self,
+        channel_id: int,
+        actor_user_id: int,
+        surroundings: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        current_by_id: Dict[str, Dict[str, Any]] = {}
+        for entry in surroundings:
+            entity_id = str(entry.get("entity_id", ""))
+            if entity_id == "":
+                continue
+            current_by_id[entity_id] = entry
+
+        cache = self._channel_turn_context_cache.get(channel_id)
+        previous_actor_id = int(cache.get("actor_user_id", -1)) if cache is not None else -1
+        previous_revision = int(cache.get("revision", 0)) if cache is not None else 0
+        revision = previous_revision + 1
+
+        added: List[Dict[str, Any]] = []
+        removed: List[Dict[str, Any]] = []
+        changed: List[Dict[str, Any]] = []
+
+        previous_by_id_raw = cache.get("surroundings_by_id", {}) if cache is not None else {}
+        previous_by_id = previous_by_id_raw if isinstance(previous_by_id_raw, dict) else {}
+
+        if previous_actor_id == actor_user_id:
+            for entity_id, current_entry in current_by_id.items():
+                previous_entry = previous_by_id.get(entity_id)
+                if not isinstance(previous_entry, dict):
+                    added.append(current_entry)
+                    continue
+                if previous_entry != current_entry:
+                    changed.append(current_entry)
+            for entity_id, previous_entry in previous_by_id.items():
+                if entity_id in current_by_id:
+                    continue
+                if isinstance(previous_entry, dict):
+                    removed.append(cast(Dict[str, Any], previous_entry))
+        else:
+            added = list(current_by_id.values())
+
+        added.sort(key=lambda item: str(item.get("entity_id", "")))
+        removed.sort(key=lambda item: str(item.get("entity_id", "")))
+        changed.sort(key=lambda item: str(item.get("entity_id", "")))
+
+        self._channel_turn_context_cache[channel_id] = {
+            "actor_user_id": actor_user_id,
+            "revision": revision,
+            "surroundings_by_id": current_by_id,
+        }
+        return {
+            "revision": revision,
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+        }
+
     def _enqueue_priority_turns(self, channel_id: int, user_id: int, turns: int) -> None:
         if turns <= 0:
             return
@@ -995,11 +1397,11 @@ class GameService:
         }
         self._status_history_queue(channel_id).append(event)
 
-    def _choose_npc_action(
+    def _choose_adjacent_human_target(
         self,
         user_id: int,
         channel_id: int,
-    ) -> Tuple[Optional[str], Optional[str]]:
+    ) -> Optional[str]:
         game_state = self.get_or_create_game_state(user_id, channel_id)
         npc_x = cast(int, game_state.position_x)
         npc_y = cast(int, game_state.position_y)
@@ -1026,25 +1428,107 @@ class GameService:
                     adjacent_targets.append(str(username))
 
         if adjacent_targets:
-            return ("attack", random.choice(adjacent_targets))
+            return random.choice(adjacent_targets)
 
+        return None
+
+    def _build_npc_noop_result(
+        self,
+        user_id: int,
+        channel_id: int,
+        message: str,
+    ) -> Dict[str, Any]:
+        user = self.db.query(User).filter(User.id == user_id).first()
+        username = cast(str, user.username) if user else "npc"
+        state = self.get_or_create_game_state(user_id, channel_id)
+        return {
+            "success": True,
+            "command": "npc_noop",
+            "executor_id": user_id,
+            "target_id": user_id,
+            "message": message,
+            "game_state": {
+                "user_id": user_id,
+                "position": {
+                    "x": cast(int, state.position_x),
+                    "y": cast(int, state.position_y),
+                },
+                "position_x": cast(int, state.position_x),
+                "position_y": cast(int, state.position_y),
+                "health": cast(int, state.health),
+                "max_health": cast(int, state.max_health),
+            },
+            "executor_username": username,
+            "target_username": username,
+            "position": None,
+            "target_health": cast(int, state.health),
+            "target_max_health": cast(int, state.max_health),
+            "actor_health": cast(int, state.health),
+            "actor_max_health": cast(int, state.max_health),
+            "npc_actions": [],
+            "error": None,
+            "active_turn_user_id": self.get_active_turn_user_id(channel_id),
+        }
+
+    def _run_npc_turn_program(
+        self,
+        user_id: int,
+        channel_id: int,
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
         directions = ["move_n", "move_ne", "move_se", "move_s", "move_sw", "move_nw"]
-        valid_moves: List[str] = []
-        for command in directions:
-            resolved = self._resolve_move_target((npc_x, npc_y), command)
-            if resolved is None:
-                continue
-            if self._is_blocked_position(resolved, channel_id, user_id):
-                continue
-            valid_moves.append(command)
 
-        if valid_moves:
-            return (random.choice(valid_moves), None)
+        for _ in range(2):
+            command = random.choice(directions)
+            move_result = self.execute_command(
+                command,
+                user_id,
+                channel_id=channel_id,
+                force=False,
+                advance_turn=False,
+                enforce_turn_budget=False,
+            )
+            results.append(move_result)
 
-        if cast(int, game_state.health) < cast(int, game_state.max_health):
-            return ("heal", None)
+        target_username = self._choose_adjacent_human_target(user_id, channel_id)
+        if target_username is not None:
+            attack_result = self.execute_command(
+                "attack",
+                user_id,
+                target_username=target_username,
+                channel_id=channel_id,
+                force=False,
+                advance_turn=False,
+                enforce_turn_budget=False,
+            )
+            results.append(attack_result)
+            return results
 
-        return (None, None)
+        game_state = self.get_or_create_game_state(user_id, channel_id)
+        should_heal = (
+            cast(int, game_state.health) < cast(int, game_state.max_health)
+            and random.choice([True, False])
+        )
+        if should_heal:
+            heal_result = self.execute_command(
+                "heal",
+                user_id,
+                channel_id=channel_id,
+                force=False,
+                advance_turn=False,
+                enforce_turn_budget=False,
+            )
+            results.append(heal_result)
+        else:
+            results.append(
+                self._build_npc_noop_result(
+                    user_id,
+                    channel_id,
+                    "NPC had no valid attack target and skipped action",
+                )
+            )
+
+        return results
 
     def _is_adjacent_position(
         self,
@@ -1098,46 +1582,6 @@ class GameService:
             self.db.commit()
 
     def _process_npc_turns(self, channel_id: int) -> List[Dict[str, Any]]:
-        """Resolve contiguous NPC turns until control reaches a non-NPC actor.
-
-        This prevents stalls where turn ownership lands on another NPC and no
-        human client can progress the loop.
-        """
-        npc_actions: List[Dict[str, Any]] = []
-        active_ids = self._get_active_user_ids(channel_id)
-        if not active_ids:
-            return npc_actions
-
-        priority_queue = self._channel_priority_turns.get(channel_id)
-        priority_count = len(priority_queue) if priority_queue is not None else 0
-        max_steps = max(1, len(active_ids) + priority_count)
-        steps = 0
-
-        while steps < max_steps:
-            active_user = self.get_active_turn_user_id(channel_id)
-            if active_user is None:
-                break
-            if not self._is_npc_user(active_user, channel_id):
-                break
-
-            command, target_username = self._choose_npc_action(active_user, channel_id)
-            if not command:
-                self._advance_turn_user(channel_id)
-                steps += 1
-                continue
-
-            result = self.execute_command(
-                command,
-                active_user,
-                target_username,
-                channel_id,
-                force=False,
-                skip_npc=True,
-            )
-            if result.get("success"):
-                npc_actions.append(result)
-            else:
-                self._advance_turn_user(channel_id)
-            steps += 1
-
-        return npc_actions
+        """Backward-compatible wrapper returning only action-result payloads."""
+        chained = self.process_npc_turn_chain(channel_id)
+        return [cast(Dict[str, Any], item.get("action_result", {})) for item in chained]

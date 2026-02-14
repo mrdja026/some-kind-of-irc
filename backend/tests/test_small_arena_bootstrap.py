@@ -31,6 +31,8 @@ def _reset_singletons() -> Generator[None, None, None]:
     GameService._channel_status_history.clear()
     GameService._channel_human_user.clear()
     GameService._channel_forced_npc_users.clear()
+    GameService._channel_turn_budget.clear()
+    GameService._channel_turn_context_cache.clear()
     BattlefieldService._channel_cache.clear()
     ws_manager._client_last_pong.clear()
     yield
@@ -79,6 +81,21 @@ def _seed_npcs_to_baseline(db_session, game_service: GameService, channel_id: in
         username = f"npc_{secrets.token_hex(4)}"
         npc_user = _create_user(db_session, username)
         game_service.bootstrap_small_arena_join(_user_id(npc_user), channel_id)
+
+
+def _find_valid_move_command(game_service: GameService, user_id: int, channel_id: int) -> str:
+    state = game_service.get_or_create_game_state(user_id, channel_id)
+    start = (int(cast(int, state.position_x)), int(cast(int, state.position_y)))
+    for command in ["move_n", "move_ne", "move_se", "move_s", "move_sw", "move_nw"]:
+        target = game_service._resolve_move_target(start, command)
+        if target is None:
+            continue
+        if not BattlefieldService.is_play_zone(target[0], target[1]):
+            continue
+        if game_service._is_blocked_position(target, channel_id, user_id):
+            continue
+        return command
+    raise AssertionError("No valid move command found for test setup")
 
 
 def test_first_join_bootstraps_exactly_one_human_and_two_npcs(db_session) -> None:
@@ -220,21 +237,127 @@ def test_failed_npc_move_does_not_block_turn_loop(db_session, monkeypatch) -> No
     setattr(second_npc_state, "position_y", 5)
     db_session.commit()
 
-    def _scripted_npc_action(user_id: int, _: int):
+    def _scripted_npc_program(user_id: int, scripted_channel_id: int):
         if user_id == npc_ids[0]:
-            return ("move_n", None)
+            failed_move = game_service.execute_command(
+                "move_n",
+                user_id,
+                channel_id=scripted_channel_id,
+                advance_turn=False,
+                enforce_turn_budget=False,
+            )
+            noop = game_service._build_npc_noop_result(
+                user_id,
+                scripted_channel_id,
+                "Scripted noop",
+            )
+            return [failed_move, noop]
         if user_id == npc_ids[1]:
-            return ("heal", None)
-        return (None, None)
+            heal = game_service.execute_command(
+                "heal",
+                user_id,
+                channel_id=scripted_channel_id,
+                advance_turn=False,
+                enforce_turn_budget=False,
+            )
+            return [heal]
+        return []
 
-    monkeypatch.setattr(game_service, "_choose_npc_action", _scripted_npc_action)
-    game_service._channel_turn_user[channel_id] = human_id
+    monkeypatch.setattr(game_service, "_run_npc_turn_program", _scripted_npc_program)
+    game_service._channel_turn_user[channel_id] = npc_ids[0]
     for state in states:
         ws_manager._client_last_pong[int(state["user_id"])] = time.time()
 
-    result = game_service.execute_command("heal", human_id, channel_id=channel_id)
-    assert bool(result.get("success", False)) is True
-    assert int(result.get("active_turn_user_id", 0)) == human_id
+    steps = game_service.process_npc_turn_chain(channel_id)
+    assert not game_service.is_npc_turn(channel_id)
+    assert int(game_service.get_active_turn_user_id(channel_id) or 0) == human_id
+    assert any(
+        not bool(cast(dict, step.get("action_result", {})).get("success", False))
+        for step in steps
+        if isinstance(step, dict)
+    )
 
-    npc_actions = result.get("npc_actions", [])
-    assert any(int(action.get("executor_id", 0)) == npc_ids[1] for action in npc_actions if isinstance(action, dict))
+
+def test_turn_budget_allows_two_moves_plus_one_action(db_session) -> None:
+    game_service = GameService(db_session)
+    channel = _create_game_channel(db_session)
+    first_human = _create_user(db_session, "human_1")
+    channel_id = _channel_id(channel)
+    human_id = _user_id(first_human)
+
+    game_service.bootstrap_small_arena_join(human_id, channel_id)
+    _seed_npcs_to_baseline(db_session, game_service, channel_id)
+    game_service._channel_turn_user[channel_id] = human_id
+
+    first_move = _find_valid_move_command(game_service, human_id, channel_id)
+    first_result = game_service.execute_command(first_move, human_id, channel_id=channel_id)
+    assert bool(first_result.get("success", False)) is True
+    assert int(first_result.get("active_turn_user_id", 0)) == human_id
+
+    second_move = _find_valid_move_command(game_service, human_id, channel_id)
+    second_result = game_service.execute_command(second_move, human_id, channel_id=channel_id)
+    assert bool(second_result.get("success", False)) is True
+    assert int(second_result.get("active_turn_user_id", 0)) == human_id
+
+    third_move = game_service.execute_command(first_move, human_id, channel_id=channel_id)
+    assert bool(third_move.get("success", False)) is False
+    assert "maximum 2 moves per turn" in str(third_move.get("error", "")).lower()
+    assert int(third_move.get("active_turn_user_id", 0)) == human_id
+
+    heal_result = game_service.execute_command("heal", human_id, channel_id=channel_id)
+    assert bool(heal_result.get("success", False)) is True
+    assert int(heal_result.get("active_turn_user_id", 0)) != human_id
+
+
+def test_end_turn_command_advances_turn_without_action(db_session) -> None:
+    game_service = GameService(db_session)
+    channel = _create_game_channel(db_session)
+    first_human = _create_user(db_session, "human_1")
+    channel_id = _channel_id(channel)
+    human_id = _user_id(first_human)
+
+    game_service.bootstrap_small_arena_join(human_id, channel_id)
+    _seed_npcs_to_baseline(db_session, game_service, channel_id)
+    game_service._channel_turn_user[channel_id] = human_id
+
+    end_result = game_service.execute_command("end_turn", human_id, channel_id=channel_id)
+    assert bool(end_result.get("success", False)) is True
+    assert int(end_result.get("active_turn_user_id", 0)) != human_id
+
+
+def test_budget_error_includes_command_and_executor_metadata(db_session) -> None:
+    game_service = GameService(db_session)
+    channel = _create_game_channel(db_session)
+    first_human = _create_user(db_session, "human_1")
+    channel_id = _channel_id(channel)
+    human_id = _user_id(first_human)
+
+    game_service.bootstrap_small_arena_join(human_id, channel_id)
+    _seed_npcs_to_baseline(db_session, game_service, channel_id)
+    game_service._channel_turn_user[channel_id] = human_id
+
+    first_move = _find_valid_move_command(game_service, human_id, channel_id)
+    assert bool(game_service.execute_command(first_move, human_id, channel_id=channel_id).get("success", False))
+    second_move = _find_valid_move_command(game_service, human_id, channel_id)
+    assert bool(game_service.execute_command(second_move, human_id, channel_id=channel_id).get("success", False))
+
+    error_result = game_service.execute_command(first_move, human_id, channel_id=channel_id)
+    assert bool(error_result.get("success", False)) is False
+    assert str(error_result.get("command", "")) == first_move
+    assert int(error_result.get("executor_id", 0)) == human_id
+    assert str(error_result.get("executor_username", "")) == "human_1"
+
+
+def test_force_command_is_disabled_for_small_arena(db_session) -> None:
+    game_service = GameService(db_session)
+    channel = _create_game_channel(db_session)
+    first_human = _create_user(db_session, "human_1")
+    channel_id = _channel_id(channel)
+    human_id = _user_id(first_human)
+
+    game_service.bootstrap_small_arena_join(human_id, channel_id)
+    _seed_npcs_to_baseline(db_session, game_service, channel_id)
+
+    forced = game_service.execute_command("heal", human_id, channel_id=channel_id, force=True)
+    assert bool(forced.get("success", False)) is False
+    assert "force commands are disabled" in str(forced.get("error", "")).lower()

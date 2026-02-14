@@ -364,11 +364,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         target_username=target_username,
                         channel_id=resolved_channel_id,
                     )
-                    npc_actions = result.get("npc_actions", [])
-
-                    state_update = None
-                    if result["success"]:
-                        state_update = game_service.get_game_state_update(resolved_channel_id)
 
                     await manager.broadcast_game_action(
                         action_result=result,
@@ -376,21 +371,32 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         executor_id=client_id,
                         snapshot=None,
                     )
-                    if result.get("success") and isinstance(npc_actions, list):
-                        for npc_action in npc_actions:
-                            if not isinstance(npc_action, dict):
-                                continue
-                            npc_executor_id = int(npc_action.get("executor_id", 0))
-                            if npc_executor_id <= 0:
-                                continue
-                            await manager.broadcast_game_action(
-                                action_result=npc_action,
-                                channel_id=resolved_channel_id,
-                                executor_id=npc_executor_id,
-                                snapshot=None,
-                            )
-                    if result.get("success") and state_update is not None:
+                    if result.get("success"):
+                        state_update = game_service.get_game_state_update(resolved_channel_id)
                         await manager.broadcast_game_state(state_update, resolved_channel_id)
+
+                        if game_service.is_npc_turn(resolved_channel_id):
+                            npc_steps = game_service.process_npc_turn_chain(resolved_channel_id)
+                            for step in npc_steps:
+                                if not isinstance(step, dict):
+                                    continue
+                                npc_action = step.get("action_result", {})
+                                npc_update = step.get("state_update", {})
+                                if not isinstance(npc_action, dict):
+                                    continue
+                                if not isinstance(npc_update, dict):
+                                    continue
+                                npc_executor_id = int(npc_action.get("executor_id", 0))
+                                if npc_executor_id <= 0:
+                                    continue
+                                await manager.broadcast_game_action(
+                                    action_result=npc_action,
+                                    channel_id=resolved_channel_id,
+                                    executor_id=npc_executor_id,
+                                    snapshot=None,
+                                    broadcast_failure_to_channel=True,
+                                )
+                                await manager.broadcast_game_state(npc_update, resolved_channel_id)
                 else:
                     await manager.send_personal_message(
                         {
