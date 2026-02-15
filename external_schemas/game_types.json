@@ -1,0 +1,131 @@
+{
+  "definitions": {
+    "Position": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" }
+      },
+      "required": ["x", "y"]
+    },
+    "Player": {
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "integer" },
+        "username": { "type": "string" },
+        "display_name": { "type": "string" },
+        "position": { "$ref": "#/definitions/Position" },
+        "health": { "type": "integer" },
+        "max_health": { "type": "integer" },
+        "is_active": { "type": "boolean" },
+        "is_npc": { "type": "boolean" }
+      },
+      "required": ["user_id", "username", "position", "health", "max_health"]
+    },
+    "Obstacle": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "position": { "$ref": "#/definitions/Position" }
+      },
+      "required": ["id", "type", "position"]
+    },
+    "Prop": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["tree", "rock"] },
+        "position": { "$ref": "#/definitions/Position" },
+        "is_blocking": { "type": "boolean" },
+        "zone": { "type": "string", "enum": ["play", "buffer"] }
+      },
+      "required": ["id", "type", "position", "is_blocking", "zone"]
+    },
+    "BufferZone": {
+      "type": "object",
+      "properties": {
+        "thickness": { "type": "integer" },
+        "tiles": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Position" }
+        }
+      },
+      "required": ["thickness", "tiles"]
+    },
+    "TurnContextEntity": {
+      "type": "object",
+      "properties": {
+        "entity_id": { "type": "string" },
+        "entity_type": {
+          "type": "string",
+          "enum": ["player", "obstacle", "prop"]
+        },
+        "distance": { "type": "integer" },
+        "position": { "$ref": "#/definitions/Position" },
+        "user_id": { "type": ["integer", "null"] },
+        "username": { "type": ["string", "null"] },
+        "display_name": { "type": ["string", "null"] },
+        "is_npc": { "type": ["boolean", "null"] },
+        "health": { "type": ["integer", "null"] },
+        "max_health": { "type": ["integer", "null"] },
+        "obstacle_type": { "type": ["string", "null"] },
+        "prop_type": { "type": ["string", "null"] },
+        "is_blocking": { "type": ["boolean", "null"] },
+        "zone": { "type": ["string", "null"] }
+      },
+      "required": ["entity_id", "entity_type", "distance", "position"]
+    },
+    "TurnContext": {
+      "type": "object",
+      "properties": {
+        "actor_user_id": { "type": ["integer", "null"] },
+        "attackable_target_ids": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "surroundings": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TurnContextEntity" }
+        },
+        "surroundings_diff": {
+          "type": "object",
+          "properties": {
+            "revision": { "type": "integer" },
+            "added": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            },
+            "removed": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            },
+            "changed": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/TurnContextEntity" }
+            }
+          },
+          "required": ["revision", "added", "removed", "changed"]
+        }
+      },
+      "required": [
+        "actor_user_id",
+        "attackable_target_ids",
+        "surroundings",
+        "surroundings_diff"
+      ]
+    },
+    "Battlefield": {
+      "type": "object",
+      "properties": {
+        "seed": { "type": "integer" },
+        "props": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Prop" }
+        },
+        "buffer": { "$ref": "#/definitions/BufferZone" }
+      },
+      "required": ["seed", "props", "buffer"]
+    }
+  }
+}

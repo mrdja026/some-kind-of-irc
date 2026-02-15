@@ -9,6 +9,13 @@
 - [x] 1.5 Implement game state persistence and retrieval from database
 - [x] 1.6 Add game state synchronization via WebSockets
 - [x] 1.7 Create API endpoints for game state queries and command execution
+- [x] 1.8 Add obstacle definitions (stone, tree) and collision rules
+- [x] 1.9 Enforce turn order and reject out-of-turn actions
+- [x] 1.10 Define game state snapshot and update payloads for the shared contract
+- [x] 1.11 Add auth_game guest entrypoint for auto-joining #game
+- [x] 1.12 Seed NPC sessions and mark them in snapshot payloads
+- [x] 1.13 Add NPC auto-turn loop on active turn
+- [x] 1.14 Add force flag for out-of-turn commands
 
 ## 2. Channel Integration
 
@@ -40,3 +47,20 @@
   - WebSocket broadcasting to all channel members
   - Race conditions when multiple players move simultaneously
 - **Known Issue (Local Setup)**: The #game channel opens, but game commands fail in the current local setup and need investigation.
+
+### Known Issues (Local Setup)
+
+#### BUG-1: Admina Join Not Reflected in Godot
+- **Symptom**: When `admina` joins `#game` via the web UI, the Godot client does not show her in the snapshot.
+- **Impact**: Godot state diverges from IRC channel membership.
+- **Repro**: Join `#game` from Godot, then join `#game` as `admina` in the web UI.
+
+#### BUG-2: Godot Input Breaks After Admina Joins
+- **Symptom**: After `admina` joins, the Godot client cannot move or act; inputs feel blocked or buggy.
+- **Impact**: Local client becomes unresponsive to player actions.
+- **Repro**: Join `#game` from Godot, confirm NPC loop works, then join as `admina`.
+
+#### Observation
+- NPC movement is reflected correctly in the `#game` channel UI within `some-kind-of-irc`.
+- After joining, the issues above are still present; `admina` appears and can be controlled from Godot, but spawn locations can land in the buffer zone.
+- WebSocket connection issues appear resolved, but full multi-user testing is still pending.

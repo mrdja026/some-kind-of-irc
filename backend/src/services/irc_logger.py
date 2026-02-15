@@ -1,6 +1,6 @@
 import logging
 import sys
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 _logger = logging.getLogger("irc")
 if not _logger.handlers:
@@ -48,25 +48,30 @@ def _target_for_channel(channel_id: int, channel_name: Optional[str]) -> str:
     return f"#channel-{channel_id}"
 
 
-def log_nick_user(user_id: int, nick: str) -> None:
+def log_nick_user(user_id: int | Any, nick: str | Any) -> None:
     state_store.set_nick(user_id, nick)
     _logger.info(f"{_prefix(nick)} NICK {nick}")
     _logger.info(f"{_prefix(nick)} USER {nick} 0 * :{nick}")
 
 
-def log_join(user_id: int, channel_id: int, channel_name: str) -> None:
+def log_join(user_id: int | Any, channel_id: int | Any, channel_name: str | Any) -> None:
     nick = state_store.get_nick(user_id)
     state_store.set_current_channel(user_id, channel_id, channel_name)
     _logger.info(f"{_prefix(nick)} JOIN {channel_name}")
 
 
-def log_part(user_id: int, channel_id: int, channel_name: Optional[str] = None) -> None:
+def log_part(user_id: int | Any, channel_id: int | Any, channel_name: Optional[str] = None) -> None:
     nick = state_store.get_nick(user_id)
     target = _target_for_channel(channel_id, channel_name or state_store.get_channel_name(user_id, channel_id))
     _logger.info(f"{_prefix(nick)} PART {target}")
 
 
-def log_privmsg(user_id: int, channel_id: Optional[int], message: str, channel_name: Optional[str] = None) -> None:
+def log_privmsg(
+    user_id: int | Any,
+    channel_id: Optional[int | Any],
+    message: str,
+    channel_name: Optional[str] = None,
+) -> None:
     if channel_id is None:
         return
     nick = state_store.get_nick(user_id)

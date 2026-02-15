@@ -1,0 +1,184 @@
+{
+  "definitions": {
+    "GameSnapshot": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_snapshot" },
+        "channel_id": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "map": {
+              "type": "object",
+              "properties": {
+                "board_type": { "type": "string" },
+                "layout": { "type": "string" },
+                "width": { "type": "integer" },
+                "height": { "type": "integer" },
+                "grid_max_index": { "type": "integer" }
+              },
+              "required": [
+                "board_type",
+                "layout",
+                "width",
+                "height",
+                "grid_max_index"
+              ]
+            },
+            "players": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Player" }
+            },
+            "obstacles": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Obstacle" }
+            },
+            "battlefield": {
+              "$ref": "game_types.json#/definitions/Battlefield"
+            },
+            "active_turn_user_id": { "type": ["integer", "null"] },
+            "turn_context": {
+              "$ref": "game_types.json#/definitions/TurnContext"
+            },
+            "status_history": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "timestamp": { "type": "string", "format": "date-time" },
+                  "type": { "type": "string" },
+                  "success": { "type": ["boolean", "null"] },
+                  "action_type": { "type": ["string", "null"] },
+                  "executor_id": { "type": ["integer", "null"] },
+                  "executor_username": { "type": ["string", "null"] },
+                  "target_id": { "type": ["integer", "null"] },
+                  "target_username": { "type": ["string", "null"] },
+                  "message": { "type": ["string", "null"] },
+                  "before_turn_user_id": { "type": ["integer", "null"] },
+                  "after_turn_user_id": { "type": ["integer", "null"] }
+                }
+              }
+            }
+          },
+          "required": [
+            "map",
+            "players",
+            "obstacles",
+            "battlefield",
+            "active_turn_user_id",
+            "turn_context"
+          ]
+        }
+      },
+      "required": ["type", "channel_id", "timestamp", "payload"]
+    },
+    "GameStateUpdate": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_state_update" },
+        "channel_id": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "active_turn_user_id": { "type": ["integer", "null"] },
+            "players": {
+              "type": "array",
+              "items": { "$ref": "game_types.json#/definitions/Player" }
+            },
+            "turn_context": {
+              "$ref": "game_types.json#/definitions/TurnContext"
+            },
+            "status_history": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "timestamp": { "type": "string", "format": "date-time" },
+                  "type": { "type": "string" },
+                  "success": { "type": ["boolean", "null"] },
+                  "action_type": { "type": ["string", "null"] },
+                  "executor_id": { "type": ["integer", "null"] },
+                  "executor_username": { "type": ["string", "null"] },
+                  "target_id": { "type": ["integer", "null"] },
+                  "target_username": { "type": ["string", "null"] },
+                  "message": { "type": ["string", "null"] },
+                  "before_turn_user_id": { "type": ["integer", "null"] },
+                  "after_turn_user_id": { "type": ["integer", "null"] }
+                }
+              }
+            }
+          },
+          "required": ["active_turn_user_id", "players", "turn_context"]
+        }
+      },
+      "required": ["type", "channel_id", "timestamp", "payload"]
+    },
+    "GameJoinAck": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "game_join_ack" },
+        "channel_id": { "type": ["integer", "null"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "status_code": { "type": "integer" },
+            "ready": { "type": "boolean" },
+            "message": { "type": "string" }
+          },
+          "required": ["status_code", "ready", "message"]
+        }
+      },
+      "required": ["type", "timestamp", "payload"]
+    },
+    "ActionResult": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "action_result" },
+        "channel_id": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "action_type": { "type": "string" },
+            "executor_id": { "type": "integer" },
+            "active_turn_user_id": { "type": ["integer", "null"] },
+            "target_id": { "type": ["integer", "null"] },
+            "executor_username": { "type": ["string", "null"] },
+            "target_username": { "type": ["string", "null"] },
+            "position": {
+              "type": ["object", "null"],
+              "properties": {
+                "x": { "type": "integer" },
+                "y": { "type": "integer" }
+              }
+            },
+            "target_health": { "type": ["integer", "null"] },
+            "target_max_health": { "type": ["integer", "null"] },
+            "actor_health": { "type": ["integer", "null"] },
+            "actor_max_health": { "type": ["integer", "null"] },
+            "message": { "type": "string" },
+            "error": {
+              "type": ["object", "null"],
+              "properties": {
+                "code": { "type": "string" },
+                "message": { "type": "string" },
+                "details": { "type": "object" }
+              }
+            }
+          },
+          "required": [
+            "success",
+            "action_type",
+            "executor_id",
+            "active_turn_user_id"
+          ]
+        }
+      },
+      "required": ["type", "channel_id", "timestamp", "payload"]
+    }
+  }
+}

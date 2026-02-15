@@ -1,9 +1,11 @@
 # Change: Clarification Quiz, Guardrails, and Self-DM Report Delivery
 
 ## Why
-The `#ai` flow needed to reliably ask follow-up questions before giving a final recommendation. Users also needed visibility into *why* a question was chosen, guardrail-aware affordability checks, and a durable downloadable report after finishing the quiz.
+
+The `#ai` flow needed to reliably ask follow-up questions before giving a final recommendation. Users also needed visibility into _why_ a question was chosen, guardrail-aware affordability checks, and a durable downloadable report after finishing the quiz.
 
 ## What Changes
+
 - Convert `afford`/`learn` into a clarification-first flow with structured streaming events.
 - Add a 3-specialist question panel (`FinanceBot`, `LearnBot`, `RiskBot`) plus `JudgeBot` chooser.
 - Surface judge choice, judge reasoning, per-agent candidate questions, and alternative suggestions.
@@ -13,6 +15,7 @@ The `#ai` flow needed to reliably ask follow-up questions before giving a final 
 - Support self-DM channel creation and friendly `DM-Notes` label in the frontend.
 
 ## Impact
+
 - Affected specs: `quiz-logic` (new capability delta in this change).
 - Affected code:
   - `ai-service/main.py`, `ai-service/orchestrator.py`, `ai-service/config.py`
@@ -22,4 +25,5 @@ The `#ai` flow needed to reliably ask follow-up questions before giving a final 
   - `scripts/start-all-windows.ps1`
 
 ## Notes
+
 - This change documents what was implemented retroactively to keep OpenSpec in sync with delivered behavior.

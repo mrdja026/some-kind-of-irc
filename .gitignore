@@ -27,3 +27,12 @@ infra_resources/memourai/
 ai-service/__pycache__/
 ai-service/ai-service/__pycache__/
 media-storage/__pycache__/
+infra_resources/
+infra_resources/bin/
+infra_resources/cache/
+backend/src/models/__pycache__/
+backend/src/services/__pycache__/
+backend/src/core/__pycache__/
+backend/src/utils/__pycache__/
+backend/api/endpoints/__pycache__/
+backend/api/endpoints/__pycache__/*.pyc
