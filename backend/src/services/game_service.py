@@ -704,6 +704,44 @@ class GameService:
 
         return npc_steps
 
+    async def process_npc_turn_chain_or_apply_results(
+        self,
+        channel_id: int,
+        manager: Any,
+    ) -> List[Dict[str, Any]]:
+        """Process queued NPC turns and broadcast valid action/state updates."""
+        if not self.is_npc_turn(channel_id):
+            return []
+
+        npc_steps = self.process_npc_turn_chain(channel_id)
+        for step in npc_steps:
+            if not isinstance(step, dict):
+                continue
+            npc_action = step.get("action_result", {})
+            npc_update = step.get("state_update", {})
+            if not isinstance(npc_action, dict):
+                continue
+            if not isinstance(npc_update, dict):
+                continue
+
+            try:
+                npc_executor_id = int(npc_action.get("executor_id", 0))
+            except (TypeError, ValueError):
+                continue
+            if npc_executor_id <= 0:
+                continue
+
+            await manager.broadcast_game_action(
+                npc_action,
+                channel_id,
+                npc_executor_id,
+                None,
+                True,
+            )
+            await manager.broadcast_game_state(npc_update, channel_id)
+
+        return npc_steps
+
     def get_obstacles(self, channel_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return the obstacle list for a channel."""
         if channel_id is not None:

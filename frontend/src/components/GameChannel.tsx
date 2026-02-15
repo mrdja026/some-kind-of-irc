@@ -47,6 +47,11 @@ export function GameChannel({ channelId, channelName, sendGameCommand, sendGameJ
   const [highlightedPath, setHighlightedPath] = useState<Array<Position>>([])
   const [selectedTargetUserId, setSelectedTargetUserId] = useState<number | null>(null)
   const moveTimersRef = useRef<Array<number>>([])
+  const sendGameJoinRef = useRef(sendGameJoin)
+
+  useEffect(() => {
+    sendGameJoinRef.current = sendGameJoin
+  }, [sendGameJoin])
 
   const { data: user } = useQuery<User>({
     queryKey: ['currentUser'],
@@ -74,9 +79,9 @@ export function GameChannel({ channelId, channelName, sendGameCommand, sendGameJ
   useEffect(() => {
     if (!channelId) return
     joinGameChannel(channelId)
-      .then(() => sendGameJoin(channelId))
+      .then(() => sendGameJoinRef.current(channelId))
       .catch(console.error)
-  }, [channelId, sendGameJoin])
+  }, [channelId])
 
   useEffect(() => {
     return () => {

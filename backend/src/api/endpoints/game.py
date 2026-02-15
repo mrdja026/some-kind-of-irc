@@ -180,29 +180,10 @@ async def execute_game_command(
             snapshot = game_service.get_game_state_update(request.channel_id)
             await manager.broadcast_game_action(result, request.channel_id, cast(int, current_user.id), None)
             await manager.broadcast_game_state(snapshot, request.channel_id)
-
-            if game_service.is_npc_turn(request.channel_id):
-                npc_steps = game_service.process_npc_turn_chain(request.channel_id)
-                for step in npc_steps:
-                    if not isinstance(step, dict):
-                        continue
-                    npc_action = step.get("action_result", {})
-                    npc_update = step.get("state_update", {})
-                    if not isinstance(npc_action, dict):
-                        continue
-                    if not isinstance(npc_update, dict):
-                        continue
-                    npc_executor_id = int(npc_action.get("executor_id", 0))
-                    if npc_executor_id <= 0:
-                        continue
-                    await manager.broadcast_game_action(
-                        npc_action,
-                        request.channel_id,
-                        npc_executor_id,
-                        None,
-                        True,
-                    )
-                    await manager.broadcast_game_state(npc_update, request.channel_id)
+            await game_service.process_npc_turn_chain_or_apply_results(
+                request.channel_id,
+                manager,
+            )
         
         return GameCommandResponse(
             success=True,

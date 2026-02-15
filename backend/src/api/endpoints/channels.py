@@ -320,59 +320,6 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
     db.add(new_message)
     db.commit()
     db.refresh(new_message)
-    game_service = GameService(db)
-    if game_service.is_game_channel(_as_str(channel.name)):
-        parsed = game_service.parse_command(message.content)
-        if parsed:
-            command, target_username = parsed
-            result = game_service.execute_command(
-                command,
-                current_user_id,
-                target_username,
-                channel_id,
-            )
-            if result.get("success"):
-                await manager.broadcast_game_action(
-                    result,
-                    channel_id,
-                    current_user_id,
-                    None,
-                )
-                update = game_service.get_game_state_update(channel_id)
-                await manager.broadcast_game_state(update, channel_id)
-
-                if game_service.is_npc_turn(channel_id):
-                    npc_steps = game_service.process_npc_turn_chain(channel_id)
-                    for step in npc_steps:
-                        if not isinstance(step, dict):
-                            continue
-                        npc_action = step.get("action_result", {})
-                        npc_update = step.get("state_update", {})
-                        if not isinstance(npc_action, dict):
-                            continue
-                        if not isinstance(npc_update, dict):
-                            continue
-                        npc_executor_id = int(npc_action.get("executor_id", 0))
-                        if npc_executor_id <= 0:
-                            continue
-                        await manager.broadcast_game_action(
-                            npc_action,
-                            channel_id,
-                            npc_executor_id,
-                            None,
-                            True,
-                        )
-                        await manager.broadcast_game_state(npc_update, channel_id)
-            else:
-                await manager.send_personal_message(
-                    {
-                        "type": "game_action_error",
-                        "channel_id": channel_id,
-                        "error": result.get("error", "Unknown error"),
-                        "active_turn_user_id": result.get("active_turn_user_id"),
-                    },
-                    current_user_id,
-                )
     # Broadcast message via WebSocket
     await manager.broadcast({
         "type": "message",

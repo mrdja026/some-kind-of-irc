@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Message, WebSocketMessage, GameStateUpdateEvent, GameSnapshotEvent, ActionResultEvent, Player, GameSnapshotPayload } from '../types';
+import { queueAndSendGameJoin } from '../utils/gameJoin';
+import type { ActionResultEvent, GameSnapshotEvent, GameSnapshotPayload, GameStateUpdateEvent, Message, Player, WebSocketMessage } from '../types';
 
 const WS_BASE_URL =
   typeof window === 'undefined'
@@ -115,15 +116,11 @@ export const useChatSocket = (
               message.user_id === clientId &&
               message.channel_name === '#game'
             ) {
-              pendingGameJoinChannelsRef.current.add(message.channel_id);
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                wsRef.current.send(
-                  JSON.stringify({
-                    type: 'game_join',
-                    channel_id: message.channel_id,
-                  }),
-                );
-              }
+              queueAndSendGameJoin(
+                message.channel_id,
+                pendingGameJoinChannelsRef.current,
+                wsRef.current,
+              );
             }
           }
           break;
@@ -340,20 +337,13 @@ export const useChatSocket = (
       });
   };
 
-  const sendGameJoin = (channelId: number) => {
-    if (!channelId || channelId <= 0) {
-      return;
-    }
-    pendingGameJoinChannelsRef.current.add(channelId);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: 'game_join',
-          channel_id: channelId,
-        }),
-      );
-    }
-  };
+  const sendGameJoin = useCallback((channelId: number) => {
+    queueAndSendGameJoin(
+      channelId,
+      pendingGameJoinChannelsRef.current,
+      wsRef.current,
+    );
+  }, []);
 
   return {
     isConnected,
