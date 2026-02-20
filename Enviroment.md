@@ -36,8 +36,9 @@ docker compose up --build
 
 Endpoints:
 
-- Frontend: http://localhost
-- Backend: http://localhost:8002
+- Frontend (direct): http://localhost:4269
+- Backend API: http://localhost:8002
+- Caddy proxy (optional): http://localhost:8080
 
 ## AI (Gemini via Google AI Studio)
 

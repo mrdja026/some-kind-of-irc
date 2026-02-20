@@ -155,9 +155,11 @@ cat <<'EOF'
 ------------------------------------------------------------
 Deploy summary
 ------------------------------------------------------------
-- Frontend/API:        http://localhost/
-- Data Processor:      http://localhost/data-processor/
-- Media proxy:         http://localhost/media/...
+- Frontend (direct):   http://localhost:4269
+- Frontend (caddy):    http://localhost:8080
+- Backend API:         http://localhost:8002
+- Data Processor:      http://localhost:8080/data-processor/
+- Media proxy:         http://localhost:8080/media/...
 - MinIO console:       http://localhost:9001
 - MinIO bucket:        media (public GET)
 ------------------------------------------------------------

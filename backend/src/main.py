@@ -137,6 +137,8 @@ _default_origins = [
     "http://127.0.0.1",
     "http://localhost:4269",
     "http://127.0.0.1:4269",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
 ]
 _extra_origins: list[str] = []
 extra = os.getenv("ALLOWED_ORIGINS")
