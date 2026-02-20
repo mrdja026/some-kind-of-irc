@@ -13,7 +13,7 @@ import httpx
 
 from src.core.config import settings
 
-
+# MEGA TODO: THIS ALL SHOULD GO TO @ai-service and ai service should be used, as a separate service, i guess pixi env fixing broke context vile vibing and forgot about this constratints
 class AgentOrchestrator:
     """Orchestrates multiple AI agents for the #ai channel."""
 
@@ -183,7 +183,7 @@ Synthesize these into one actionable recommendation for the user."""
             "response": synthesis,
             "agent": "JudgeBot"
         }
-
+    #TODO: INstructions are set per agent could be a const for now or a conffig as json file that is loaded at init, this way we can update instructions without code changes and also add more agents in the future without changing code, just config and instructions
     async def stream_judge_response(self, intent: str, query: str) -> AsyncGenerator[str, None]:
         """Stream the Judge response after collecting specialist analyses."""
         finance_instructions = """You are FinanceBot, a financial advisor specializing in personal finance.

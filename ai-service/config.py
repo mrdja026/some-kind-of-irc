@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     AI_DEBUG_LOG: bool = False
 
     # Anthropic Claude configuration
-    ANTHROPIC_API_KEY: str = "CHANGE_ME"
+    ANTHROPIC_API_KEY: str = "sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
 
