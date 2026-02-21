@@ -118,7 +118,7 @@ export function DataProcessorChannel({
     if (!file) return
 
     // Validate file type
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp']
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
     if (!validTypes.includes(file.type)) {
       setUploadError('Please upload a valid image file (JPEG, PNG, or WebP)')
       return
@@ -193,7 +193,7 @@ export function DataProcessorChannel({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/jpg,image/png,image/webp"
             onChange={handleFileChange}
             className="hidden"
           />

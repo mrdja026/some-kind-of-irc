@@ -36,8 +36,8 @@ const AI_API_BASE_URL =
           if (!isLocalHost) {
             return value;
           }
-          if (value.includes(':8002')) {
-            return 'http://localhost:8001';
+          if (value.includes(':8002') || value.includes(':8001') || value.includes(':4269')) {
+            return 'http://localhost:8080';
           }
           return value;
         };
@@ -63,7 +63,7 @@ const AI_API_BASE_URL =
           return normalizeLocalAiUrl(fallback);
         }
         if (isLocalHost) {
-          return 'http://localhost:8001';
+          return 'http://localhost:8080';
         }
         return origin;
       })();

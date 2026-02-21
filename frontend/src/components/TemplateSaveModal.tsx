@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X, Trash2 } from 'lucide-react'
-import { createTemplate } from '../api/dataProcessor'
+import { createTemplate, DATA_PROCESSOR_URL } from '../api/dataProcessor'
 import type { LabelType, Annotation } from '../types'
 
 // Label type options
@@ -96,7 +96,7 @@ export function TemplateSaveModal({
     setError(null)
 
     // Create template with labels
-    fetch(`${window.location.origin}/data-processor/templates/`, {
+    fetch(`${DATA_PROCESSOR_URL}/templates/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
