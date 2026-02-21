@@ -55,6 +55,18 @@ export MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 export BACKEND_VERIFY_URL="${BACKEND_VERIFY_URL:-http://backend:8002/auth/me}"
 export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:9101}"
 export DATA_PROCESSOR_URL="${DATA_PROCESSOR_URL:-http://data-processor:8003}"
+# Force-enable data-processor feature for local runs
+export FEATURE_DATA_PROCESSOR="true"
+export AI_RATE_LIMIT_PER_HOUR="${AI_RATE_LIMIT_PER_HOUR:-100}"
+export AI_SERVICE_API_KEY="${AI_SERVICE_API_KEY:-}"
+export AI_API_SERVICE_KEY="${AI_API_SERVICE_KEY:-}"
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  if [ -n "$AI_API_SERVICE_KEY" ]; then
+    export ANTHROPIC_API_KEY="$AI_API_SERVICE_KEY"
+  elif [ -n "$AI_SERVICE_API_KEY" ]; then
+    export ANTHROPIC_API_KEY="$AI_SERVICE_API_KEY"
+  fi
+fi
 
 cd "$ROOT_DIR"
 echo "Starting docker compose with project $COMPOSE_PROJECT_NAME"
@@ -83,13 +95,49 @@ PY
   sleep 2
 done
 
+echo "Waiting for ai-service to become healthy..."
+for i in {1..20}; do
+  if "${COMPOSE_CMD[@]}" exec -T ai-service python - <<'PY' >/dev/null 2>&1; then
+import urllib.request
+urllib.request.urlopen("http://localhost:8001/healthz", timeout=1)
+PY
+    echo "AI service is up."
+    break
+  fi
+  sleep 2
+done
+
+echo "Waiting for Caddy AI proxy to become healthy..."
+for i in {1..20}; do
+  if "${COMPOSE_CMD[@]}" exec -T backend python - <<'PY' >/dev/null 2>&1; then
+import urllib.request
+urllib.request.urlopen("http://caddy/healthz", timeout=1)
+PY
+    echo "Caddy AI proxy is up."
+    break
+  fi
+  sleep 2
+done
+
 echo "Waiting for data-processor to become healthy..."
 for i in {1..20}; do
   if "${COMPOSE_CMD[@]}" exec -T data-processor python - <<'PY' >/dev/null 2>&1; then
 import urllib.request
-urllib.request.urlopen("http://localhost:8003/api/health", timeout=1)
+urllib.request.urlopen("http://localhost:8003/healthz", timeout=1)
 PY
     echo "Data-processor is up."
+    break
+  fi
+  sleep 2
+done
+
+echo "Waiting for Caddy data-processor proxy to become healthy..."
+for i in {1..20}; do
+  if "${COMPOSE_CMD[@]}" exec -T backend python - <<'PY' >/dev/null 2>&1; then
+import urllib.request
+urllib.request.urlopen("http://caddy/data-processor/healthz", timeout=1)
+PY
+    echo "Caddy data-processor proxy is up."
     break
   fi
   sleep 2
@@ -98,6 +146,11 @@ done
 echo "Seeding default users from backend/seed_users.json..."
 if ! "${COMPOSE_CMD[@]}" exec backend python /app/create_test_user.py; then
   echo "Warning: failed to create test users; see backend logs for details."
+fi
+
+echo "Resetting rate limit buckets in redis..."
+if ! "${COMPOSE_CMD[@]}" exec redis sh -c "redis-cli --scan --pattern 'rate:*' | xargs -r redis-cli del"; then
+  echo "Warning: failed to reset rate limit buckets; see redis service logs."
 fi
 
 echo "Ensuring public bucket '${MINIO_BUCKET:-media}' exists..."
@@ -151,13 +204,19 @@ PY
   echo "Warning: failed to ensure public bucket; check media-storage/minio connectivity."
 fi
 
+echo "Running data-processor upload smoke test..."
+bash "$ROOT_DIR/upload_data_procesor_test.sh"
+
 cat <<'EOF'
 ------------------------------------------------------------
 Deploy summary
 ------------------------------------------------------------
-- Frontend/API:        http://localhost/
-- Data Processor:      http://localhost/data-processor/
-- Media proxy:         http://localhost/media/...
+- Frontend (direct):   http://localhost:4269
+- Frontend (caddy):    http://localhost:8080
+- Backend API:         http://localhost:8002
+- AI Service:          http://localhost:8080/ai/
+- Data Processor:      http://localhost:8080/data-processor/
+- Media proxy:         http://localhost:8080/media/...
 - MinIO console:       http://localhost:9001
 - MinIO bucket:        media (public GET)
 ------------------------------------------------------------

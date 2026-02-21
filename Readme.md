@@ -21,47 +21,45 @@ This project follows **OpenSpec** for specification-driven development.
 
 ## 🛠️ Local Development
 
-We use **[pixi](https://prefix.dev/)** to manage dependencies and run the full application stack locally.
+The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring up the full stack (including the data-processor). Windows relies on **pixi** tasks with the data-processor disabled.
 
 ### Prerequisites
 1. Install **[pixi](https://prefix.dev/)**.
-2. **Linux (Ubuntu)** or **Windows**.
+2. Docker + Docker Compose (Linux recommended).
 
 ### Quick Start
 
-#### 🐧 Linux (Ubuntu)
-1. **Setup**: Install dependencies and build frontend.
+#### 🐧 Linux (Recommended)
+1. **Run**: Start the full stack with Docker Compose.
    ```bash
-   pixi run setup-linux
+   AI_API_SERVICE_KEY=your_key ./deploy-local.sh
    ```
-2. **Run**: Start all services (Backend, Frontend, MinIO, Redis, Workers).
-   ```bash
-   pixi run start-all-linux
-   ```
+   - Set `AI_API_SERVICE_KEY` to enable #ai.
    - Frontend: http://localhost:4269
    - Backend: http://localhost:8002
    - MinIO Console: http://localhost:9001
 
 #### 🪟 Windows
-1. **Setup**: Install dependencies (excluding data-processor).
+1. **Setup**: Install dependencies (data-processor disabled).
    ```bash
    pixi run setup-windows
    ```
-2. **Run**: Start services (Powershell background jobs).
+2. **Run**: Start services (PowerShell background jobs).
    ```bash
    pixi run start-all-windows
    ```
-   *Note: The Data Processor service is currently disabled on Windows due to dependency issues.*
+   *Note: The data-processor service is disabled on Windows.*
 
 ## 📋 Current Status & Next Steps
 
 ### Active Development
-- **Infrastructure**: Local run stabilized via `pixi`.
-- **Deployment**: Hetzner deployment active but experiencing stability issues (UI bugs, hydration errors).
+- **Infrastructure**: Local run stabilized via Docker Compose + `deploy-local.sh`.
+- **Data Processor**: MVP complete (OCR, templates, export).
+- **Deployment**: Hetzner deployment active but experiencing stability issues.
 
 ### Known Issues (TODOs)
-- **Windows Support**: Data Processor service needs Windows compatibility fixes.
-- **Production**: Fix hydration errors and image loading in production build.
+- **Frontend**: Currently not working reliably; UI/hydration issues remain.
+- **Windows Support**: Data processor is disabled on Windows builds.
 - **Stability**: Channel join bugs and UI consistency.
 
 ## 📂 Project Structure

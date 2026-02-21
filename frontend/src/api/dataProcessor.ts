@@ -1,8 +1,8 @@
 /**
  * Data Processor API Client
- * 
+ *
  * This module provides API functions for interacting with the data-processor
- * service through the FastAPI backend proxy.
+ * service through the reverse proxy (Caddy).
  */
 
 import type {
@@ -13,22 +13,43 @@ import type {
   MatchedRegion,
 } from '../types';
 
-const API_BASE_URL =
+const DATA_PROCESSOR_BASE_URL =
   typeof window === 'undefined'
-    ? import.meta.env.VITE_API_URL || 'http://backend:8002'
+    ? import.meta.env.VITE_DATA_PROCESSOR_URL || import.meta.env.VITE_API_URL || 'http://backend:8002'
     : (() => {
         const origin = window.location.origin;
-        const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
+        const isLocalHost =
+          window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const normalizeLocalDataUrl = (value: string): string => {
+          if (!isLocalHost) {
+            return value;
+          }
+          if (value.includes(':8002') || value.includes(':4269')) {
+            return 'http://localhost:8080';
+          }
+          return value;
+        };
+        const explicit = import.meta.env.VITE_PUBLIC_DATA_PROCESSOR_URL?.trim();
         if (explicit) {
           if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
             return origin;
           }
-          return explicit;
+          return normalizeLocalDataUrl(explicit);
+        }
+        const fallback = import.meta.env.VITE_PUBLIC_API_URL?.trim();
+        if (fallback) {
+          if (fallback.includes('localhost') && window.location.hostname !== 'localhost') {
+            return origin;
+          }
+          return normalizeLocalDataUrl(fallback);
+        }
+        if (isLocalHost) {
+          return 'http://localhost:8080';
         }
         return origin;
       })();
 
-const DATA_PROCESSOR_URL = `${API_BASE_URL}/data-processor`;
+export const DATA_PROCESSOR_URL = `${DATA_PROCESSOR_BASE_URL}/data-processor`;
 
 // ============================================================================
 // Document APIs
@@ -49,7 +70,7 @@ export const uploadDocument = async (
   channelId: string | number
 ): Promise<DocumentUploadResponse> => {
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('image', file);
   formData.append('channel_id', String(channelId));
 
   const response = await fetch(`${DATA_PROCESSOR_URL}/documents/`, {

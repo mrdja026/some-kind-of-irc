@@ -7,6 +7,9 @@
   @ai path /ai/*
   reverse_proxy @ai ai-service:8001
 
+  @ai_health path /healthz
+  reverse_proxy @ai_health ai-service:8001
+
   @ws path /ws/*
   reverse_proxy @ws backend:8002
 
@@ -17,9 +20,13 @@
   reverse_proxy @media media-storage:9101
 
   # Data processor service (document OCR and annotation)
-  @data_processor path /data-processor/*
-  handle @data_processor {
-    uri strip_prefix /data-processor
+  handle_path /data-processor/healthz {
+    rewrite * /healthz
+    reverse_proxy data-processor:8003
+  }
+
+  handle_path /data-processor/* {
+    rewrite * /api{path}
     reverse_proxy data-processor:8003
   }
 

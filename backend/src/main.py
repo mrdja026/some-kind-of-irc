@@ -11,7 +11,6 @@ from src.core.config import settings as app_settings
 from src.api.endpoints.auth import router as auth_router, _ensure_npc_sessions
 from src.api.endpoints.channels import router as channels_router
 from src.api.endpoints.media import router as media_router
-from src.api.endpoints.ai import router as ai_router
 from src.api.endpoints.game import router as game_router
 from src.api.endpoints.data_processor import router as data_processor_router
 from src.services.websocket_manager import manager
@@ -137,6 +136,8 @@ _default_origins = [
     "http://127.0.0.1",
     "http://localhost:4269",
     "http://127.0.0.1:4269",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
 ]
 _extra_origins: list[str] = []
 extra = os.getenv("ALLOWED_ORIGINS")
@@ -162,7 +163,6 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(channels_router)
 app.include_router(media_router)
-app.include_router(ai_router)
 app.include_router(game_router)
 app.include_router(data_processor_router)
 

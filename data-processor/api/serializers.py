@@ -5,6 +5,8 @@ These serializers handle validation and serialization of Document, Annotation,
 Template, and related data structures.
 """
 
+import mimetypes
+
 from rest_framework import serializers
 from storage.in_memory import (
     LabelType,
@@ -126,6 +128,9 @@ class DocumentSerializer(serializers.Serializer):
         return instance.to_dict()
 
 
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+
+
 class DocumentUploadSerializer(serializers.Serializer):
     """Serializer for document upload requests."""
     channel_id = serializers.CharField(max_length=255, required=True)
@@ -133,6 +138,17 @@ class DocumentUploadSerializer(serializers.Serializer):
     image = serializers.ImageField(required=True)
     apply_template_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     preprocessing_options = serializers.DictField(required=False, default=dict)
+
+    def validate_image(self, value):
+        content_type = (
+            getattr(value, "content_type", None)
+            or mimetypes.guess_type(getattr(value, "name", ""))[0]
+        )
+        if content_type not in ALLOWED_IMAGE_TYPES:
+            raise serializers.ValidationError(
+                "Unsupported file type. Use JPEG, PNG, or WebP."
+            )
+        return value
 
 
 class TemplateLabelSerializer(serializers.Serializer):

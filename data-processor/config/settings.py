@@ -98,6 +98,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    "UNAUTHENTICATED_USER": None,
+    "UNAUTHENTICATED_TOKEN": None,
     "EXCEPTION_HANDLER": "rest_framework.views.exception_handler",
     "DEFAULT_PAGINATION_CLASS": None,
 }

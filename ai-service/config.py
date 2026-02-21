@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # JWT verification (shared with monolith)
-    SECRET_KEY: str = "your-secret-key-here"
+    SECRET_KEY: str = "T)mat)P)OtatTo#)92"
     ALGORITHM: str = "HS256"
 
     # AI allowlist (semicolon-separated, case-insensitive)
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     AI_DEBUG_LOG: bool = False
 
     # Anthropic Claude configuration
-    ANTHROPIC_API_KEY: str = "sk-ant-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
 
