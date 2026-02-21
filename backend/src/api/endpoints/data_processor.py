@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from src.core.config import settings
 from src.core.admin import require_admin
+from src.api.endpoints.auth import create_access_token
 from src.models.user import User
 from src.services.websocket_manager import manager
 from src.services.rate_limiter import enforce_rate_limit
@@ -42,6 +43,11 @@ async def get_http_client() -> httpx.AsyncClient:
             timeout=httpx.Timeout(60.0, connect=10.0),
         )
     return _http_client
+
+
+def _auth_cookies(user: User) -> Dict[str, str]:
+    token = create_access_token({"sub": user.username})
+    return {"access_token": f"Bearer {token}"}
 
 
 def check_feature_enabled():
@@ -66,9 +72,25 @@ async def admin_with_rate_limit(current_user: User = Depends(require_admin)) -> 
 # Pydantic models for request/response
 class DocumentUploadResponse(BaseModel):
     id: str
-    filename: str
-    status: str
-    message: str
+    channel_id: Optional[str] = None
+    uploaded_by: Optional[str] = None
+    original_filename: Optional[str] = None
+    filename: Optional[str] = None
+    status: Optional[str] = None
+    message: Optional[str] = None
+    image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    ocr_status: Optional[str] = None
+    ocr_result: Optional[Dict[str, Any]] = None
+    raw_ocr_text: Optional[str] = None
+    annotations: Optional[List[Dict[str, Any]]] = None
+    template_id: Optional[str] = None
+    preprocessing_applied: Optional[List[str]] = None
+    deskew_angle: Optional[float] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class AnnotationCreate(BaseModel):
@@ -185,7 +207,7 @@ async def data_processor_health():
     
     client = await get_http_client()
     try:
-        response = await client.get("/health/")
+        response = await client.get("/healthz")
         if response.status_code == 200:
             return {"status": "healthy", "service": "data-processor"}
         else:
@@ -224,15 +246,22 @@ async def upload_document(
         # Forward to data-processor
         response = await client.post(
             "/api/documents/",
-            files={"file": (file.filename, content, file.content_type)},
+            files={"image": (file.filename, content, file.content_type)},
             data={
                 "channel_id": channel_id,
                 "uploaded_by": str(current_user.id),
-            }
+            },
+            cookies=_auth_cookies(current_user),
         )
         
         if response.status_code == 201:
-            return response.json()
+            dp = response.json()
+            return {
+                **dp,
+                "filename": dp.get("original_filename"),
+                "status": dp.get("ocr_status"),
+                "message": dp.get("message", "Upload successful"),
+            }
         else:
             raise HTTPException(
                 status_code=response.status_code,
@@ -257,7 +286,10 @@ async def get_document(
     client = await get_http_client()
     
     try:
-        response = await client.get(f"/api/documents/{document_id}/")
+        response = await client.get(
+            f"/api/documents/{document_id}/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -287,7 +319,10 @@ async def delete_document(
     client = await get_http_client()
     
     try:
-        response = await client.delete(f"/api/documents/{document_id}/")
+        response = await client.delete(
+            f"/api/documents/{document_id}/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 204:
             return {"message": "Document deleted"}
@@ -319,10 +354,13 @@ async def create_annotation(
     client = await get_http_client()
     
     try:
+        payload = annotation.model_dump()
         response = await client.post(
             f"/api/documents/{document_id}/annotations/",
-            json=annotation.model_dump()
+            json=payload,
+            cookies=_auth_cookies(current_user),
         )
+
         
         if response.status_code in (200, 201):
             return response.json()
@@ -356,7 +394,8 @@ async def update_annotation(
     try:
         response = await client.put(
             f"/api/documents/{document_id}/annotations/{annotation_id}/",
-            json=annotation.model_dump(exclude_none=True)
+            json=annotation.model_dump(exclude_none=True),
+            cookies=_auth_cookies(current_user),
         )
         
         if response.status_code == 200:
@@ -389,7 +428,8 @@ async def delete_annotation(
     
     try:
         response = await client.delete(
-            f"/api/documents/{document_id}/annotations/{annotation_id}/"
+            f"/api/documents/{document_id}/annotations/{annotation_id}/",
+            cookies=_auth_cookies(current_user),
         )
         
         if response.status_code == 204:
@@ -421,7 +461,10 @@ async def process_document(
     client = await get_http_client()
     
     try:
-        response = await client.post(f"/api/documents/{document_id}/process/")
+        response = await client.post(
+            f"/api/documents/{document_id}/process/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -451,7 +494,10 @@ async def extract_text_for_annotations(
     client = await get_http_client()
     
     try:
-        response = await client.post(f"/api/documents/{document_id}/extract-text/")
+        response = await client.post(
+            f"/api/documents/{document_id}/extract-text/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -486,7 +532,11 @@ async def list_templates(
         if channel_id:
             params["channel_id"] = channel_id
         
-        response = await client.get("/api/templates/", params=params)
+        response = await client.get(
+            "/api/templates/",
+            params=params,
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -517,7 +567,11 @@ async def create_template(
         data = template.model_dump()
         data["created_by"] = str(current_user.id)
         
-        response = await client.post("/api/templates/", json=data)
+        response = await client.post(
+            "/api/templates/",
+            json=data,
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 201:
             return response.json()
@@ -545,7 +599,10 @@ async def get_template(
     client = await get_http_client()
     
     try:
-        response = await client.get(f"/api/templates/{template_id}/")
+        response = await client.get(
+            f"/api/templates/{template_id}/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -575,7 +632,10 @@ async def delete_template(
     client = await get_http_client()
     
     try:
-        response = await client.delete(f"/api/templates/{template_id}/")
+        response = await client.delete(
+            f"/api/templates/{template_id}/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 204:
             return {"message": "Template deleted"}
@@ -608,7 +668,8 @@ async def apply_template(
     try:
         response = await client.post(
             f"/api/documents/{document_id}/apply-template/",
-            json=request.model_dump()
+            json=request.model_dump(),
+            cookies=_auth_cookies(current_user),
         )
         
         if response.status_code == 200:
@@ -649,7 +710,8 @@ async def export_document(
     try:
         response = await client.post(
             f"/api/documents/{document_id}/export/",
-            json=request.model_dump()
+            json=request.model_dump(),
+            cookies=_auth_cookies(current_user),
         )
         
         if response.status_code == 200:
@@ -686,7 +748,11 @@ async def create_batch_job(
         data["channel_id"] = channel_id
         data["created_by"] = str(current_user.id)
         
-        response = await client.post("/api/batch/", json=data)
+        response = await client.post(
+            "/api/batch/",
+            json=data,
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 201:
             return response.json()
@@ -714,7 +780,10 @@ async def get_batch_job(
     client = await get_http_client()
     
     try:
-        response = await client.get(f"/api/batch/{job_id}/")
+        response = await client.get(
+            f"/api/batch/{job_id}/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -744,7 +813,10 @@ async def process_batch_job(
     client = await get_http_client()
     
     try:
-        response = await client.post(f"/api/batch/{job_id}/process/")
+        response = await client.post(
+            f"/api/batch/{job_id}/process/",
+            cookies=_auth_cookies(current_user),
+        )
         
         if response.status_code == 200:
             return response.json()

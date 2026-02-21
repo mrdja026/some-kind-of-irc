@@ -55,6 +55,9 @@ export MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 export BACKEND_VERIFY_URL="${BACKEND_VERIFY_URL:-http://backend:8002/auth/me}"
 export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:9101}"
 export DATA_PROCESSOR_URL="${DATA_PROCESSOR_URL:-http://data-processor:8003}"
+# Force-enable data-processor feature for local runs
+export FEATURE_DATA_PROCESSOR="true"
+export AI_RATE_LIMIT_PER_HOUR="${AI_RATE_LIMIT_PER_HOUR:-100}"
 
 cd "$ROOT_DIR"
 echo "Starting docker compose with project $COMPOSE_PROJECT_NAME"
@@ -87,7 +90,7 @@ echo "Waiting for data-processor to become healthy..."
 for i in {1..20}; do
   if "${COMPOSE_CMD[@]}" exec -T data-processor python - <<'PY' >/dev/null 2>&1; then
 import urllib.request
-urllib.request.urlopen("http://localhost:8003/api/health", timeout=1)
+urllib.request.urlopen("http://localhost:8003/healthz", timeout=1)
 PY
     echo "Data-processor is up."
     break
@@ -98,6 +101,11 @@ done
 echo "Seeding default users from backend/seed_users.json..."
 if ! "${COMPOSE_CMD[@]}" exec backend python /app/create_test_user.py; then
   echo "Warning: failed to create test users; see backend logs for details."
+fi
+
+echo "Resetting rate limit buckets in redis..."
+if ! "${COMPOSE_CMD[@]}" exec redis sh -c "redis-cli --scan --pattern 'rate:*' | xargs -r redis-cli del"; then
+  echo "Warning: failed to reset rate limit buckets; see redis service logs."
 fi
 
 echo "Ensuring public bucket '${MINIO_BUCKET:-media}' exists..."

@@ -10,6 +10,12 @@ Provides views for:
 """
 
 import logging
+import mimetypes
+import uuid
+
+import boto3
+from botocore.client import Config
+from django.conf import settings
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -61,6 +67,35 @@ except ImportError:
     TEMPLATE_MATCHING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+_s3_client = None
+
+def get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client(
+            "s3",
+            endpoint_url=settings.MINIO_ENDPOINT,
+            aws_access_key_id=settings.MINIO_ACCESS_KEY,
+            aws_secret_access_key=settings.MINIO_SECRET_KEY,
+            config=Config(signature_version="s3v4"),
+        )
+    return _s3_client
+
+
+def upload_image_to_minio(user_id: str, document_id: str, filename: str, content: bytes, content_type: str) -> str:
+    safe_user = user_id or "anonymous"
+    key = f"ocr-{safe_user}/{document_id}/{filename}"
+    client = get_s3_client()
+    client.put_object(
+        Bucket=settings.MINIO_BUCKET,
+        Key=key,
+        Body=content,
+        ContentType=content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream",
+    )
+    public_base = settings.MINIO_PUBLIC_ENDPOINT.rstrip("/")
+    # TODO: generate signed/public URLs and consider dedicated OCR bucket (tech debt)
+    return f"{public_base}/{settings.MINIO_BUCKET}/{key}"
 
 
 @api_view(["GET"])
@@ -117,19 +152,32 @@ class DocumentListCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Read image data into memory
+        # Read image data
         image_data = image_file.read()
+        content_type = image_file.content_type or mimetypes.guess_type(image_file.name)[0] or "application/octet-stream"
         
-        # Create document
+        # Persist to MinIO (no in-memory image retention)
+        document_id = str(uuid.uuid4())
+        image_url = upload_image_to_minio(
+            data.get("uploaded_by", ""),
+            document_id=document_id,
+            filename=image_file.name,
+            content=image_data,
+            content_type=content_type,
+        )
+
         document = Document(
+            id=document_id,
             channel_id=data["channel_id"],
             uploaded_by=data.get("uploaded_by", ""),
             original_filename=image_file.name,
-            image_data=image_data,
+            image_url=image_url,
+            image_data=None,
+            preprocessed_data=None,
             ocr_status=OcrStatus.PENDING,
         )
         
-        # Store document
+        # Store document metadata only
         document = store.create_document(document)
         
         logger.info(f"Document uploaded: {document.id} ({document.original_filename})")
