@@ -67,15 +67,15 @@ class GmailAgent:
         Generate two distinct summaries (Action-focused vs. Insight-focused).
         """
         email_text = "\n".join([
-            f"- From: {e.get('from')}, Subject: {e.get('subject')}, Snippet: {e.get('snippet')}"
-            for e in emails[:50] # Limit to 50 for context window safety if needed, though Haiku handles 200k
+            f"- From: {e.get('from')}\n  Subject: {e.get('subject')}\n  Body: {e.get('body', e.get('snippet'))[:500]}"
+            for e in emails[:20] # Limit to 20 emails for deep analysis to save tokens
         ])
 
         prompt = f"""You are an expert email analyst.
         User Interest: {interest}
         User Context/Answers: {answers}
 
-        Here are the user's recent emails:
+        Here are the user's recent emails (truncated content):
         {email_text}
 
         Task:
@@ -83,12 +83,13 @@ class GmailAgent:
         2. Generate 'Summary B': Focus on INSIGHTS, trends, and key information (newsletters, updates).
 
         Return ONLY a JSON object with keys "summary_a" and "summary_b".
+        Example: {{"summary_a": "Action items...", "summary_b": "Insights..."}}
         """
 
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=1000,
+                max_tokens=1500,
                 temperature=0.5,
                 system="You are a helpful AI assistant. Output only valid JSON. No markdown fences.",
                 messages=[{"role": "user", "content": prompt}]
@@ -114,13 +115,13 @@ class GmailAgent:
 
         Task:
         1. Decide which summary style is more relevant to the user's interest/context, or merge them if both are vital.
-        2. Select the top 5 most relevant emails from the list below.
+        2. Select the top 5 most relevant emails from the list provided below.
         3. Explain your reasoning.
 
-        Email List (First 50 provided for context):
-        {json.dumps([{k: v for k, v in e.items() if k in ['message_id', 'subject', 'from']} for e in emails[:50]])}
+        Email List (for selection context):
+        {json.dumps([{k: v for k, v in e.items() if k in ['message_id', 'subject', 'from', 'received_at']} for e in emails[:20]])}
 
-        Return a JSON object:
+        Return a JSON object with this exact structure:
         {{
             "final_summary": "The combined or selected best summary text...",
             "top_email_ids": ["id1", "id2", ...],

@@ -194,6 +194,15 @@ export type AIQueryResponse =
       response: string;
       agent: string;
       disclaimer: string;
+    }
+  | {
+      mode: 'agent_message';
+      intent: string;
+      query: string;
+      response: string;
+      agent: string;
+      emails?: any[];
+      pdfUrl?: string;
     };
 
 export type AIStreamEvent =
