@@ -37,3 +37,4 @@ backend/src/utils/__pycache__/
 backend/api/endpoints/__pycache__/
 backend/api/endpoints/__pycache__/*.pyc
 secrets/
+.env.local
