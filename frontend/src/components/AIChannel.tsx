@@ -666,6 +666,38 @@ export function AIChannel({
                   Next
                 </button>
               </form>
+              
+              {/* Fetched Emails Preview */}
+              {gmailEmails.length > 0 && (
+                <div className="mt-6 border-t border-amber-200 pt-4">
+                  <h4 className="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-3">
+                    Analyzing {gmailEmails.length} Recent Emails
+                  </h4>
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                    {gmailEmails.map((email) => (
+                      <a 
+                        key={email.message_id} 
+                        href={email.permalink} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="block p-2 rounded bg-white/50 border border-amber-100 hover:bg-amber-50 hover:border-amber-300 transition-colors text-xs md:text-sm"
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-medium text-amber-900 truncate pr-2 max-w-[70%]">
+                            {email.from}
+                          </span>
+                          <span className="text-amber-600 text-[10px]">
+                            {new Date(parseInt(email.received_at)).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="text-gray-600 truncate">
+                          {email.subject || '(No Subject)'}
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           

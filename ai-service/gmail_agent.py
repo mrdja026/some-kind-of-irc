@@ -12,6 +12,24 @@ class GmailAgent:
         self.client = Anthropic(api_key=api_key)
         self.model = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
 
+    def _clean_and_parse_json(self, text: str) -> Any:
+        """
+        Robustly extract and parse JSON from LLM output.
+        Handles Markdown fences and potential extra text.
+        """
+        # Remove Markdown code blocks
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        
+        text = text.strip()
+        
+        # Try cleaning control characters if needed
+        # (Using strict=False in json.loads usually helps, but we can be explicit if needed)
+        
+        return json.loads(text, strict=False)
+
     def generate_followup_questions(self, interest: str, previous_answers: List[str] = []) -> List[str]:
         """
         Generate 2 follow-up questions based on the user's interest and previous answers.
@@ -32,11 +50,11 @@ class GmailAgent:
                 model=self.model,
                 max_tokens=200,
                 temperature=0.5,
-                system="You are a helpful AI assistant. Output only valid JSON.",
+                system="You are a helpful AI assistant. Output only valid JSON. No markdown fences.",
                 messages=[{"role": "user", "content": prompt}]
             )
             content = message.content[0].text
-            return json.loads(content)
+            return self._clean_and_parse_json(content)
         except Exception as e:
             logger.error(f"Failed to generate questions: {e}")
             return [
@@ -72,10 +90,10 @@ class GmailAgent:
                 model=self.model,
                 max_tokens=1000,
                 temperature=0.5,
-                system="You are a helpful AI assistant. Output only valid JSON.",
+                system="You are a helpful AI assistant. Output only valid JSON. No markdown fences.",
                 messages=[{"role": "user", "content": prompt}]
             )
-            return json.loads(message.content[0].text)
+            return self._clean_and_parse_json(message.content[0].text)
         except Exception as e:
             logger.error(f"Failed to generate summaries: {e}")
             return {
@@ -115,10 +133,10 @@ class GmailAgent:
                 model=self.model,
                 max_tokens=1000,
                 temperature=0.3,
-                system="You are a judge AI. Output only valid JSON.",
+                system="You are a judge AI. Output only valid JSON. No markdown fences.",
                 messages=[{"role": "user", "content": prompt}]
             )
-            return json.loads(message.content[0].text)
+            return self._clean_and_parse_json(message.content[0].text)
         except Exception as e:
             logger.error(f"Failed to judge summaries: {e}")
             return {
