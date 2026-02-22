@@ -142,7 +142,7 @@ export type WebSocketMessage = {
 
 
 // AI Agent types
-export type AIIntent = 'afford' | 'learn';
+export type AIIntent = 'afford' | 'learn' | 'gmail';
 
 export type AIQueryRequest = {
   intent: AIIntent;

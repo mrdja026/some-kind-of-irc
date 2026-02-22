@@ -19,6 +19,11 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       DATA_PROCESSOR_URL: "${DATA_PROCESSOR_URL:-http://data-processor:8003}"
       FEATURE_DATA_PROCESSOR: "${FEATURE_DATA_PROCESSOR:-true}"
+      ADMIN_ALLOWLIST: "${ADMIN_ALLOWLIST:-admina}"
+      GMAIL_OAUTH_CLIENT_ID: "${GMAIL_OAUTH_CLIENT_ID:-}"
+      GMAIL_OAUTH_CLIENT_SECRET: "${GMAIL_OAUTH_CLIENT_SECRET:-}"
+      GMAIL_OAUTH_REDIRECT_URL: "${GMAIL_OAUTH_REDIRECT_URL:-http://localhost:8002/api/auth/callback}"
+      GMAIL_OAUTH_SCOPES: "${GMAIL_OAUTH_SCOPES:-https://www.googleapis.com/auth/gmail.readonly}"
     ports:
       - "8002:8002"
     depends_on:

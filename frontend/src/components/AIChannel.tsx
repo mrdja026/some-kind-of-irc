@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   createDirectMessageChannel,
+  fetchGmailMessages,
+  generateGmailQuestions,
+  generateGmailSummary,
+  generatePdf,
   getAIHealth,
   getAIStatus,
   queryAIStream,
@@ -15,7 +19,7 @@ import type {
   AIIntent,
   AIStreamEvent,
 } from '../types'
-import { DollarSign, BookOpen, Bot, Sparkles } from 'lucide-react'
+import { DollarSign, BookOpen, Bot, Sparkles, Mail } from 'lucide-react'
 
 const INTENTS: {
   id: AIIntent
@@ -34,6 +38,12 @@ const INTENTS: {
     label: 'Find me learning material',
     icon: BookOpen,
     description: 'Discover courses, tutorials, and resources',
+  },
+  {
+    id: 'gmail',
+    label: 'Summarize my Gmail',
+    icon: Mail,
+    description: 'Analyze recent emails and get a PDF report',
   },
 ]
 
@@ -184,6 +194,15 @@ export function AIChannel({
   const [streamProgress, setStreamProgress] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
+  
+  // Gmail Agent State
+  const [gmailStage, setGmailStage] = useState<'initial' | 'quiz' | 'analyzing' | 'summary'>('initial')
+  const [gmailInterest, setGmailInterest] = useState('')
+  const [gmailQuestions, setGmailQuestions] = useState<string[]>([])
+  const [gmailAnswers, setGmailAnswers] = useState<string[]>([])
+  const [gmailSummary, setGmailSummary] = useState<{ final_summary: string; top_email_ids: string[]; reasoning: string } | null>(null)
+  const [gmailEmails, setGmailEmails] = useState<any[]>([])
+  const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null)
 
   const {
     data: aiHealth,
@@ -224,16 +243,112 @@ export function AIChannel({
   const aiAccessMessage =
     aiStatusError instanceof Error ? aiStatusError.message : null
 
-  const handleIntentSelect = (intent: AIIntent) => {
-    setSelectedIntent(intent)
+  const handleIntentSelect = async (intent: AIIntent | 'gmail') => {
+    // Reset standard AI state
     setClarificationState(null)
     setActiveQuestion(null)
     setQuery('')
     setStreamProgress(null)
     setStreamError(null)
+    
+    // Reset Gmail state
+    setGmailStage('initial')
+    setGmailInterest('')
+    setGmailQuestions([])
+    setGmailAnswers([])
+    setGmailSummary(null)
+    setGmailEmails([])
+    setGeneratedPdfUrl(null)
+
+    if (intent === 'gmail') {
+      setSelectedIntent('gmail')
+      try {
+        setStreamProgress('Fetching emails...')
+        const { emails } = await fetchGmailMessages()
+        setGmailEmails(emails)
+        setGmailStage('quiz')
+        setStreamProgress(null)
+      } catch (e) {
+        setStreamError('Failed to fetch Gmail messages. Are you connected?')
+        setSelectedIntent(null)
+      }
+    } else {
+      setSelectedIntent(intent as AIIntent)
+    }
+  }
+
+  const handleGmailSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!gmailInterest.trim()) return
+
+    setIsSubmitting(true)
+    setStreamProgress('Generating questions...')
+
+    try {
+      // Step 1: Initial Interest -> Get 2 Questions
+      if (gmailAnswers.length === 0) {
+        const { questions } = await generateGmailQuestions(gmailInterest)
+        setGmailQuestions(questions)
+        setGmailAnswers([gmailInterest]) // Store interest as "Answer 0"
+        setGmailInterest('') // Clear input for next answer
+        setStreamProgress(null)
+      } 
+      // Step 2 & 3: Answer Follow-ups
+      else if (gmailAnswers.length < 3) {
+        const answer = gmailInterest // Input field reused for answers
+        const newAnswers = [...gmailAnswers, answer]
+        setGmailAnswers(newAnswers)
+        setGmailInterest('')
+        
+        if (newAnswers.length === 3) {
+          // Quiz complete, generate summary
+          setGmailStage('analyzing')
+          setStreamProgress('Analyzing 100 emails and generating summary...')
+          
+          const result = await generateGmailSummary(
+            gmailEmails,
+            newAnswers[0], // Interest
+            newAnswers.slice(1) // Follow-up answers
+          )
+          
+          setGmailSummary(result)
+          setGmailStage('summary')
+          
+          // Generate PDF
+          setStreamProgress('Generating PDF report...')
+          const { url } = await generatePdf(
+            `Gmail Summary: ${newAnswers[0]}`,
+            [
+              { heading: 'Executive Summary', content: result.final_summary },
+              { heading: 'AI Reasoning', content: result.reasoning }
+            ],
+            result.top_email_ids.map(id => 
+              gmailEmails.find(e => e.message_id === id)?.permalink || ''
+            ).filter(Boolean)
+          )
+          setGeneratedPdfUrl(url)
+          
+          // Send to DM
+          if (currentUserId) {
+             const selfDm = await createDirectMessageChannel(currentUserId)
+             await sendMessage(selfDm.id, `Here is your Gmail PDF report: ${url}`, url)
+          }
+          
+          setStreamProgress(null)
+        }
+      }
+    } catch (err) {
+      setStreamError('Gmail agent failed. Please try again.')
+      console.error(err)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
+    if (selectedIntent === 'gmail') {
+      return handleGmailSubmit(e)
+    }
     e.preventDefault()
     const trimmed = query.trim()
     if (!trimmed || isSubmitting) return
@@ -512,7 +627,120 @@ export function AIChannel({
         </div>
       )}
 
-      {/* Messages area */}
+
+      {/* Gmail Agent UI */}
+      {selectedIntent === 'gmail' && (
+        <div className="flex-1 flex flex-col p-4">
+          {gmailStage === 'quiz' && (
+            <div className="max-w-2xl mx-auto w-full">
+              <div className="mb-4 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                <h3 className="font-semibold text-amber-900 mb-2">
+                  {gmailAnswers.length === 0 
+                    ? "Step 1: What are your primary interests?" 
+                    : `Step ${gmailAnswers.length + 1}: ${gmailQuestions[gmailAnswers.length - 1]}`
+                  }
+                </h3>
+                <p className="text-sm text-amber-800">
+                  {gmailAnswers.length === 0 
+                    ? "e.g., Tech news, Finance, Photography, Travel deals..."
+                    : "Please provide details to help refine the summary."
+                  }
+                </p>
+              </div>
+              
+              <form onSubmit={handleGmailSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  value={gmailInterest}
+                  onChange={(e) => setGmailInterest(e.target.value)}
+                  className="flex-1 px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  placeholder="Type your answer..."
+                  autoFocus
+                  disabled={isSubmitting}
+                />
+                <button
+                  type="submit"
+                  disabled={!gmailInterest.trim() || isSubmitting}
+                  className="px-6 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                >
+                  Next
+                </button>
+              </form>
+            </div>
+          )}
+          
+          {gmailStage === 'analyzing' && (
+             <div className="flex-1 flex flex-col items-center justify-center text-amber-800">
+               <div className="w-12 h-12 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mb-4"></div>
+               <p>{streamProgress || "Processing..."}</p>
+             </div>
+          )}
+          
+          {gmailStage === 'summary' && gmailSummary && (
+            <div className="max-w-3xl mx-auto w-full space-y-6 pb-20">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">Gmail Summary Report</h2>
+                
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">Executive Summary</h3>
+                  <div className="prose prose-amber max-w-none text-gray-800 whitespace-pre-line">
+                    {gmailSummary.final_summary}
+                  </div>
+                </div>
+                
+                <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">AI Reasoning</h3>
+                  <p className="text-sm text-gray-600 italic">
+                    {gmailSummary.reasoning}
+                  </p>
+                </div>
+                
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Top Relevant Emails</h3>
+                  <div className="space-y-2">
+                    {gmailSummary.top_email_ids.map(id => {
+                      const email = gmailEmails.find(e => e.message_id === id)
+                      if (!email) return null
+                      return (
+                        <a 
+                          key={id} 
+                          href={email.permalink} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="block p-3 rounded-lg border border-gray-200 hover:border-amber-300 hover:bg-amber-50 transition-colors"
+                        >
+                          <div className="font-medium text-gray-900">{email.subject || '(No Subject)'}</div>
+                          <div className="text-xs text-gray-500 mt-1 flex justify-between">
+                            <span>{email.from}</span>
+                            <span>{new Date(parseInt(email.received_at)).toLocaleDateString()}</span>
+                          </div>
+                        </a>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              
+              {generatedPdfUrl && (
+                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2">
+                  <a
+                    href={generatedPdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700 transition-transform hover:-translate-y-1"
+                  >
+                    <BookOpen size={20} />
+                    Download PDF Report
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Messages area - Standard AI */}
+      {selectedIntent !== 'gmail' && (
       <div className="flex-1 overflow-y-auto p-2 md:p-4 touch-pan-y">
         {/* Welcome message */}
         {responses.length === 0 && !selectedIntent && (
@@ -737,6 +965,7 @@ export function AIChannel({
           </div>
         )}
       </div>
+      )}
 
       {/* Input area - show when intent is selected */}
       {selectedIntent && !isSubmitting && (
