@@ -2,23 +2,32 @@
 # pyright: ignore
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import logging
+from urllib.parse import urlencode
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, cast
 import secrets
+import httpx
 
 from src.core.config import settings
 from src.core.database import get_db
+from src.core.admin import is_user_admin
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.membership import Membership
+from src.models.gmail_token import GmailToken
+from src.services.gmail_service import fetch_latest_emails
 from src.services.irc_logger import log_nick_user
 from src.services.event_publisher import publish_user_registered
 from src.services.game_service import GameService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,6 +40,11 @@ NPC_PREFIX = "npc_"
 NPC_SEED_COUNT = 2
 GAME_CHANNEL_NAME = "#game"
 GUEST_USERNAME = "guest2"
+
+GMAIL_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_STATE_COOKIE = "gmail_oauth_state"
+GMAIL_STATE_TTL_SECONDS = 15 * 60
 
 # Pydantic models
 class UserCreate(BaseModel):
@@ -55,6 +69,14 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+class GmailAuthUrlResponse(BaseModel):
+    authorization_url: str
+
+
+class GmailCallbackResponse(BaseModel):
+    status: str
 
 
 class AuthGameResponse(BaseModel):
@@ -108,6 +130,49 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def _ensure_gmail_oauth_config() -> None:
+    if not settings.GMAIL_OAUTH_CLIENT_ID or not settings.GMAIL_OAUTH_CLIENT_SECRET or not settings.GMAIL_OAUTH_REDIRECT_URL:
+        raise HTTPException(status_code=500, detail="Gmail OAuth is not configured")
+
+
+def _ensure_admin_user(user: User) -> None:
+    if not is_user_admin(user.username):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+def _build_gmail_auth_url(state: str) -> str:
+    scopes = settings.GMAIL_OAUTH_SCOPES or "https://www.googleapis.com/auth/gmail.readonly"
+    params = {
+        "client_id": settings.GMAIL_OAUTH_CLIENT_ID,
+        "redirect_uri": settings.GMAIL_OAUTH_REDIRECT_URL,
+        "response_type": "code",
+        "scope": scopes,
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+        "state": state,
+    }
+    return f"{GMAIL_AUTH_URL}?{urlencode(params)}"
+
+
+async def _exchange_gmail_code(code: str) -> dict:
+    payload = {
+        "client_id": settings.GMAIL_OAUTH_CLIENT_ID,
+        "client_secret": settings.GMAIL_OAUTH_CLIENT_SECRET,
+        "redirect_uri": settings.GMAIL_OAUTH_REDIRECT_URL,
+        "grant_type": "authorization_code",
+        "code": code,
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(GMAIL_TOKEN_URL, data=payload)
+    if response.is_error:
+        raise HTTPException(status_code=400, detail="Gmail OAuth token exchange failed")
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Gmail token response") from exc
 
 
 def _generate_unique_username(db: Session, prefix: str) -> str:
@@ -289,6 +354,113 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
     )
     log_nick_user(cast(int, user.id), user_username)
     return {"message": "Login successful"}
+
+
+@router.get("/gmail/start", response_model=GmailAuthUrlResponse)
+async def gmail_oauth_start(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_gmail_oauth_config()
+    _ensure_admin_user(current_user)
+    state = secrets.token_urlsafe(16)
+    auth_url = _build_gmail_auth_url(state)
+    response.set_cookie(
+        key=GMAIL_STATE_COOKIE,
+        value=state,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=GMAIL_STATE_TTL_SECONDS,
+    )
+    return GmailAuthUrlResponse(authorization_url=auth_url)
+
+
+@router.get("/callback")
+async def gmail_oauth_callback(
+    request: Request,
+    response: Response,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_gmail_oauth_config()
+    _ensure_admin_user(current_user)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    expected_state = request.cookies.get(GMAIL_STATE_COOKIE)
+    if not expected_state or not state or expected_state != state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    token_payload = await _exchange_gmail_code(code)
+    access_token = token_payload.get("access_token")
+    refresh_token = token_payload.get("refresh_token")
+    token_type = token_payload.get("token_type")
+    scope = token_payload.get("scope")
+    expires_in = token_payload.get("expires_in")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Missing access token")
+
+    expires_at = None
+    if expires_in is not None:
+        try:
+            expires_at = datetime.now() + timedelta(seconds=int(expires_in))
+        except (TypeError, ValueError):
+            expires_at = None
+
+    user_id = cast(int, current_user.id)
+    existing_token = db.query(GmailToken).filter(GmailToken.user_id == user_id).first()
+    if existing_token:
+        if refresh_token:
+            existing_token.refresh_token = refresh_token
+        if not existing_token.refresh_token:
+            raise HTTPException(status_code=400, detail="Missing refresh token")
+        existing_token.access_token = access_token
+        existing_token.token_type = token_type
+        existing_token.scope = scope
+        existing_token.expires_at = expires_at
+    else:
+        if not refresh_token:
+            raise HTTPException(status_code=400, detail="Missing refresh token")
+        db.add(
+            GmailToken(
+                user_id=user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_type=token_type,
+                scope=scope,
+                expires_at=expires_at,
+            )
+        )
+
+    db.commit()
+    redirect_url = f"{settings.FRONTEND_URL}/chat"
+    redirect_response = RedirectResponse(url=redirect_url, status_code=303)
+    redirect_response.delete_cookie(GMAIL_STATE_COOKIE)
+    return redirect_response
+
+
+@router.get("/gmail/messages")
+async def get_gmail_messages(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_admin_user(current_user)
+    try:
+        user_id = cast(int, current_user.id)
+        emails = await fetch_latest_emails(db, user_id)
+        return {"emails": emails}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to fetch Gmail messages")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/auth_game", response_model=AuthGameResponse)

@@ -3,12 +3,7 @@ import logging
 from typing import Set
 from functools import lru_cache
 
-from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
-
 from src.core.config import settings
-from src.models.user import User
-from src.api.endpoints.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +37,3 @@ def is_user_admin(username: str) -> bool:
     allowlist = get_admin_allowlist()
     return username.lower() in allowlist
 
-
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Dependency that checks if current user is in admin allowlist.
-    
-    Raises:
-        HTTPException: 404 if user not in allowlist (security through obscurity)
-    """
-    if not is_user_admin(current_user.username):
-        raise HTTPException(status_code=404, detail="Not Found")
-    
-    return current_user

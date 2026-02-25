@@ -9,7 +9,7 @@ import asyncio
 import json
 from typing import Any, AsyncGenerator, Optional
 
-import httpx
+from anthropic import AsyncAnthropic
 
 from config import settings
 
@@ -18,15 +18,18 @@ class AgentOrchestrator:
     """Orchestrates multiple AI agents for the #ai channel."""
 
     def __init__(self):
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: Optional[AsyncAnthropic] = None
         self._initialized = False
 
     def _ensure_initialized(self):
-        """Lazily initialize the Anthropic HTTP client."""
+        """Lazily initialize the Anthropic client."""
         if not self._initialized:
             if not settings.ANTHROPIC_API_KEY:
                 raise ValueError("Anthropic API key not configured")
-            self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self.client = AsyncAnthropic(
+                api_key=settings.ANTHROPIC_API_KEY,
+                base_url=settings.ANTHROPIC_API_BASE,
+            )
             self._initialized = True
 
     def _build_messages(self, instructions: str, query: str) -> list:
@@ -37,9 +40,9 @@ class AgentOrchestrator:
             }
         ]
 
-    def _extract_text(self, data: dict) -> str:
+    def _extract_text(self, message: Any) -> str:
         try:
-            return data["content"][0]["text"]
+            return message.content[0].text
         except Exception:
             return ""
 
@@ -53,49 +56,23 @@ class AgentOrchestrator:
 
     async def _call_claude(self, messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
         self._ensure_initialized()
-        url = f"{settings.ANTHROPIC_API_BASE}/v1/messages"
-        headers = {
-            "x-api-key": settings.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
         assert self.client is not None
-        response = await self.client.post(url, headers=headers, json=self._payload(messages, temperature, max_tokens))
-        response.raise_for_status()
-        data = response.json()
-        return self._extract_text(data)
+        message = await self.client.messages.create(
+            **self._payload(messages, temperature, max_tokens)
+        )
+        return self._extract_text(message)
 
     async def _stream_claude(
         self, messages: list, temperature: float = 0.7, max_tokens: int = 500
     ) -> AsyncGenerator[str, None]:
         self._ensure_initialized()
-        url = f"{settings.ANTHROPIC_API_BASE}/v1/messages"
-        headers = {
-            "x-api-key": settings.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-        payload = self._payload(messages, temperature, max_tokens)
-        payload["stream"] = True
-
         assert self.client is not None
-        async with self.client.stream("POST", url, headers=headers, json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                if line.startswith("data:"):
-                    line = line[5:].strip()
-                if not line or line == "[DONE]":
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("type") == "content_block_delta":
-                    text = data.get("delta", {}).get("text", "")
-                    if text:
-                        yield text
+        async with self.client.messages.stream(
+            **self._payload(messages, temperature, max_tokens)
+        ) as stream:
+            async for text in stream.text_stream:
+                if text:
+                    yield text
 
     async def _run_agent(self, name: str, instructions: str, query: str) -> str:
         """Run a single agent with the given instructions and query."""

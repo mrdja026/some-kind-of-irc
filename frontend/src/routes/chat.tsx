@@ -14,6 +14,7 @@ import {
   getUserById,
   searchChannels,
   createChannel,
+  getGmailAuthUrl,
 } from '../api'
 import {
   getCurrentUserServer,
@@ -35,6 +36,7 @@ import {
   Plus,
   ChevronDown,
   Gamepad2,
+  Mail,
 } from 'lucide-react'
 import { AIChannel } from '../components/AIChannel'
 import { GameChannel } from '../components/GameChannel'
@@ -679,6 +681,16 @@ function ChatPage() {
     }
   }
 
+  const handleConnectGmail = async () => {
+    try {
+      const { authorization_url } = await getGmailAuthUrl()
+      window.location.href = authorization_url
+    } catch (error) {
+      console.error('Failed to connect Gmail:', error)
+      alert('Failed to initiate Gmail connection. Are you an admin?')
+    }
+  }
+
   const handleAttachmentClick = () => {
     setUploadError(null)
     if (!selectedChannelId) return
@@ -858,6 +870,16 @@ function ChatPage() {
           return
         case 'game':
           setChannelMode('game')
+          setMessageInput('')
+          return
+        case 'gmail-helper':
+        case 'gmail-agent':
+          setChannelMode('ai')
+          // We need to trigger the gmail intent on the AI channel
+          // Since we can't pass props imperatively here easily without context ref,
+          // we'll rely on the user seeing the 'Summarize my Gmail' option or
+          // implementing a more robust command-to-intent bridge later.
+          // For now, let's just switch to AI mode.
           setMessageInput('')
           return
         default:
@@ -1161,6 +1183,17 @@ function ChatPage() {
                   <ChevronDown size={16} className="flex-shrink-0 md:hidden" />
                 </button>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {user?.username === 'admina' && (
+                    <button
+                      type="button"
+                      onClick={handleConnectGmail}
+                      className="px-2 md:px-3 py-2 text-xs md:text-sm rounded transition-colors min-h-[44px] chat-attach-button flex items-center gap-1 hover:bg-sage/20"
+                      title="Connect Gmail"
+                    >
+                      <Mail size={14} />
+                      <span className="hidden sm:inline">Connect Gmail</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setChannelMode('chat')}

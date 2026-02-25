@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     
     # Audit Logger Microservice URL
     AUDIT_LOGGER_URL: str = "http://localhost:8004"
+
+    # Frontend URL for Redirects
+    FRONTEND_URL: str = "http://localhost:4269"
+
+    # Gmail OAuth Configuration
+    GMAIL_OAUTH_CLIENT_ID: str = ""
+    GMAIL_OAUTH_CLIENT_SECRET: str = ""
+    GMAIL_OAUTH_REDIRECT_URL: str = ""
+    GMAIL_OAUTH_SCOPES: str = "https://www.googleapis.com/auth/gmail.readonly"
     
     @property
     def data_processor_enabled(self) -> bool:

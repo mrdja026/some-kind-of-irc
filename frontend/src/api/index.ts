@@ -131,6 +131,67 @@ export const getUserById = async (userId: number): Promise<User> => {
   return response.json();
 };
 
+export const generateGmailQuestions = async (
+  interest: string,
+  previousAnswers: string[] = []
+): Promise<{ questions: string[] }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/questions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ interest, previous_answers: previousAnswers }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to generate questions');
+  }
+  return response.json();
+};
+
+export const generateGmailSummary = async (
+  emails: any[],
+  interest: string,
+  answers: string[]
+): Promise<{ final_summary: string; top_email_ids: string[]; reasoning: string }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ emails, interest, answers }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to generate summary');
+  }
+  return response.json();
+};
+
+export const fetchGmailMessages = async (): Promise<{ emails: any[] }> => {
+  const response = await fetch(`${API_BASE_URL}/auth/gmail/messages`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch Gmail messages');
+  }
+  return response.json();
+};
+
+export const generatePdf = async (
+  title: string,
+  sections: { heading: string; content: string }[],
+  links: string[] = []
+): Promise<{ url: string }> => {
+  const response = await fetch(`${API_BASE_URL}/media/pdf/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ title, sections, links }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to generate PDF');
+  }
+  return response.json();
+};
+
+
 // Channel APIs
 export const getChannels = async (): Promise<Channel[]> => {
   const response = await fetch(`${API_BASE_URL}/channels`, {
@@ -453,6 +514,17 @@ export const getAIHealth = async (): Promise<{ service: string; status: string }
   });
   if (!response.ok) {
     throw new Error('AI service health check failed');
+  }
+  return response.json();
+};
+
+export const getGmailAuthUrl = async (): Promise<{ authorization_url: string }> => {
+  const response = await fetch(`${API_BASE_URL}/auth/gmail/start`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to get Gmail auth URL' }));
+    throw new Error(error.detail || 'Failed to get Gmail auth URL');
   }
   return response.json();
 };

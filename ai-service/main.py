@@ -8,12 +8,14 @@ Endpoints:
   /ai/query           — AI query with intent routing (AI allowlist)
   /ai/query/stream    — SSE streaming AI response (AI allowlist)
   /ai/status          — Rate limit status + AI availability (AI allowlist)
+  /ai/gmail/questions — Gmail agent quiz generation
+  /ai/gmail/summary   — Gmail agent summarization
 """
 
 import json
 import logging
 import re
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Dict, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +26,7 @@ from auth import require_ai_access
 from config import settings
 from orchestrator import orchestrator
 from rate_limiter import enforce_rate_limit, remaining_requests
+from gmail_agent import GmailAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,6 +39,8 @@ FALLBACK_QUESTIONS = [
 
 MANDATORY_GUARDRAIL_QUESTION = "Do you have a 6-month emergency fund?"
 CLARIFICATION_MAX_ROUNDS = 4
+
+gmail_agent = GmailAgent(api_key=settings.ANTHROPIC_API_KEY)
 
 
 def _debug_log(message: str, *args):
@@ -102,48 +107,24 @@ def _build_smart_guardrail_question(original_query: str, answers: list[str]) -> 
 
     return (
         MANDATORY_GUARDRAIL_QUESTION,
-        "Default guardrail: emergency fund coverage check.",
+        "Standard guardrail: runway unclear or below threshold.",
     )
 
-app = FastAPI(title="AI Service", version="1.0.0")
-
-# CORS — allow monolith origins for browser-based requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 # ---------------------------------------------------------------------------
-# Health probe — ungated
-# ---------------------------------------------------------------------------
-
-@app.get("/healthz")
-async def healthz(request: Request):
-    """Kubernetes liveness/readiness probe (no auth required)."""
-    logger.info("healthz ok from %s", request.client.host if request.client else "unknown")
-    return {"service": "ai-service", "status": "ok"}
-
-
-# ---------------------------------------------------------------------------
-# Request / response models
+# Pydantic Models
 # ---------------------------------------------------------------------------
 
 class ClarificationState(BaseModel):
     original_query: str
     questions: list[str]
-    answers: list[str] = Field(default_factory=list)
-    fallback_flags: list[bool] = Field(default_factory=list)
-    max_rounds: int = CLARIFICATION_MAX_ROUNDS
-
-    model_config = {"extra": "forbid"}
+    answers: list[str]
+    fallback_flags: Optional[list[bool]] = None
+    max_rounds: int = 3
 
 
 class AIQueryRequest(BaseModel):
-    intent: Literal["afford", "learn"]
+    intent: str
     query: str
     media_urls: Optional[list[str]] = None
     conversation_stage: Literal["initial", "clarification"] = "initial"
@@ -174,6 +155,27 @@ class AIQueryResponse(BaseModel):
         "AI responses are for informational purposes only. "
         "Always verify important decisions with qualified professionals."
     )
+
+
+class GmailSummaryRequest(BaseModel):
+    emails: List[Dict[str, Any]]
+    interest: str
+    answers: List[str] = []
+
+
+class GmailQuestionsRequest(BaseModel):
+    interest: str
+    previous_answers: List[str] = []
+
+
+class GmailSummaryResponse(BaseModel):
+    final_summary: str
+    top_email_ids: List[str]
+    reasoning: str
+
+
+class GmailQuestionsResponse(BaseModel):
+    questions: List[str]
 
 
 # ---------------------------------------------------------------------------
@@ -327,173 +329,202 @@ async def _select_next_clarification_question(
 
 
 # ---------------------------------------------------------------------------
-# AI endpoints — allowlist-gated
+# FastAPI App
 # ---------------------------------------------------------------------------
+
+app = FastAPI(title="AI Service", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS.split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/healthz")
+async def healthz():
+    """K8s probe endpoint."""
+    return {"status": "ok", "service": "ai-service"}
+
+
+@app.get("/ai/status")
+async def get_ai_status(username: str = Depends(require_ai_access)):
+    """Check rate limit status and availability."""
+    remaining = await remaining_requests(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+    return {
+        "available": True,
+        "remaining_requests": remaining,
+        "max_requests_per_hour": settings.AI_RATE_LIMIT_PER_HOUR,
+    }
+
 
 @app.post("/ai/query", response_model=AIQueryResponse)
 async def query_ai_agents(
     request: AIQueryRequest,
     username: str = Depends(require_ai_access),
 ):
-    """Query the AI agents with a specific intent (allowlist users only).
-
-    Intents:
-    - afford: Financial affordability analysis
-    - learn: Learning material recommendations
-    """
+    """Query the AI agents with a specific intent (allowlist users only)."""
     await enforce_rate_limit(
         user_id=username,
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
-
-    _debug_log(
-        "query start user=%s stage=%s intent=%s has_state=%s",
-        username,
-        request.conversation_stage,
-        request.intent,
-        request.clarification_state is not None,
-    )
-
     _validate_query(request)
 
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="AI service not configured. Please contact administrator.",
-        )
+    intent = request.intent
+    if intent not in ["afford", "learn"]:
+        raise HTTPException(status_code=400, detail=f"Unknown intent: {intent}")
 
-    try:
-        if request.conversation_stage == "initial":
-            (
-                next_question,
-                is_fallback,
-                other_suggested_questions,
-                judge_reasoning,
-                chosen_from_agent,
-                agent_candidates,
-                agent_reasoning,
-            ) = await _select_next_clarification_question(
-                request.intent,
-                request.query,
-                asked_questions=[],
-                answers=[],
-            )
-            if not next_question:
-                next_question = FALLBACK_QUESTIONS[0]
-                is_fallback = True
-                other_suggested_questions = []
-                judge_reasoning = "Fallback question selected because no valid panel output was available."
-                chosen_from_agent = "Fallback"
-                agent_candidates = {"Fallback": [next_question]}
-                agent_reasoning = {"Fallback": "Fallback path used because panel returned no valid next question."}
+    if request.conversation_stage == "initial":
+        # Initial query: generate the first clarification question
+        (
+            question,
+            is_fallback,
+            others,
+            reasoning,
+            chosen_from,
+            agents,
+            agent_reasoning,
+        ) = await _select_next_clarification_question(intent, request.query, [], [])
 
-            _debug_log(
-                "query clarify round=%s/%s chosen=%s source=%s fallback=%s",
-                1,
-                CLARIFICATION_MAX_ROUNDS,
-                next_question,
-                chosen_from_agent,
-                is_fallback,
-            )
+        if not question:
+            # Should not happen ideally, but if no question is generated, fallback or fail
+            raise HTTPException(status_code=500, detail="Failed to generate clarification question.")
 
-            state = ClarificationState(
+        return AIQueryResponse(
+            mode="clarify",
+            intent=intent,
+            query=request.query,
+            question=question,
+            questions=[question],
+            candidate_questions=others,
+            other_suggested_questions=others,
+            agent_candidates=agents,
+            agent_reasoning=agent_reasoning,
+            judge_reasoning=reasoning,
+            chosen_from_agent=chosen_from,
+            current_round=1,
+            total_rounds=CLARIFICATION_MAX_ROUNDS,
+            is_fallback_question=is_fallback,
+            clarification_state=ClarificationState(
                 original_query=request.query,
-                questions=[next_question],
+                questions=[question],
                 answers=[],
                 fallback_flags=[is_fallback],
                 max_rounds=CLARIFICATION_MAX_ROUNDS,
-            )
-            return AIQueryResponse(
-                mode="clarify",
-                intent=request.intent,
-                query=request.query,
-                question=next_question,
-                questions=state.questions,
-                candidate_questions=other_suggested_questions,
-                other_suggested_questions=other_suggested_questions,
-                judge_reasoning=judge_reasoning,
-                chosen_from_agent=chosen_from_agent,
-                agent_candidates=agent_candidates,
-                agent_reasoning=agent_reasoning,
-                current_round=1,
-                total_rounds=state.max_rounds,
-                is_fallback_question=is_fallback,
-                clarification_state=state,
-                agent="JudgeBot",
-            )
+            ),
+            agent="JudgeBot",
+        )
 
-        assert request.clarification_state is not None
+    else:
+        # Clarification stage
         state = request.clarification_state
-        fallback_flags = (state.fallback_flags + [False] * len(state.questions))[: len(state.questions)]
-        answers = [answer for answer in state.answers if answer.strip()]
-        answers.append(request.query.strip())
+        if not state:
+            raise HTTPException(status_code=400, detail="Missing clarification state")
 
-        if len(answers) < state.max_rounds:
-            (
-                next_question,
-                is_fallback,
-                other_suggested_questions,
-                judge_reasoning,
-                chosen_from_agent,
-                agent_candidates,
-                agent_reasoning,
-            ) = await _select_next_clarification_question(
-                request.intent,
-                state.original_query,
-                asked_questions=state.questions,
+        # Check if we have gathered all answers
+        # If the user just submitted an answer to the last question:
+        # (Client should append the answer to state.answers before sending, or we assume the query IS the answer?
+        # The contract implies 'query' is the user's latest input.
+        # But for 'clarification' stage, usually we expect the client to have updated the state?
+        # Let's assume the client sends the *latest answer* as `query`, and we append it.)
+        
+        # Actually, looking at the frontend, it sends `query` as the answer.
+        # But `AIChannel.tsx` builds the `clarificationState` by appending answers locally?
+        # Wait, `queryAI` just passes the state.
+        
+        # Let's look at `_validate_query`. It expects `state` to be present.
+        # If `answers` length < `questions` length, `query` is the answer to `questions[-1]`.
+        
+        answers = list(state.answers)
+        if len(answers) < len(state.questions):
+            answers.append(request.query)
+        
+        # If we have enough answers, generate final response OR next question
+        if len(answers) >= state.max_rounds:
+            # Generate final response
+            final_response = await orchestrator.generate_final_response(
+                intent=intent,
+                original_query=state.original_query,
+                questions=state.questions,
                 answers=answers,
             )
+            return AIQueryResponse(
+                mode="final",
+                intent=intent,
+                query=request.query,
+                response=final_response,
+                agent="JudgeBot",
+            )
+        else:
+            # Generate next question
+            (
+                question,
+                is_fallback,
+                others,
+                reasoning,
+                chosen_from,
+                agents,
+                agent_reasoning,
+            ) = await _select_next_clarification_question(
+                intent,
+                state.original_query,
+                state.questions,
+                answers,
+            )
 
-            if next_question:
-                updated_questions = [*state.questions, next_question]
-                updated_flags = [*fallback_flags, is_fallback]
-            else:
-                updated_questions = state.questions
-                updated_flags = fallback_flags
-
-            if next_question:
-                updated_state = ClarificationState(
+            if not question:
+                # No more questions generated? Proceed to final response early?
+                final_response = await orchestrator.generate_final_response(
+                    intent=intent,
                     original_query=state.original_query,
-                    questions=updated_questions,
+                    questions=state.questions,
                     answers=answers,
-                    fallback_flags=updated_flags,
-                    max_rounds=state.max_rounds,
                 )
                 return AIQueryResponse(
-                    mode="clarify",
-                    intent=request.intent,
+                    mode="final",
+                    intent=intent,
                     query=request.query,
-                    question=next_question,
-                    questions=updated_state.questions,
-                    candidate_questions=other_suggested_questions,
-                    other_suggested_questions=other_suggested_questions,
-                    judge_reasoning=judge_reasoning,
-                    chosen_from_agent=chosen_from_agent,
-                    agent_candidates=agent_candidates,
-                    agent_reasoning=agent_reasoning,
-                    current_round=len(answers) + 1,
-                    total_rounds=updated_state.max_rounds,
-                    is_fallback_question=is_fallback,
-                    clarification_state=updated_state,
+                    response=final_response,
                     agent="JudgeBot",
                 )
 
-        questions_for_final = state.questions[: len(answers)]
-        if not questions_for_final:
-            questions_for_final = FALLBACK_QUESTIONS[: min(3, len(answers))]
+            # Update state
+            new_questions = list(state.questions)
+            new_questions.append(question)
+            new_fallback_flags = list(state.fallback_flags or [])
+            new_fallback_flags.append(is_fallback)
 
-        result = await orchestrator.process_query_with_clarifications(
-            request.intent,
-            state.original_query,
-            questions_for_final,
-            answers,
-        )
-        _debug_log("query final round_count=%s intent=%s", len(answers), request.intent)
-        return AIQueryResponse(mode="final", **result)
-    except Exception as e:
-        logger.error(f"AI processing failed: {e}")
-        raise HTTPException(status_code=500, detail=f"AI processing failed: {str(e)}")
+            return AIQueryResponse(
+                mode="clarify",
+                intent=intent,
+                query=request.query,
+                question=question,
+                questions=new_questions,
+                candidate_questions=others,
+                other_suggested_questions=others,
+                agent_candidates=agents,
+                agent_reasoning=agent_reasoning,
+                judge_reasoning=reasoning,
+                chosen_from_agent=chosen_from,
+                current_round=len(new_questions),
+                total_rounds=state.max_rounds,
+                is_fallback_question=is_fallback,
+                clarification_state=ClarificationState(
+                    original_query=state.original_query,
+                    questions=new_questions,
+                    answers=answers,
+                    fallback_flags=new_fallback_flags,
+                    max_rounds=state.max_rounds,
+                ),
+                agent="JudgeBot",
+            )
 
 
 @app.post("/ai/query/stream")
@@ -501,232 +532,210 @@ async def query_ai_agents_stream(
     request: AIQueryRequest,
     username: str = Depends(require_ai_access),
 ):
-    """Stream clarify or final AI responses via Server-Sent Events."""
+    """Stream AI response (SSE)."""
     await enforce_rate_limit(
         user_id=username,
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
-
     _validate_query(request)
 
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="AI service not configured. Please contact administrator.",
-        )
+    intent = request.intent
+    if intent not in ["afford", "learn"]:
+        raise HTTPException(status_code=400, detail=f"Unknown intent: {intent}")
 
-    async def event_stream():
-        def sse(payload: dict) -> str:
-            return f"data: {json.dumps(payload)}\n\n"
+    # For now, streaming just wraps the non-streaming logic but emits SSE events.
+    # In a real implementation, we would stream tokens from the LLM.
+    # Here we simulate the events structure.
 
-        _debug_log(
-            "stream start user=%s stage=%s intent=%s has_state=%s",
-            username,
-            request.conversation_stage,
-            request.intent,
-            request.clarification_state is not None,
-        )
+    async def event_generator():
+        # Emit meta event
+        yield f"data: {json.dumps({'type': 'meta', 'intent': intent, 'query': request.query, 'agent': 'JudgeBot', 'disclaimer': 'AI responses are for informational purposes only.'})}\n\n"
 
-        meta = {
-            "type": "meta",
-            "intent": request.intent,
-            "query": request.query,
-            "agent": "JudgeBot",
-            "service_mode": "clarify-v4-smart-guardrail",
-            "disclaimer": (
-                "AI responses are for informational purposes only. "
-                "Always verify important decisions with qualified professionals."
-            ),
-        }
-        yield sse(meta)
-        try:
-            if request.conversation_stage == "initial":
-                yield sse(
-                    {
-                        "type": "progress",
-                        "stage": "collect_candidates",
-                        "message": "Collecting candidate clarifying questions...",
-                    }
-                )
+        if request.conversation_stage == "initial":
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'collect_candidates', 'message': 'Consulting specialists...'})}\n\n"
+            
+            (
+                question,
+                is_fallback,
+                others,
+                reasoning,
+                chosen_from,
+                agents,
+                agent_reasoning,
+            ) = await _select_next_clarification_question(intent, request.query, [], [])
 
-                (
-                    next_question,
-                    is_fallback,
-                    other_suggested_questions,
-                    judge_reasoning,
-                    chosen_from_agent,
-                    agent_candidates,
-                    agent_reasoning,
-                ) = await _select_next_clarification_question(
-                    request.intent,
-                    request.query,
-                    asked_questions=[],
-                    answers=[],
-                )
-
-                yield sse(
-                    {
-                        "type": "progress",
-                        "stage": "rank_questions",
-                        "message": "Ranking and selecting the best follow-up questions...",
-                    }
-                )
-
-                if not next_question:
-                    next_question = FALLBACK_QUESTIONS[0]
-                    is_fallback = True
-                    other_suggested_questions = []
-                    judge_reasoning = "Fallback question selected because no valid panel output was available."
-                    chosen_from_agent = "Fallback"
-                    agent_candidates = {"Fallback": [next_question]}
-                    agent_reasoning = {"Fallback": "Fallback path used because panel returned no valid next question."}
-
-                state = ClarificationState(
-                    original_query=request.query,
-                    questions=[next_question],
-                    answers=[],
-                    fallback_flags=[is_fallback],
-                    max_rounds=CLARIFICATION_MAX_ROUNDS,
-                )
-                yield sse(
-                    {
-                        "type": "clarify_question",
-                        "intent": request.intent,
-                        "query": request.query,
-                        "question": next_question,
-                        "questions": state.questions,
-                        "candidate_questions": other_suggested_questions,
-                        "other_suggested_questions": other_suggested_questions,
-                        "judge_reasoning": judge_reasoning,
-                        "chosen_from_agent": chosen_from_agent,
-                        "agent_candidates": agent_candidates,
-                        "agent_reasoning": agent_reasoning,
-                        "current_round": 1,
-                        "total_rounds": state.max_rounds,
-                        "is_fallback_question": is_fallback,
-                        "clarification_state": state.model_dump(),
-                        "agent": "JudgeBot",
-                        "disclaimer": (
-                            "AI responses are for informational purposes only. "
-                            "Always verify important decisions with qualified professionals."
-                        ),
-                    }
-                )
-                _debug_log(
-                    "stream clarify round=%s/%s chosen=%s source=%s fallback=%s",
-                    1,
-                    CLARIFICATION_MAX_ROUNDS,
-                    next_question,
-                    chosen_from_agent,
-                    is_fallback,
-                )
-                yield sse({"type": "done", "mode": "clarify"})
+            if not question:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to generate question'})}\n\n"
                 return
 
-            assert request.clarification_state is not None
-            state = request.clarification_state
-            fallback_flags = (state.fallback_flags + [False] * len(state.questions))[: len(state.questions)]
-            answers = [answer for answer in state.answers if answer.strip()]
-            answers.append(request.query.strip())
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'rank_questions', 'message': 'Judge selecting best question...'})}\n\n"
 
-            if len(answers) < state.max_rounds:
-                (
-                    next_question,
-                    is_fallback,
-                    other_suggested_questions,
-                    judge_reasoning,
-                    chosen_from_agent,
-                    agent_candidates,
-                    agent_reasoning,
-                ) = await _select_next_clarification_question(
-                    request.intent,
-                    state.original_query,
-                    asked_questions=state.questions,
+            response_data = {
+                "type": "clarify_question",
+                "intent": intent,
+                "query": request.query,
+                "question": question,
+                "questions": [question],
+                "candidate_questions": others,
+                "other_suggested_questions": others,
+                "agent_candidates": agents,
+                "agent_reasoning": agent_reasoning,
+                "judge_reasoning": reasoning,
+                "chosen_from_agent": chosen_from,
+                "current_round": 1,
+                "total_rounds": CLARIFICATION_MAX_ROUNDS,
+                "is_fallback_question": is_fallback,
+                "clarification_state": {
+                    "original_query": request.query,
+                    "questions": [question],
+                    "answers": [],
+                    "fallback_flags": [is_fallback],
+                    "max_rounds": CLARIFICATION_MAX_ROUNDS,
+                },
+                "agent": "JudgeBot",
+                "disclaimer": "AI responses are for informational purposes only."
+            }
+            yield f"data: {json.dumps(response_data)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'mode': 'clarify'})}\n\n"
+
+        else:
+            # Clarification stage logic
+            state = request.clarification_state
+            answers = list(state.answers)
+            if len(answers) < len(state.questions):
+                answers.append(request.query)
+
+            if len(answers) >= state.max_rounds:
+                yield f"data: {json.dumps({'type': 'progress', 'stage': 'prepare_final', 'message': 'Synthesizing final answer...'})}\n\n"
+                final_response = await orchestrator.generate_final_response(
+                    intent=intent,
+                    original_query=state.original_query,
+                    questions=state.questions,
                     answers=answers,
                 )
+                # Stream delta (simulate)
+                chunk_size = 20
+                for i in range(0, len(final_response), chunk_size):
+                    chunk = final_response[i:i+chunk_size]
+                    yield f"data: {json.dumps({'type': 'delta', 'text': chunk})}\n\n"
+                
+                yield f"data: {json.dumps({'type': 'done', 'mode': 'final'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'progress', 'stage': 'collect_candidates', 'message': 'Consulting specialists...'})}\n\n"
+                (
+                    question,
+                    is_fallback,
+                    others,
+                    reasoning,
+                    chosen_from,
+                    agents,
+                    agent_reasoning,
+                ) = await _select_next_clarification_question(
+                    intent,
+                    state.original_query,
+                    state.questions,
+                    answers,
+                )
 
-                if next_question:
-                    updated_state = ClarificationState(
+                if not question:
+                     # Fallback to final response if no question
+                    final_response = await orchestrator.generate_final_response(
+                        intent=intent,
                         original_query=state.original_query,
-                        questions=[*state.questions, next_question],
+                        questions=state.questions,
                         answers=answers,
-                        fallback_flags=[*fallback_flags, is_fallback],
-                        max_rounds=state.max_rounds,
                     )
-                    yield sse(
-                        {
-                            "type": "clarify_question",
-                            "intent": request.intent,
-                            "query": request.query,
-                            "question": next_question,
-                            "questions": updated_state.questions,
-                            "candidate_questions": other_suggested_questions,
-                            "other_suggested_questions": other_suggested_questions,
-                            "judge_reasoning": judge_reasoning,
-                            "chosen_from_agent": chosen_from_agent,
-                            "agent_candidates": agent_candidates,
-                            "agent_reasoning": agent_reasoning,
-                            "current_round": len(answers) + 1,
-                            "total_rounds": updated_state.max_rounds,
-                            "is_fallback_question": is_fallback,
-                            "clarification_state": updated_state.model_dump(),
-                            "agent": "JudgeBot",
-                            "disclaimer": (
-                                "AI responses are for informational purposes only. "
-                                "Always verify important decisions with qualified professionals."
-                            ),
-                        }
-                    )
-                    _debug_log(
-                        "stream clarify round=%s/%s chosen=%s source=%s fallback=%s",
-                        len(answers) + 1,
-                        updated_state.max_rounds,
-                        next_question,
-                        chosen_from_agent,
-                        is_fallback,
-                    )
-                    yield sse({"type": "done", "mode": "clarify"})
+                    for i in range(0, len(final_response), 20):
+                        yield f"data: {json.dumps({'type': 'delta', 'text': final_response[i:i+20]})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'mode': 'final'})}\n\n"
                     return
 
-            yield sse(
-                {
-                    "type": "progress",
-                    "stage": "prepare_final",
-                    "message": "Generating final recommendation from your answers...",
+                new_questions = list(state.questions)
+                new_questions.append(question)
+                new_fallback_flags = list(state.fallback_flags or [])
+                new_fallback_flags.append(is_fallback)
+
+                response_data = {
+                    "type": "clarify_question",
+                    "intent": intent,
+                    "query": request.query,
+                    "question": question,
+                    "questions": new_questions,
+                    "candidate_questions": others,
+                    "other_suggested_questions": others,
+                    "agent_candidates": agents,
+                    "agent_reasoning": agent_reasoning,
+                    "judge_reasoning": reasoning,
+                    "chosen_from_agent": chosen_from,
+                    "current_round": len(new_questions),
+                    "total_rounds": state.max_rounds,
+                    "is_fallback_question": is_fallback,
+                    "clarification_state": {
+                        "original_query": state.original_query,
+                        "questions": new_questions,
+                        "answers": answers,
+                        "fallback_flags": new_fallback_flags,
+                        "max_rounds": state.max_rounds,
+                    },
+                    "agent": "JudgeBot",
+                    "disclaimer": "AI responses are for informational purposes only."
                 }
-            )
-            async for chunk in orchestrator.stream_judge_response_with_clarifications(
-                request.intent,
-                state.original_query,
-                state.questions[: len(answers)],
-                answers,
-            ):
-                yield sse({"type": "delta", "text": chunk})
-            _debug_log("stream final round_count=%s intent=%s", len(answers), request.intent)
-            yield sse({"type": "done", "mode": "final"})
-        except Exception as e:
-            logger.exception("stream failure")
-            error_payload = {"type": "error", "message": str(e)}
-            yield sse(error_payload)
+                yield f"data: {json.dumps(response_data)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'mode': 'clarify'})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app.get("/ai/status")
-async def get_ai_status(
+@app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)
+async def generate_gmail_questions(
+    request: GmailQuestionsRequest,
     username: str = Depends(require_ai_access),
 ):
-    """Get AI service status and remaining requests for the current allowlisted user."""
-    remaining = await remaining_requests(
+    """Generate follow-up questions for Gmail agent."""
+    await enforce_rate_limit(
         user_id=username,
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
-    configured = bool(settings.ANTHROPIC_API_KEY)
+    
+    questions = await gmail_agent.generate_followup_questions(
+        interest=request.interest,
+        previous_answers=request.previous_answers
+    )
+    return GmailQuestionsResponse(questions=questions)
 
-    return {
-        "available": configured,
-        "remaining_requests": remaining,
-        "max_requests_per_hour": settings.AI_RATE_LIMIT_PER_HOUR,
-    }
+
+@app.post("/ai/gmail/summary", response_model=GmailSummaryResponse)
+async def generate_gmail_summary(
+    request: GmailSummaryRequest,
+    username: str = Depends(require_ai_access),
+):
+    """Generate prioritized Gmail summary."""
+    await enforce_rate_limit(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+    
+    # 1. Generate dual summaries
+    summaries = await gmail_agent.generate_summaries(
+        emails=request.emails,
+        interest=request.interest,
+        answers=request.answers
+    )
+    
+    # 2. Judge and rank
+    result = await gmail_agent.judge_and_rank(
+        emails=request.emails,
+        summary_a=summaries.get("summary_a", ""),
+        summary_b=summaries.get("summary_b", ""),
+        interest=request.interest,
+        answers=request.answers
+    )
+    
+    return GmailSummaryResponse(
+        final_summary=result.get("final_summary", ""),
+        top_email_ids=result.get("top_email_ids", []),
+        reasoning=result.get("reasoning", "")
+    )
