@@ -41,6 +41,7 @@ export function BoundingBoxCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
+  const [fabricReady, setFabricReady] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(
     null,
@@ -52,18 +53,40 @@ export function BoundingBoxCanvas({
     height: number
   } | null>(null)
 
+  const debug =
+    import.meta.env.DEV ||
+    (typeof window !== 'undefined' &&
+      window.localStorage.getItem('debug') === '1')
+
   // Load Fabric.js dynamically (client-side only)
   useEffect(() => {
-    if (typeof window !== 'undefined' && !fabric) {
-      import('fabric').then((module: any) => {
-        fabric = module.fabric || module
-      })
+    if (typeof window === 'undefined') {
+      return
     }
-  }, [])
+    if (fabric) {
+      setFabricReady(true)
+      if (debug) {
+        console.info('[BoundingBoxCanvas] Fabric.js already loaded')
+      }
+      return
+    }
+
+    import('fabric')
+      .then((module: any) => {
+        fabric = module.fabric || module
+        setFabricReady(true)
+        if (debug) {
+          console.info('[BoundingBoxCanvas] Fabric.js loaded')
+        }
+      })
+      .catch((error) => {
+        console.error('[BoundingBoxCanvas] Failed to load Fabric.js', error)
+      })
+  }, [debug])
 
   // Initialize canvas
   useEffect(() => {
-    if (!canvasRef.current || !fabric) return
+    if (!canvasRef.current || !fabricReady || !fabric) return
 
     const canvas = new fabric.Canvas(canvasRef.current, {
       selection: tool === 'select',
@@ -108,45 +131,108 @@ export function BoundingBoxCanvas({
       canvas.dispose()
       fabricRef.current = null
     }
-  }, [fabric, tool])
+  }, [fabricReady])
 
   // Load background image
   useEffect(() => {
-    if (!fabricRef.current || !imageUrl || !fabric) return
+    if (!fabricRef.current || !imageUrl || !fabricReady || !fabric) {
+      if (!imageUrl && debug) {
+        console.warn('[BoundingBoxCanvas] Missing image URL')
+      }
+      return
+    }
 
     const canvas = fabricRef.current
+    setImageLoaded(false)
 
-    fabric.Image.fromURL(
-      imageUrl,
-      (img: any) => {
-        if (!img) return
+    let crossOrigin: string | undefined
+    if (typeof window !== 'undefined') {
+      try {
+        const imageOrigin = new URL(imageUrl, window.location.origin).origin
+        crossOrigin = imageOrigin !== window.location.origin ? 'anonymous' : undefined
+      } catch {
+        crossOrigin = undefined
+      }
+    }
 
-        // Set canvas size based on image
-        const maxWidth = containerRef.current?.clientWidth || 800
-        const maxHeight = containerRef.current?.clientHeight || 600
+    const options = crossOrigin ? { crossOrigin } : undefined
 
-        const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1)
+    if (debug) {
+      console.info('[BoundingBoxCanvas] Loading image', { imageUrl, crossOrigin })
+    }
 
-        const scaledWidth = img.width * scale
-        const scaledHeight = img.height * scale
+    const htmlImage = new Image()
+    if (crossOrigin) {
+      htmlImage.crossOrigin = crossOrigin
+    }
 
-        canvas.setWidth(scaledWidth)
-        canvas.setHeight(scaledHeight)
-        setImageSize({ width: scaledWidth, height: scaledHeight })
+    htmlImage.onload = () => {
+      const fabricImage = new fabric.Image(htmlImage, {
+        selectable: false,
+        evented: false,
+      })
 
-        img.set({
-          selectable: false,
-          evented: false,
-          scaleX: scale,
-          scaleY: scale,
+      if (debug) {
+        console.info('[BoundingBoxCanvas] Image loaded', {
+          width: fabricImage.width,
+          height: fabricImage.height,
         })
+      }
 
-        canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas))
-        setImageLoaded(true)
-      },
-      { crossOrigin: 'anonymous' },
-    )
-  }, [imageUrl, fabric])
+      if (!fabricImage.width || !fabricImage.height) {
+        if (debug) {
+          console.warn('[BoundingBoxCanvas] Image has invalid dimensions', {
+            width: fabricImage.width,
+            height: fabricImage.height,
+          })
+        }
+        return
+      }
+
+      // Set canvas size based on image
+      const maxWidth = containerRef.current?.clientWidth || 800
+      const maxHeight = containerRef.current?.clientHeight || 600
+
+      const scale = Math.min(
+        maxWidth / fabricImage.width,
+        maxHeight / fabricImage.height,
+        1,
+      )
+
+      const scaledWidth = fabricImage.width * scale
+      const scaledHeight = fabricImage.height * scale
+
+      canvas.setWidth(scaledWidth)
+      canvas.setHeight(scaledHeight)
+      setImageSize({ width: scaledWidth, height: scaledHeight })
+
+      fabricImage.set({
+        scaleX: scale,
+        scaleY: scale,
+      })
+
+      if (typeof canvas.setBackgroundImage === 'function') {
+        canvas.setBackgroundImage(fabricImage, canvas.renderAll.bind(canvas))
+      } else {
+        canvas.set('backgroundImage', fabricImage)
+        canvas.renderAll()
+      }
+      setImageLoaded(true)
+    }
+
+    htmlImage.onerror = (event) => {
+      if (debug) {
+        console.error('[BoundingBoxCanvas] Image load error', { imageUrl, event })
+      }
+    }
+
+    htmlImage.src = imageUrl
+
+    return () => {
+      htmlImage.onload = null
+      htmlImage.onerror = null
+    }
+  }, [imageUrl, fabricReady, debug])
 
   // Apply zoom
   useEffect(() => {
@@ -228,6 +314,13 @@ export function BoundingBoxCanvas({
       const canvas = fabricRef.current
       const pointer = canvas.getPointer(e.nativeEvent)
 
+      if (debug) {
+        console.info('[BoundingBoxCanvas] Start draw', {
+          x: pointer.x,
+          y: pointer.y,
+        })
+      }
+
       setIsDrawing(true)
       setDrawStart({ x: pointer.x, y: pointer.y })
 
@@ -288,9 +381,22 @@ export function BoundingBoxCanvas({
 
       // Only create annotation if the rectangle is large enough
       if (width > 10 && height > 10) {
+        if (debug) {
+          console.info('[BoundingBoxCanvas] Create annotation', {
+            x: left,
+            y: top,
+            width,
+            height,
+          })
+        }
         onCreateAnnotation({
           x: left,
           y: top,
+          width,
+          height,
+        })
+      } else if (debug) {
+        console.info('[BoundingBoxCanvas] Ignored tiny selection', {
           width,
           height,
         })

@@ -2,12 +2,17 @@
 
 ### Requirement: Interactive Document Annotation Modal
 
-The system SHALL display an interactive popup modal when a user uploads an image file (PNG, JPG, or PDF image) in a data-processor channel, presenting the uploaded document alongside annotation tools.
+The system SHALL display an interactive popup modal when a user uploads an image file (PNG, JPG) or PDF in a data-processor channel, presenting the uploaded document (first page for PDFs) alongside annotation tools.
 
 #### Scenario: User uploads image to data-processor channel
 
 - **WHEN** a user uploads an image file to a channel marked as data-processor type
 - **THEN** the system displays a fullscreen modal with the document image and annotation toolbar
+
+#### Scenario: User uploads PDF to data-processor channel
+
+- **WHEN** a user uploads a PDF to a channel marked as data-processor type
+- **THEN** the system renders page 1 in the modal and indicates additional pages are not yet available in MVP
 
 #### Scenario: User uploads non-image file to data-processor channel
 

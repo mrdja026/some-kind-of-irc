@@ -141,6 +141,16 @@
 - [x] 15.3 Add user guide for annotation tools
 - [x] 15.4 Document template creation best practices
 
+## 16. PDF Parsing Support
+
+- [x] 16.1 Add PDF dependencies (pdf2image, pdfplumber, poppler) to data-processor build
+- [x] 16.2 Create PDF extraction service for first-page rasterization and text-layer capture
+- [x] 16.3 Extend document storage model with file type, page count, and pdf text layer
+- [x] 16.4 Update document upload endpoint to accept PDFs and store page 1 metadata
+- [x] 16.5 Update annotation modal to render PDF page 1 with page-count indicator
+- [x] 16.6 Include pdf text layer + page count in export payloads
+- [x] 16.7 Add tests for PDF ingestion and text-layer extraction
+
 ## Notes
 
 - **Known Issue (Local Setup)**: The #data-processor channel does not appear because the feature flag defaults to disabled; set `FEATURE_DATA_PROCESSOR=true` to create it on startup.

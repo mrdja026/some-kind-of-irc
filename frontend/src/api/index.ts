@@ -373,10 +373,17 @@ export const getChannelMembers = async (
     credentials: 'include',
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to get channel members' }));
+    const error = await response
+      .json()
+      .catch(() => ({ detail: 'Failed to get channel members' }));
+    if (response.status === 403) {
+      console.warn('Channel members unavailable:', error.detail || response.statusText);
+      return [];
+    }
     throw new Error(error.detail || 'Failed to get channel members');
   }
-  return response.json();
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
 };
 
 export const addUserToChannel = async (

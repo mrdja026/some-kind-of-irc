@@ -12,6 +12,7 @@ Provides views for:
 import logging
 import mimetypes
 import uuid
+from pathlib import Path
 
 import boto3
 from botocore.client import Config
@@ -54,6 +55,13 @@ try:
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
+
+# Import PDF extraction service
+try:
+    from services.pdf_extractor import extract_pdf_first_page
+    PDF_EXTRACTION_AVAILABLE = True
+except ImportError:
+    PDF_EXTRACTION_AVAILABLE = False
 
 # Import template matching service
 try:
@@ -144,24 +152,65 @@ class DocumentListCreateView(APIView):
         
         data = serializer.validated_data
         
-        # Get image file
-        image_file = data.get("image")
-        if not image_file:
+        # Get uploaded file (image or PDF)
+        uploaded_file = data.get("image")
+        if not uploaded_file:
             return Response(
-                {"error": "No image file provided"},
+                {"error": "No document file provided"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Read image data
-        image_data = image_file.read()
-        content_type = image_file.content_type or mimetypes.guess_type(image_file.name)[0] or "application/octet-stream"
-        
-        # Persist to MinIO (no in-memory image retention)
+        # Read file data
+        file_bytes = uploaded_file.read()
+        content_type = (
+            uploaded_file.content_type
+            or mimetypes.guess_type(uploaded_file.name)[0]
+            or "application/octet-stream"
+        )
+        original_filename = uploaded_file.name
+        file_type = "pdf" if content_type == "application/pdf" or original_filename.lower().endswith(".pdf") else "image"
+        pdf_text_layer = None
+        page_count = 1
+        image_data = file_bytes
+        preview_filename = original_filename
+        width = 0
+        height = 0
+
+        if file_type == "pdf":
+            if not PDF_EXTRACTION_AVAILABLE:
+                return Response(
+                    {"error": "PDF processing dependencies are not available"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            try:
+                pdf_result = extract_pdf_first_page(file_bytes)
+            except Exception as exc:
+                logger.warning("Failed to extract PDF page: %s", exc)
+                return Response(
+                    {"error": "Failed to extract PDF content"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            image_data = pdf_result.image_bytes
+            page_count = pdf_result.page_count
+            pdf_text_layer = pdf_result.text_layer
+            width = pdf_result.width
+            height = pdf_result.height
+            preview_filename = f"{Path(original_filename).stem}-page1.png"
+            content_type = "image/png"
+        elif OCR_AVAILABLE:
+            try:
+                image = load_image_from_bytes(image_data)
+                height, width = image.shape[:2]
+            except Exception as exc:
+                logger.warning("Failed to read image dimensions: %s", exc)
+
+        # Persist preview image to MinIO
         document_id = str(uuid.uuid4())
         image_url = upload_image_to_minio(
             data.get("uploaded_by", ""),
             document_id=document_id,
-            filename=image_file.name,
+            filename=preview_filename,
             content=image_data,
             content_type=content_type,
         )
@@ -170,10 +219,15 @@ class DocumentListCreateView(APIView):
             id=document_id,
             channel_id=data["channel_id"],
             uploaded_by=data.get("uploaded_by", ""),
-            original_filename=image_file.name,
+            original_filename=original_filename,
+            file_type=file_type,
+            page_count=page_count,
+            pdf_text_layer=pdf_text_layer,
             image_url=image_url,
-            image_data=None,
+            image_data=image_data,
             preprocessed_data=None,
+            width=width,
+            height=height,
             ocr_status=OcrStatus.PENDING,
         )
         
@@ -680,6 +734,8 @@ class DocumentExportView(APIView):
             "source_filename": document.original_filename,
             "processed_at": document.updated_at.isoformat() if document.updated_at else None,
             "template_id": document.template_id,
+            "page_count": document.page_count,
+            "pdf_text_layer": document.pdf_text_layer,
             "fields": fields,
             "raw_ocr_text": document.raw_ocr_text,
         }

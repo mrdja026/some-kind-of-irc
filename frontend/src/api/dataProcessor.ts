@@ -57,9 +57,10 @@ export const DATA_PROCESSOR_URL = `${DATA_PROCESSOR_BASE_URL}/data-processor`;
 
 export type DocumentUploadResponse = {
   id: string;
-  filename: string;
-  status: string;
-  message: string;
+  filename?: string;
+  original_filename?: string;
+  status?: string;
+  message?: string;
 };
 
 /**
@@ -91,7 +92,7 @@ export const uploadDocument = async (
  * Get document details and OCR results.
  */
 export const getDocument = async (documentId: string): Promise<Document> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/`, {
     credentials: 'include',
   });
 
@@ -107,7 +108,7 @@ export const getDocument = async (documentId: string): Promise<Document> => {
  * Delete a document.
  */
 export const deleteDocument = async (documentId: string): Promise<void> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/`, {
     method: 'DELETE',
     credentials: 'include',
   });
@@ -264,7 +265,14 @@ export const listTemplates = async (channelId?: string | number): Promise<Templa
     throw new Error(error.detail || 'Failed to list templates');
   }
 
-  return response.json();
+  const data = await response.json();
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && Array.isArray(data.templates)) {
+    return data.templates;
+  }
+  return [];
 };
 
 export type CreateTemplateRequest = {
@@ -302,7 +310,7 @@ export const createTemplate = async (template: CreateTemplateRequest): Promise<T
  * Get template details.
  */
 export const getTemplate = async (templateId: string): Promise<Template> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     credentials: 'include',
   });
 
@@ -318,7 +326,7 @@ export const getTemplate = async (templateId: string): Promise<Template> => {
  * Delete a template.
  */
 export const deleteTemplate = async (templateId: string): Promise<void> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     method: 'DELETE',
     credentials: 'include',
   });
@@ -342,7 +350,7 @@ export const updateTemplate = async (
   templateId: string,
   updates: UpdateTemplateRequest
 ): Promise<Template> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

@@ -32,14 +32,18 @@ The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring
 #### 🐧 Linux (Recommended)
 1. **Run**: Start the full stack with Docker Compose.
    ```bash
-   AI_API_SERVICE_KEY=your_key ./deploy-local.sh
+   AI_API_SERVICE_KEY=your_key ./deploy-local.sh --build
    ```
    - Set `AI_API_SERVICE_KEY` to enable #ai.
    - Frontend: http://localhost:4269
    - Backend: http://localhost:8002
    - MinIO Console: http://localhost:9001
 
-#### 🪟 Windows
+#### Debug Logs (Frontend)
+- Enable client debug logs by visiting any route with `?debug=1` (stored in `localStorage`).
+- Disable with `?debug=0`.
+
+#### 🪟 Windows 25.02.2026 out of sync, need to check, working on linux since its easier
 1. **Setup**: Install dependencies (data-processor disabled).
    ```bash
    pixi run setup-windows
@@ -72,9 +76,12 @@ The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring
 - `audit-logger/` - Activity logging
 - `openspec/` - Specifications and change proposals
 - `scripts/` - Helper scripts for local execution
+
 ## MAJOR TODOs
-- Migrate to SQL * whatever
+- Migrate to SQL * whatever - PRIORITY Too many transient entities that should be persistent. eg data/procesor/storage/in-memory.py
 - Data procesor works after upload
+- minio buckets must makes sense 
+- data-processor: replace in-memory store with Redis/DB + progress tracking
 - Agents rewrite
     - Total context collapse fragile LLMs no embedings ect
 ---

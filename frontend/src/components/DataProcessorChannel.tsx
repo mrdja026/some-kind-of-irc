@@ -77,10 +77,11 @@ export function DataProcessorChannel({
       return uploadDocument(file, channelId)
     },
     onSuccess: (data) => {
+      const resolvedFilename = data.filename || data.original_filename || 'Document'
       // Add to local document list
       const newDoc: LocalDocument = {
         id: data.id,
-        filename: data.filename,
+        filename: resolvedFilename,
         status: 'pending',
         created_at: new Date().toISOString(),
       }
@@ -118,9 +119,15 @@ export function DataProcessorChannel({
     if (!file) return
 
     // Validate file type
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+    const validTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'application/pdf',
+    ]
     if (!validTypes.includes(file.type)) {
-      setUploadError('Please upload a valid image file (JPEG, PNG, or WebP)')
+      setUploadError('Please upload a valid image or PDF file (JPEG, PNG, WebP, or PDF)')
       return
     }
 
@@ -193,7 +200,7 @@ export function DataProcessorChannel({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/jpg,image/png,image/webp"
+            accept="image/jpeg,image/jpg,image/png,image/webp,application/pdf"
             onChange={handleFileChange}
             className="hidden"
           />
@@ -213,7 +220,7 @@ export function DataProcessorChannel({
             <FileImage size={64} className="chat-meta mb-4" />
             <h3 className="text-lg font-medium mb-2">No documents yet</h3>
             <p className="chat-meta mb-4 max-w-md">
-              Upload an image document to start annotating regions of interest
+              Upload an image or PDF to start annotating regions of interest
               and extracting structured data.
             </p>
             <button

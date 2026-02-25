@@ -19,6 +19,10 @@
   @media path /media/*
   reverse_proxy @media media-storage:9101
 
+  handle_path /minio/* {
+    reverse_proxy minio:9000
+  }
+
   # Data processor service (document OCR and annotation)
   handle_path /data-processor/healthz {
     rewrite * /healthz

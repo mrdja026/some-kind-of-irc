@@ -58,6 +58,10 @@ class AdminAllowlistMiddleware:
         if request.path == "/healthz" or request.path == "/healthz/":
             return self.get_response(request)
 
+        # Allow CORS preflight requests
+        if request.method == "OPTIONS":
+            return self.get_response(request)
+
         testing_header = request.headers.get(TESTING_HEADER_KEY)
         if testing_header == TESTING_HEADER_VALUE:
             request.admin_username = "testing-header"

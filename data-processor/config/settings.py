@@ -69,8 +69,13 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # Database - not used for MVP (in-memory storage)
-# Keeping minimal config to satisfy Django requirements
-DATABASES = {}
+# Provide a lightweight default so Django test harness can run.
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": os.getenv("DATA_PROCESSOR_DB", ":memory:"),
+    }
+}
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

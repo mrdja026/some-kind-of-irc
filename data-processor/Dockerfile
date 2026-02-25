@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     gcc \
     g++ \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -35,4 +36,4 @@ USER appuser
 EXPOSE 8003
 
 # Run gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8003", "--workers", "2", "--timeout", "120", "config.wsgi:application"]
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:8003 --workers ${GUNICORN_WORKERS:-1} --timeout 120 config.wsgi:application"]

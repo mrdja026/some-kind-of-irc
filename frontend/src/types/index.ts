@@ -333,6 +333,9 @@ export type Document = {
   channel_id: string;
   uploaded_by: string;
   original_filename: string;
+  file_type?: 'image' | 'pdf';
+  page_count?: number;
+  pdf_text_layer?: unknown;
   image_url?: string;
   width?: number;
   height?: number;

@@ -13,8 +13,9 @@ backend/src/services/__pycache__
 screenshots/
 backend/*.db
 irc-minimal/
-data-processor/api/__pycache__/
-data-processor/test/__pycache__/
+data-processor/**/__pycache__/
+data-processor/**/__pycache__/*.pyc
+data-processor/.pytest_cache/
 media-storage/minio.exe
 media-storage/mc.exe
 media-storage/data/

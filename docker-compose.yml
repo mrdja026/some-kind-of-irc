@@ -105,7 +105,7 @@ services:
       dockerfile: Dockerfile
     environment:
       MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}"
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-http://localhost:8080/minio}"
       MINIO_BUCKET: "${MINIO_BUCKET:-media}"
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
@@ -124,13 +124,14 @@ services:
     environment:
       DEBUG: "${DEBUG:-false}"
       ALLOWED_HOSTS: "*"
-      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269,http://localhost:8080,http://127.0.0.1:8080}"
       MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
-      MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}"
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-http://localhost:8080/minio}"
       MINIO_BUCKET: "${MINIO_BUCKET:-media}"
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
     ports:
       - "8003:8003"
     depends_on:

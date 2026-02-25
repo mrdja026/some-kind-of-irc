@@ -86,6 +86,11 @@ export function DocumentAnnotationModal({
     queryFn: () => listTemplates(channelId),
   })
 
+  const debug =
+    import.meta.env.DEV ||
+    (typeof window !== 'undefined' &&
+      window.localStorage.getItem('debug') === '1')
+
   // Update annotations when document loads
   useEffect(() => {
     if (document?.annotations) {
@@ -94,7 +99,17 @@ export function DocumentAnnotationModal({
     if (document?.ocr_result?.extracted_text) {
       setExtractedText(document.ocr_result.extracted_text)
     }
-  }, [document])
+    if (debug && document) {
+      console.info('[DocumentAnnotationModal] Loaded document', {
+        id: document.id,
+        imageUrl: document.image_url,
+        fileType: document.file_type,
+      })
+      if (!document.image_url) {
+        console.warn('[DocumentAnnotationModal] Missing image URL', document.id)
+      }
+    }
+  }, [document, debug])
 
   // Process OCR mutation
   const processMutation = useMutation({
@@ -218,7 +233,14 @@ export function DocumentAnnotationModal({
       {/* Modal Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-700">
         <div className="flex items-center gap-4">
-          <h2 className="text-white font-semibold">{filename}</h2>
+          <div className="flex flex-col">
+            <h2 className="text-white font-semibold">{filename}</h2>
+            {document?.file_type === 'pdf' && (
+              <span className="text-xs text-gray-400">
+                Page 1 of {document.page_count || 1}
+              </span>
+            )}
+          </div>
           {ocrProgress && (
             <div className="flex items-center gap-2 text-sm">
               <Loader2 size={14} className="animate-spin text-blue-400" />

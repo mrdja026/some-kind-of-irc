@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import { useEffect, useMemo } from 'react'
+import { HeadContent, Scripts, createRootRoute, useRouterState } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
@@ -55,6 +55,46 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       }),
     [],
   )
+
+  const locationSearch = useRouterState({
+    select: (state) => state.location.searchStr ?? state.location.search,
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    let debugValue: string | null = null
+
+    if (typeof locationSearch === 'string') {
+      const params = new URLSearchParams(locationSearch)
+      if (params.has('debug')) {
+        debugValue = params.get('debug')
+      }
+    } else if (locationSearch && typeof locationSearch === 'object') {
+      const value = (locationSearch as Record<string, unknown>).debug
+      if (value !== undefined && value !== null) {
+        debugValue = String(value)
+      }
+    }
+
+    if (debugValue === null) {
+      return
+    }
+
+    const normalized = debugValue.toLowerCase()
+    const enableValues = new Set(['1', 'true', 'on', 'yes'])
+    const disableValues = new Set(['0', 'false', 'off', 'no'])
+
+    if (enableValues.has(normalized)) {
+      window.localStorage.setItem('debug', '1')
+    }
+
+    if (disableValues.has(normalized)) {
+      window.localStorage.removeItem('debug')
+    }
+  }, [locationSearch])
 
   return (
     <html lang="en">
