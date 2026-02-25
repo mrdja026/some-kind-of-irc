@@ -396,17 +396,18 @@ export function AIChannel({
           setGeneratedPdfUrl(url)
           
           // Send final result as chat message
-          setResponses(prev => [...prev, {
-             id: Date.now() + 2,
-             intent: 'gmail',
-             query: '',
-             response: result.final_summary,
-             agent: 'Gmail Agent',
-             disclaimer: result.reasoning,
-             mode: 'agent_message' as any,
-             emails: result.top_email_ids.map(id => gmailEmails.find(e => e.message_id === id)),
-             pdfUrl: url
-          }])
+           setResponses(prev => [...prev, {
+              id: Date.now() + 2,
+              intent: 'gmail',
+              query: '',
+              response: result.final_summary,
+              agent: 'Gmail Agent',
+              disclaimer: '',
+              mode: 'agent_message' as any,
+              emails: result.top_email_ids.map(id => gmailEmails.find(e => e.message_id === id)),
+              pdfUrl: url
+           }])
+
           
           setStreamProgress(null)
           setActiveQuestion(null)
@@ -860,9 +861,11 @@ export function AIChannel({
                     </div>
                   )}
                 </div>
-                <div className="mt-2 md:mt-3 text-xs text-amber-700/70 italic">
-                  {response.disclaimer}
-                </div>
+                {response.disclaimer && (
+                  <div className="mt-2 md:mt-3 text-xs text-amber-700/70 italic">
+                    {response.disclaimer}
+                  </div>
+                )}
               </div>
             </div>
           </div>

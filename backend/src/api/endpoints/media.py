@@ -82,6 +82,8 @@ def generate_pdf(request: Request, body: PdfGenerateRequest):
         return response.json()
 
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
 

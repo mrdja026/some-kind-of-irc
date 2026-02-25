@@ -59,6 +59,7 @@ The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring
 
 ### Known Issues (TODOs)
 - **Frontend**: Currently not working reliably; UI/hydration issues remain.
+- **Frontend (TD)**: Handle Gmail dates as UTC+0 with Temporal UI.
 - **Windows Support**: Data processor is disabled on Windows builds.
 - **Stability**: Channel join bugs and UI consistency.
 
@@ -71,6 +72,10 @@ The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring
 - `audit-logger/` - Activity logging
 - `openspec/` - Specifications and change proposals
 - `scripts/` - Helper scripts for local execution
-
+## MAJOR TODOs
+- Migrate to SQL * whatever
+- Data procesor works after upload
+- Agents rewrite
+    - Total context collapse fragile LLMs no embedings ect
 ---
 *Powered by OpenSpec*

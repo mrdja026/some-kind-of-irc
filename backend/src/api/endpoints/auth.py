@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import logging
 from urllib.parse import urlencode
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -25,6 +26,8 @@ from src.services.gmail_service import fetch_latest_emails
 from src.services.irc_logger import log_nick_user
 from src.services.event_publisher import publish_user_registered
 from src.services.game_service import GameService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -454,9 +457,10 @@ async def get_gmail_messages(
         emails = await fetch_latest_emails(db, user_id)
         return {"emails": emails}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+        logger.exception("Failed to fetch Gmail messages")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 @router.post("/auth_game", response_model=AuthGameResponse)

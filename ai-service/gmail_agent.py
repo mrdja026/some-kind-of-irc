@@ -3,13 +3,13 @@ import logging
 from typing import List, Dict, Any, Optional
 import os
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 logger = logging.getLogger(__name__)
 
 class GmailAgent:
     def __init__(self, api_key: str):
-        self.client = Anthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key)
         self.model = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
 
     def _clean_and_parse_json(self, text: str) -> Any:
@@ -24,16 +24,32 @@ class GmailAgent:
             text = text.split("```")[1].split("```")[0]
         
         text = text.strip()
-        
-        # Try cleaning control characters if needed
-        # (Using strict=False in json.loads usually helps, but we can be explicit if needed)
-        
-        return json.loads(text, strict=False)
 
-    def generate_followup_questions(self, interest: str, previous_answers: List[str] = []) -> List[str]:
+        def _try_parse(candidate: str) -> Any:
+            return json.loads(candidate, strict=False)
+
+        try:
+            return _try_parse(text)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+        for start_char, end_char in (("{", "}"), ("[", "]")):
+            start = text.find(start_char)
+            end = text.rfind(end_char)
+            if start != -1 and end != -1 and end > start:
+                candidate = text[start : end + 1]
+                try:
+                    return _try_parse(candidate)
+                except json.JSONDecodeError as exc:
+                    last_error = exc
+
+        raise last_error
+
+    async def generate_followup_questions(self, interest: str, previous_answers: Optional[List[str]] = None) -> List[str]:
         """
         Generate 2 follow-up questions based on the user's interest and previous answers.
         """
+        previous_answers = previous_answers or []
         prompt = f"""You are an intelligent assistant helping a user filter their Gmail inbox.
         The user's primary interest is: "{interest}".
         
@@ -46,7 +62,7 @@ class GmailAgent:
         """
 
         try:
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model=self.model,
                 max_tokens=200,
                 temperature=0.5,
@@ -62,7 +78,7 @@ class GmailAgent:
                 "Are you looking for newsletters, personal updates, or transactional emails?"
             ]
 
-    def generate_summaries(self, emails: List[Dict[str, Any]], interest: str, answers: List[str]) -> Dict[str, str]:
+    async def generate_summaries(self, emails: List[Dict[str, Any]], interest: str, answers: List[str]) -> Dict[str, str]:
         """
         Generate two distinct summaries (Action-focused vs. Insight-focused).
         """
@@ -87,7 +103,7 @@ class GmailAgent:
         """
 
         try:
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model=self.model,
                 max_tokens=1500,
                 temperature=0.5,
@@ -102,7 +118,7 @@ class GmailAgent:
                 "summary_b": "Error generating insight summary."
             }
 
-    def judge_and_rank(self, emails: List[Dict[str, Any]], summary_a: str, summary_b: str, interest: str, answers: List[str]) -> Dict[str, Any]:
+    async def judge_and_rank(self, emails: List[Dict[str, Any]], summary_a: str, summary_b: str, interest: str, answers: List[str]) -> Dict[str, Any]:
         """
         Judge the two summaries and the emails to produce a final report.
         """
@@ -130,7 +146,7 @@ class GmailAgent:
         """
 
         try:
-            message = self.client.messages.create(
+            message = await self.client.messages.create(
                 model=self.model,
                 max_tokens=1000,
                 temperature=0.3,

@@ -699,7 +699,7 @@ async def generate_gmail_questions(
         window_seconds=3600,
     )
     
-    questions = gmail_agent.generate_followup_questions(
+    questions = await gmail_agent.generate_followup_questions(
         interest=request.interest,
         previous_answers=request.previous_answers
     )
@@ -719,14 +719,14 @@ async def generate_gmail_summary(
     )
     
     # 1. Generate dual summaries
-    summaries = gmail_agent.generate_summaries(
+    summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
         interest=request.interest,
         answers=request.answers
     )
     
     # 2. Judge and rank
-    result = gmail_agent.judge_and_rank(
+    result = await gmail_agent.judge_and_rank(
         emails=request.emails,
         summary_a=summaries.get("summary_a", ""),
         summary_b=summaries.get("summary_b", ""),
