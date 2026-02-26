@@ -194,6 +194,10 @@ class AnnotationIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        super().setUp()
+        # Add testing header for authentication
+        self.client.defaults[HTTP_TESTING_HEADER_KEY] = TESTING_HEADER_VALUE
+
         self.channel_id = "test-channel-123"
         self.test_image_data = self._create_test_image_bytes()
 

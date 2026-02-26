@@ -41,6 +41,9 @@ export function BoundingBoxCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<any>(null)
+  const annotationsRef = useRef(annotations)
+  const onSelectAnnotationRef = useRef(onSelectAnnotation)
+  const onUpdateAnnotationRef = useRef(onUpdateAnnotation)
   const [fabricReady, setFabricReady] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(
@@ -57,6 +60,18 @@ export function BoundingBoxCanvas({
     import.meta.env.DEV ||
     (typeof window !== 'undefined' &&
       window.localStorage.getItem('debug') === '1')
+
+  useEffect(() => {
+    annotationsRef.current = annotations
+  }, [annotations])
+
+  useEffect(() => {
+    onSelectAnnotationRef.current = onSelectAnnotation
+  }, [onSelectAnnotation])
+
+  useEffect(() => {
+    onUpdateAnnotationRef.current = onUpdateAnnotation
+  }, [onUpdateAnnotation])
 
   // Load Fabric.js dynamically (client-side only)
   useEffect(() => {
@@ -98,15 +113,17 @@ export function BoundingBoxCanvas({
     canvas.on('selection:created', (e: any) => {
       const obj = e.selected?.[0]
       if (obj?.annotationId) {
-        const annotation = annotations.find((a) => a.id === obj.annotationId)
+        const annotation = annotationsRef.current.find(
+          (a) => a.id === obj.annotationId,
+        )
         if (annotation) {
-          onSelectAnnotation(annotation)
+          onSelectAnnotationRef.current(annotation)
         }
       }
     })
 
     canvas.on('selection:cleared', () => {
-      onSelectAnnotation(null)
+      onSelectAnnotationRef.current(null)
     })
 
     // Handle object modification
@@ -115,7 +132,7 @@ export function BoundingBoxCanvas({
       if (obj?.annotationId) {
         const scaleX = obj.scaleX || 1
         const scaleY = obj.scaleY || 1
-        onUpdateAnnotation(obj.annotationId, {
+        onUpdateAnnotationRef.current(obj.annotationId, {
           x: obj.left,
           y: obj.top,
           width: obj.width * scaleX,

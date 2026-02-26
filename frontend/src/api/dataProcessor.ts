@@ -113,7 +113,14 @@ export const listDocuments = async (
     throw new Error(error.detail || 'Failed to list documents');
   }
 
-  return response.json();
+  const data = await response.json();
+  if (Array.isArray(data)) {
+    return { documents: data, count: data.length };
+  }
+  if (data && typeof data === 'object' && Array.isArray(data.documents)) {
+    return data as DocumentListResponse;
+  }
+  return { documents: [], count: 0 };
 };
 
 /**
