@@ -242,10 +242,11 @@ export const updateAnnotation = async (
 ): Promise<Annotation> => {
   const payload = { ...updates };
   if (updates.bounding_box) {
-    payload.bounding_box = {
-      ...updates.bounding_box,
-      rotation: updates.bounding_box.rotation ?? 0,
-    };
+    const boundingBox = { ...updates.bounding_box };
+    if (!('rotation' in updates.bounding_box) || updates.bounding_box.rotation === undefined) {
+      delete (boundingBox as any).rotation;
+    }
+    payload.bounding_box = boundingBox;
   }
 
   const response = await fetch(

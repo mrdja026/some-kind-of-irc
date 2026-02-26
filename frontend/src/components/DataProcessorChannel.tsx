@@ -57,7 +57,13 @@ export function DataProcessorChannel({
   const [isBatchDashboardOpen, setIsBatchDashboardOpen] = useState(false)
 
   // Fetch documents for this channel
-  const { data: documentsResponse, isLoading: isLoadingDocuments } = useQuery({
+  const {
+    data: documentsResponse,
+    isLoading: isLoadingDocuments,
+    isError: isDocumentsError,
+    error: documentsError,
+    refetch: refetchDocuments,
+  } = useQuery({
     queryKey: ['documents', channelId],
     queryFn: () => listDocuments(channelId),
   })
@@ -72,17 +78,15 @@ export function DataProcessorChannel({
 
   const navigateToDocument = useCallback(
     (documentId: string) => {
-      try {
-        navigate({
-          to: '/data-processing/$channelId/$documentId',
-          params: {
-            channelId: String(channelId),
-            documentId,
-          },
-        })
-      } catch {
+      navigate({
+        to: '/data-processing/$channelId/$documentId',
+        params: {
+          channelId: String(channelId),
+          documentId,
+        },
+      }).catch(() => {
         window.location.assign(`/data-processing/${channelId}/${documentId}`)
-      }
+      })
     },
     [channelId, navigate],
   )
@@ -222,6 +226,23 @@ export function DataProcessorChannel({
         {isLoadingDocuments ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 size={48} className="animate-spin text-gray-500" />
+          </div>
+        ) : isDocumentsError ? (
+          <div className="flex flex-col items-center justify-center h-full text-center gap-3">
+            <div className="text-red-600 font-semibold">
+              Failed to load documents.
+            </div>
+            {documentsError instanceof Error ? (
+              <div className="text-sm text-gray-500 max-w-md">
+                {documentsError.message}
+              </div>
+            ) : null}
+            <button
+              onClick={() => refetchDocuments()}
+              className="px-4 py-2 rounded-lg chat-send-button min-h-[44px]"
+            >
+              Retry
+            </button>
           </div>
         ) : documents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
