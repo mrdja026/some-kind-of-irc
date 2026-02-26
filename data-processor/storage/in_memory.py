@@ -117,6 +117,9 @@ class Document:
     channel_id: str = ""
     uploaded_by: str = ""
     original_filename: str = ""
+    file_type: str = "image"  # image or pdf
+    page_count: int = 1
+    pdf_text_layer: Optional[List[Dict[str, Any]]] = None
     image_url: Optional[str] = None  # MinIO URL
     image_data: Optional[bytes] = None  # In-memory image storage
     preprocessed_data: Optional[bytes] = None
@@ -140,6 +143,10 @@ class Document:
             "channel_id": self.channel_id,
             "uploaded_by": self.uploaded_by,
             "original_filename": self.original_filename,
+            "filename": self.original_filename,
+            "file_type": self.file_type,
+            "page_count": self.page_count,
+            "pdf_text_layer": self.pdf_text_layer,
             "image_url": self.image_url,
             "thumbnail_url": self.thumbnail_url,
             "width": self.width,

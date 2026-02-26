@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Link, useNavigate, redirect } from '@tanstack/react-router'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query'
@@ -49,6 +49,18 @@ import { ImagePopup } from '../components/ImagePopup'
 
 export const Route = createFileRoute('/chat')({
   ssr: true, // Full SSR - render components on server
+  validateSearch: (search: Record<string, unknown>) => {
+    const channelIdValue =
+      typeof search.channelId === 'number' || typeof search.channelId === 'string'
+        ? Number(search.channelId)
+        : NaN
+
+    if (Number.isInteger(channelIdValue) && channelIdValue > 0) {
+      return { channelId: channelIdValue }
+    }
+
+    return {}
+  },
   loader: async () => {
     try {
       // Fetch initial data server-side
@@ -262,8 +274,9 @@ function ChatPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const loaderData = Route.useLoaderData()
+  const search = Route.useSearch()
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(
-    loaderData.defaultChannelId,
+    search.channelId ?? loaderData.defaultChannelId,
   )
   const [messageInput, setMessageInput] = useState('')
   const [dmUserIdInput, setDmUserIdInput] = useState('')
@@ -295,6 +308,23 @@ function ChatPage() {
   const [profileUser, setProfileUser] = useState<User | null>(null)
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState(false)
   const [selectedImageMessage, setSelectedImageMessage] = useState<Message | null>(null)
+
+  const setActiveChannel = useCallback(
+    (channelId: number) => {
+      setSelectedChannelId(channelId)
+      navigate({
+        to: '/chat',
+        search: { channelId },
+      })
+    },
+    [navigate],
+  )
+
+  useEffect(() => {
+    if (search.channelId && search.channelId !== selectedChannelId) {
+      setSelectedChannelId(search.channelId)
+    }
+  }, [search.channelId, selectedChannelId])
 
   // Get current user - hydrate from loader data
   const {
@@ -571,7 +601,7 @@ function ChatPage() {
 
   // Handle channel selection
   const handleChannelSelect = async (channel: Channel) => {
-    setSelectedChannelId(channel.id)
+    setActiveChannel(channel.id)
     if (channel.name === '#ai') {
       setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
     }
@@ -592,7 +622,7 @@ function ChatPage() {
       const channel = await createDirectMessageChannel(userId)
       setDmUserIdInput('')
       await refetchDirectMessages()
-      setSelectedChannelId(channel.id)
+      setActiveChannel(channel.id)
     } catch (error) {
       console.error('Failed to create DM channel:', error)
     }
@@ -621,7 +651,7 @@ function ChatPage() {
       setIsDataProcessorChannel(false)
       setShowCreateChannel(false)
       await refetchChannels()
-      setSelectedChannelId(channel.id)
+      setActiveChannel(channel.id)
       // Auto-join the channel
       try {
         await joinChannel(channel.id)
@@ -659,7 +689,7 @@ function ChatPage() {
     if (contextMenu) {
       try {
         const channel = await createDirectMessageChannel(contextMenu.user.id)
-        setSelectedChannelId(channel.id)
+        setActiveChannel(channel.id)
         await refetchDirectMessages()
       } catch (error) {
         console.error('Failed to create DM:', error)
@@ -783,7 +813,7 @@ function ChatPage() {
                 if (channel.name === '#ai') {
                   setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
                 }
-                setSelectedChannelId(channel.id) // Join the channel
+                setActiveChannel(channel.id) // Join the channel
               } else {
                 console.error('Channel not found')
               }

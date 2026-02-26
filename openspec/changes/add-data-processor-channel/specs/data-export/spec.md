@@ -2,7 +2,7 @@
 
 ### Requirement: JSON Export Format
 
-The system SHALL export labeled regions and extracted text as normalized JSON optimized for AI/ML processing pipelines.
+The system SHALL export labeled regions and extracted text as normalized JSON optimized for AI/ML processing pipelines, including PDF text-layer metadata when available.
 
 #### Scenario: User exports document as JSON
 
@@ -12,7 +12,12 @@ The system SHALL export labeled regions and extracted text as normalized JSON op
 #### Scenario: JSON schema structure
 
 - **WHEN** JSON export is generated
-- **THEN** the output follows a consistent schema with `document_id`, `source_filename`, `processed_at`, `template_id`, `fields` array, `raw_ocr_text`, and `metadata` object
+- **THEN** the output follows a consistent schema with `document_id`, `source_filename`, `processed_at`, `template_id`, `fields` array, `raw_ocr_text`, `pdf_text_layer`, `page_count`, and `metadata` object
+
+#### Scenario: PDF text layer in JSON
+
+- **WHEN** a processed document originated from a PDF with selectable text
+- **THEN** the JSON export includes the page 1 text layer in `pdf_text_layer` and the full `page_count`
 
 #### Scenario: Field data in JSON
 

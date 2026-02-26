@@ -66,6 +66,11 @@ The system SHALL apply selected template label configurations to new documents, 
 - **WHEN** a template is applied to a document with different aspect ratio
 - **THEN** bounding boxes are scaled proportionally and users are notified of potential misalignment
 
+#### Scenario: Template applied to all PDF pages
+
+- **WHEN** multi-page PDF support is enabled and a template is applied to a PDF document
+- **THEN** the same template labels apply to every page by default
+
 ### Requirement: Feature Matching for Template Alignment
 
 The system SHALL use ORB feature matching with RANSAC homography to intelligently adjust template bounding boxes for minor layout variations.

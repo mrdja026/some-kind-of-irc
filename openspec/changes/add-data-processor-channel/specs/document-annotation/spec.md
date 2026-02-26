@@ -1,27 +1,37 @@
 ## ADDED Requirements
 
-### Requirement: Interactive Document Annotation Modal
+### Requirement: Interactive Document Annotation Workspace Route
 
-The system SHALL display an interactive popup modal when a user uploads an image file (PNG, JPG, or PDF image) in a data-processor channel, presenting the uploaded document alongside annotation tools.
+The system SHALL navigate users to a dedicated annotation workspace route when they upload an image file (PNG, JPG) or PDF in a data-processor channel, presenting the uploaded document (first page for PDFs) alongside annotation tools.
 
 #### Scenario: User uploads image to data-processor channel
 
 - **WHEN** a user uploads an image file to a channel marked as data-processor type
-- **THEN** the system displays a fullscreen modal with the document image and annotation toolbar
+- **THEN** the system redirects to `/data-processing/{channelId}/{documentId}` and displays a fullscreen annotation workspace with the document image and annotation toolbar
+
+#### Scenario: User uploads PDF to data-processor channel
+
+- **WHEN** a user uploads a PDF to a channel marked as data-processor type
+- **THEN** the system redirects to `/data-processing/{channelId}/{documentId}`, renders page 1 in the workspace, and indicates additional pages are not yet available in MVP
 
 #### Scenario: User uploads non-image file to data-processor channel
 
 - **WHEN** a user uploads a non-image file (e.g., .txt, .doc) to a data-processor channel
-- **THEN** the system handles the upload as a regular file without triggering the annotation modal
+- **THEN** the system handles the upload as a regular file without redirecting to the annotation workspace route
 
-#### Scenario: Modal closes without saving
+#### Scenario: User exits workspace without saving
 
-- **WHEN** a user closes the annotation modal without explicitly saving
-- **THEN** the system prompts for confirmation and discards unsaved annotations if confirmed
+- **WHEN** a user closes the annotation workspace without explicitly saving
+- **THEN** the system returns to chat for the same channel and unsaved local edits are discarded
+
+#### Scenario: Invalid channel-document route access
+
+- **WHEN** a user opens `/data-processing/{channelId}/{documentId}` where the document does not belong to the channel or the channel is not a data-processor channel
+- **THEN** the system blocks editing and offers navigation back to chat
 
 ### Requirement: Document Viewer Controls
 
-The system SHALL provide pan and zoom controls for navigating large document images within the annotation modal.
+The system SHALL provide pan and zoom controls for navigating large document images within the annotation workspace.
 
 #### Scenario: User zooms document
 
@@ -101,7 +111,7 @@ The system SHALL persist annotations in-memory during the document session and a
 
 #### Scenario: User saves annotations
 
-- **WHEN** a user clicks "Save" in the annotation modal
+- **WHEN** a user clicks "Save" in the annotation workspace
 - **THEN** all annotations are saved to the data-processor service's in-memory storage
 
 #### Scenario: User reopens saved document
@@ -121,4 +131,4 @@ The system SHALL allow channel creators to designate a channel as a data-process
 #### Scenario: User uploads to regular channel
 
 - **WHEN** a user uploads an image to a regular (non-data-processor) channel
-- **THEN** the image is uploaded as a standard media attachment without triggering the annotation modal
+- **THEN** the image is uploaded as a standard media attachment without redirecting to the annotation workspace route

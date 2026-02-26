@@ -52,6 +52,25 @@ The system SHALL enforce maximum image dimensions of 1024x1024 pixels, automatic
 - **WHEN** an image is automatically resized
 - **THEN** the system includes original and new dimensions in the response metadata
 
+### Requirement: PDF Ingestion and Text Layer Extraction
+
+The system SHALL accept PDF uploads, extract the first page for processing, and capture the PDF text layer when available.
+
+#### Scenario: PDF first-page rasterization
+
+- **WHEN** a user uploads a PDF document
+- **THEN** the system reads the PDF page count and rasterizes page 1 to an image within the 1024x1024 size limit
+
+#### Scenario: PDF text layer extraction
+
+- **WHEN** the uploaded PDF contains selectable text on page 1
+- **THEN** the system extracts the text layer and stores it in the document metadata for downstream export
+
+#### Scenario: PDF without text layer
+
+- **WHEN** the uploaded PDF has no selectable text on page 1
+- **THEN** the system records an empty text layer and proceeds with OCR on the rasterized image
+
 ### Requirement: Optical Character Recognition
 
 The system SHALL perform OCR text extraction using Tesseract on preprocessed document images.
@@ -129,8 +148,8 @@ The system SHALL expose OCR processing capabilities via Django REST Framework en
 
 #### Scenario: Document upload endpoint
 
-- **WHEN** a client sends POST /api/documents/ with image data
-- **THEN** the service stores the image in-memory and begins preprocessing/OCR pipeline
+- **WHEN** a client sends POST /api/documents/ with image or PDF data
+- **THEN** the service stores the first-page image in-memory (rasterized if PDF) and begins preprocessing/OCR pipeline
 
 #### Scenario: Processing status endpoint
 

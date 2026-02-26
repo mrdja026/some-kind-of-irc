@@ -25,9 +25,10 @@ Default venv name is be if not present ask for permission to create it. When run
 # When cannot find plans try first /openspec folder in working repository 
 
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
+or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path 
 
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
-
+or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 <!-- OPENSPEC:END -->
 
 

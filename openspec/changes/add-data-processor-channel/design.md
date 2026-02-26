@@ -20,6 +20,7 @@ The data-processor channel introduces document annotation and OCR extraction cap
 - OpenCV and Tesseract must run in Docker container environment
 - Template matching must handle minor document variations without manual adjustment
 - Maximum image dimensions: 1024x1024 pixels
+- PDF parsing limited to first page in MVP
 
 ## Goals / Non-Goals
 
@@ -33,7 +34,7 @@ The data-processor channel introduces document annotation and OCR extraction cap
 
 ### Non-Goals
 
-- Full PDF parsing (only image-based extraction)
+- Full multi-page PDF processing (MVP parses first page only)
 - Training custom OCR models (use pre-trained Tesseract)
 - Real-time collaborative annotation editing (single user per document session)
 - Mobile-optimized annotation interface (desktop-first)
@@ -133,7 +134,20 @@ data-processor/
 - Celery + Redis: Overkill for MVP; adds operational complexity
 - Serverless functions: Cold start latency unacceptable for interactive use
 
-### D3: Image Preprocessing Pipeline
+### D3: PDF Ingestion and Text Layer Extraction
+
+**Decision**: Use PDF text-layer extraction plus first-page rasterization before OCR.
+
+**Rationale**: PDF files can contain selectable text that is more accurate than OCR. Extracting the text layer first improves quality, while rasterizing only the first page keeps MVP scope manageable and leaves room to extend to multi-page parsing later.
+
+**Pipeline Stages**:
+
+1. Read PDF metadata and total page count
+2. Extract the text layer for page 1 (if present) and store it in the document metadata
+3. Rasterize page 1 to an image within the 1024x1024 limit
+4. Continue through the existing image preprocessing pipeline and OCR
+
+### D4: Image Preprocessing Pipeline
 
 **Decision**: Implement three-stage preprocessing with configurable parameters.
 
@@ -154,7 +168,7 @@ class PreprocessingConfig(BaseModel):
     deskew_max_angle: float = 15.0  # degrees
 ```
 
-### D4: Template Matching Algorithm
+### D5: Template Matching Algorithm
 
 **Decision**: Use ORB (Oriented FAST and Rotated BRIEF) feature matching with RANSAC homography estimation.
 
@@ -169,9 +183,11 @@ class PreprocessingConfig(BaseModel):
 5. Transform template bounding boxes to target coordinates
 6. Validate transformed boxes (area ratio, aspect ratio checks)
 
+**PDF Page Scope**: Template application targets page 1 in MVP; when multi-page support is enabled, the same template applies to all pages by default.
+
 **Fallback Strategy**: If feature matching confidence < 60%, prompt user for manual anchor point selection.
 
-### D5: Data Model Design (In-Memory for MVP)
+### D6: Data Model Design (In-Memory for MVP)
 
 **Decision**: Use in-memory data structures for MVP with clear interfaces for future database migration.
 
@@ -227,7 +243,10 @@ class Document:
     channel_id: str = ""
     uploaded_by: str = ""
     original_filename: str = ""
-    image_data: bytes = b""  # In-memory image storage
+    file_type: str = "image"  # image or pdf
+    page_count: int = 1
+    pdf_text_layer: Optional[Dict] = None  # text layer for page 1 when available
+    image_data: bytes = b""  # In-memory image storage (page 1 raster)
     preprocessed_data: Optional[bytes] = None
     ocr_status: OcrStatus = OcrStatus.PENDING
     ocr_result: Optional[Dict] = None
@@ -294,7 +313,7 @@ class DocumentStore:
 
 **Future Migration Path**: When moving to persistent storage, replace `DocumentStore` with Django models while keeping the same dataclass interfaces for serializers.
 
-### D6: Export Format Specifications
+### D7: Export Format Specifications
 
 **Decision**: Support three export formats with consistent field mapping.
 
@@ -306,6 +325,7 @@ class DocumentStore:
   "source_filename": "invoice_001.png",
   "processed_at": "2026-01-26T12:00:00Z",
   "template_id": "uuid or null",
+  "page_count": 1,
   "fields": [
     {
       "name": "invoice_number",
@@ -317,6 +337,9 @@ class DocumentStore:
     }
   ],
   "raw_ocr_text": "Full document text...",
+  "pdf_text_layer": [
+    { "text": "Invoice 001", "page": 1 }
+  ],
   "metadata": {
     "preprocessing_applied": ["noise_reduction", "deskew"],
     "deskew_angle": 2.3,
@@ -329,7 +352,7 @@ class DocumentStore:
 
 **SQL Insert Format**: Parameterized INSERT statements for common databases.
 
-### D7: WebSocket Event Protocol
+### D8: WebSocket Event Protocol
 
 **Decision**: Extend existing WebSocket protocol with document processing events.
 
@@ -429,7 +452,7 @@ interface ExportRequestedEvent {
 ### Phase 3: Frontend Deployment
 
 1. Add DataProcessorChannel component
-2. Wire annotation modal to upload flow
+2. Wire annotation route navigation to upload flow (`/data-processing/{channelId}/{documentId}`)
 3. Add channel type checkbox in channel creation
 4. Rollback: Hide channel type in UI
 

@@ -7,15 +7,18 @@ Tests document upload, processing, annotation, template application, and export 
 import pytest
 import json
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 from rest_framework import status
 
 # Import test subjects
 from storage.in_memory import store, Document, Annotation, Template, OcrStatus, LabelType, BoundingBox
 from api.serializers import DocumentSerializer, AnnotationSerializer, TemplateSerializer
+from middleware.jwt_auth import TESTING_HEADER_KEY, TESTING_HEADER_VALUE
 
 # Mock OCR services for testing
 try:
@@ -35,6 +38,9 @@ class DocumentUploadIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        self.client.defaults[
+            f"HTTP_{TESTING_HEADER_KEY.upper().replace('-', '_')}"
+        ] = TESTING_HEADER_VALUE
         self.channel_id = "test-channel-123"
         self.uploaded_by = "test-user-456"
 
@@ -78,6 +84,42 @@ class DocumentUploadIntegrationTest(APITestCase):
         document = store.get_document(response.data['id'])
         self.assertIsNotNone(document)
         self.assertEqual(document.channel_id, self.channel_id)
+
+    def test_document_upload_pdf_success(self):
+        """Test successful PDF document upload."""
+        url = reverse('document-list-create')
+
+        data = {
+            'channel_id': self.channel_id,
+            'uploaded_by': self.uploaded_by,
+            'image': SimpleUploadedFile(
+                'test_document.pdf',
+                b'%PDF-1.4 test',
+                content_type='application/pdf'
+            )
+        }
+
+        pdf_result = SimpleNamespace(
+            page_count=1,
+            image_bytes=self.test_image_data,
+            width=100,
+            height=100,
+            text_layer=[{'page': 1, 'text': 'Invoice 001'}],
+        )
+
+        with patch('api.views.extract_pdf_first_page', return_value=pdf_result), \
+             patch('api.views.PDF_EXTRACTION_AVAILABLE', True), \
+             patch('api.views.upload_image_to_minio', return_value='http://example.com/preview.png'):
+            response = self.client.post(url, data, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['file_type'], 'pdf')
+        self.assertEqual(response.data['page_count'], 1)
+        self.assertEqual(response.data['pdf_text_layer'][0]['text'], 'Invoice 001')
+
+        document = store.get_document(response.data['id'])
+        self.assertIsNotNone(document)
+        self.assertEqual(document.file_type, 'pdf')
 
     def test_document_upload_missing_image(self):
         """Test document upload fails without image."""
@@ -152,6 +194,10 @@ class AnnotationIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        super().setUp()
+        # Add testing header for authentication
+        self.client.defaults[HTTP_TESTING_HEADER_KEY] = TESTING_HEADER_VALUE
+
         self.channel_id = "test-channel-123"
         self.test_image_data = self._create_test_image_bytes()
 
@@ -271,6 +317,9 @@ class TemplateIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        self.client.defaults[
+            f"HTTP_{TESTING_HEADER_KEY.upper().replace('-', '_')}"
+        ] = TESTING_HEADER_VALUE
         self.channel_id = "test-channel-123"
         self.test_image_data = self._create_test_image_bytes()
 
@@ -396,11 +445,15 @@ class ExportIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        self.client.defaults[
+            f"HTTP_{TESTING_HEADER_KEY.upper().replace('-', '_')}"
+        ] = TESTING_HEADER_VALUE
         self.channel_id = "test-channel-123"
         self.test_image_data = self._create_test_image_bytes()
 
-        # Create test document with annotations
+        # Create test document
         self.document = Document(
+
             channel_id=self.channel_id,
             uploaded_by="test-user",
             original_filename="test.png",
@@ -550,6 +603,11 @@ class ExportIntegrationTest(APITestCase):
 class HealthCheckIntegrationTest(APITestCase):
     """Integration tests for health check endpoint."""
 
+    def setUp(self):
+        self.client.defaults[
+            f"HTTP_{TESTING_HEADER_KEY.upper().replace('-', '_')}"
+        ] = TESTING_HEADER_VALUE
+
     def test_health_check(self):
         """Test health check endpoint."""
         url = reverse('health-check')
@@ -568,6 +626,9 @@ class BatchJobIntegrationTest(APITestCase):
 
     def setUp(self):
         """Set up test data."""
+        self.client.defaults[
+            f"HTTP_{TESTING_HEADER_KEY.upper().replace('-', '_')}"
+        ] = TESTING_HEADER_VALUE
         self.channel_id = "test-channel-123"
 
     def test_create_batch_job(self):

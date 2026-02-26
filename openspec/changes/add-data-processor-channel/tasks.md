@@ -74,16 +74,16 @@
 ## 8. Frontend Components ✅ COMPLETE
 
 - [x] 8.1 Create `frontend/src/components/DataProcessorChannel.tsx` main channel component
-- [x] 8.2 Create `frontend/src/components/DocumentAnnotationModal.tsx` with document viewer
+- [x] 8.2 Create `frontend/src/components/DocumentAnnotationModal.tsx` annotation workspace UI
 - [x] 8.3 Create `frontend/src/components/AnnotationToolbar.tsx` with label type buttons
 - [x] 8.4 Create `frontend/src/components/BoundingBoxCanvas.tsx` using Fabric.js
 - [x] 8.5 Implement pan/zoom controls for document viewing
 - [x] 8.6 Implement color-coded bounding box drawing and manipulation
 - [x] 8.7 Create label panel with type selection (header, table, signature, date, amount, custom)
-- [x] 8.8 Add automatic modal trigger on image upload in data processor channels
+- [x] 8.8 Add automatic redirect to annotation route on image/PDF upload in data processor channels
 - [x] 8.9 Update Channel type to include `is_data_processor` flag
 - [x] 8.10 Create `frontend/src/api/dataProcessor.ts` API client
-- [x] 8.11 Integrate DataProcessorChannel into chat.tsx routing
+- [x] 8.11 Integrate DataProcessorChannel into `chat.tsx` and add `/data-processing/$channelId/$documentId` route
 
 ## 9. Template Management UI ✅ COMPLETE
 
@@ -140,6 +140,16 @@
 - [x] 15.2 Update main project README with data-processor service info
 - [x] 15.3 Add user guide for annotation tools
 - [x] 15.4 Document template creation best practices
+
+## 16. PDF Parsing Support
+
+- [x] 16.1 Add PDF dependencies (pdf2image, pdfplumber, poppler) to data-processor build
+- [x] 16.2 Create PDF extraction service for first-page rasterization and text-layer capture
+- [x] 16.3 Extend document storage model with file type, page count, and pdf text layer
+- [x] 16.4 Update document upload endpoint to accept PDFs and store page 1 metadata
+- [x] 16.5 Update annotation workspace to render PDF page 1 with page-count indicator
+- [x] 16.6 Include pdf text layer + page count in export payloads
+- [x] 16.7 Add tests for PDF ingestion and text-layer extraction
 
 ## Notes
 

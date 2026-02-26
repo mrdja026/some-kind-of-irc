@@ -9,6 +9,8 @@ pytesseract>=0.3.10,<1.0
 numpy>=1.24,<2.0
 scikit-image>=0.21,<1.0
 Pillow>=10.0,<11.0
+pdf2image>=1.16,<2.0
+pdfplumber>=0.11,<0.12
 
 # JWT validation (shared secret with monolith)
 python-jose[cryptography]==3.5.0

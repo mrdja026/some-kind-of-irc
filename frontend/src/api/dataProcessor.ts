@@ -57,9 +57,15 @@ export const DATA_PROCESSOR_URL = `${DATA_PROCESSOR_BASE_URL}/data-processor`;
 
 export type DocumentUploadResponse = {
   id: string;
-  filename: string;
-  status: string;
-  message: string;
+  filename?: string;
+  original_filename?: string;
+  status?: string;
+  message?: string;
+};
+
+export type DocumentListResponse = {
+  documents: Document[];
+  count: number;
 };
 
 /**
@@ -88,10 +94,40 @@ export const uploadDocument = async (
 };
 
 /**
+ * List documents, optionally filtered by channel.
+ */
+export const listDocuments = async (
+  channelId?: string | number
+): Promise<DocumentListResponse> => {
+  const url = new URL(`${DATA_PROCESSOR_URL}/documents/`);
+  if (channelId !== undefined && channelId !== null) {
+    url.searchParams.set('channel_id', String(channelId));
+  }
+
+  const response = await fetch(url.toString(), {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to list documents' }));
+    throw new Error(error.detail || 'Failed to list documents');
+  }
+
+  const data = await response.json();
+  if (Array.isArray(data)) {
+    return { documents: data, count: data.length };
+  }
+  if (data && typeof data === 'object' && Array.isArray(data.documents)) {
+    return data as DocumentListResponse;
+  }
+  return { documents: [], count: 0 };
+};
+
+/**
  * Get document details and OCR results.
  */
 export const getDocument = async (documentId: string): Promise<Document> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/`, {
     credentials: 'include',
   });
 
@@ -107,7 +143,7 @@ export const getDocument = async (documentId: string): Promise<Document> => {
  * Delete a document.
  */
 export const deleteDocument = async (documentId: string): Promise<void> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/`, {
     method: 'DELETE',
     credentials: 'include',
   });
@@ -160,11 +196,13 @@ export type CreateAnnotationRequest = {
   label_type: LabelType;
   label_name: string;
   color?: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
+  bounding_box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation?: number;
+  };
 };
 
 export type UpdateAnnotationRequest = Partial<CreateAnnotationRequest>;
@@ -176,13 +214,21 @@ export const createAnnotation = async (
   documentId: string,
   annotation: CreateAnnotationRequest
 ): Promise<Annotation> => {
+  const payload = {
+    ...annotation,
+    bounding_box: {
+      ...annotation.bounding_box,
+      rotation: annotation.bounding_box.rotation ?? 0,
+    },
+  };
+
   const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/annotations/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify(annotation),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -201,6 +247,15 @@ export const updateAnnotation = async (
   annotationId: string,
   updates: UpdateAnnotationRequest
 ): Promise<Annotation> => {
+  const payload = { ...updates };
+  if (updates.bounding_box) {
+    const boundingBox = { ...updates.bounding_box };
+    if (!('rotation' in updates.bounding_box) || updates.bounding_box.rotation === undefined) {
+      delete (boundingBox as any).rotation;
+    }
+    payload.bounding_box = boundingBox;
+  }
+
   const response = await fetch(
     `${DATA_PROCESSOR_URL}/documents/${documentId}/annotations/${annotationId}/`,
     {
@@ -209,7 +264,7 @@ export const updateAnnotation = async (
         'Content-Type': 'application/json',
       },
       credentials: 'include',
-      body: JSON.stringify(updates),
+      body: JSON.stringify(payload),
     }
   );
 
@@ -264,7 +319,14 @@ export const listTemplates = async (channelId?: string | number): Promise<Templa
     throw new Error(error.detail || 'Failed to list templates');
   }
 
-  return response.json();
+  const data = await response.json();
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && Array.isArray(data.templates)) {
+    return data.templates;
+  }
+  return [];
 };
 
 export type CreateTemplateRequest = {
@@ -302,7 +364,7 @@ export const createTemplate = async (template: CreateTemplateRequest): Promise<T
  * Get template details.
  */
 export const getTemplate = async (templateId: string): Promise<Template> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     credentials: 'include',
   });
 
@@ -318,7 +380,7 @@ export const getTemplate = async (templateId: string): Promise<Template> => {
  * Delete a template.
  */
 export const deleteTemplate = async (templateId: string): Promise<void> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     method: 'DELETE',
     credentials: 'include',
   });
@@ -342,7 +404,7 @@ export const updateTemplate = async (
   templateId: string,
   updates: UpdateTemplateRequest
 ): Promise<Template> => {
-  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}`, {
+  const response = await fetch(`${DATA_PROCESSOR_URL}/templates/${templateId}/`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',

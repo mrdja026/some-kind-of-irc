@@ -9,8 +9,9 @@ The IRC application needs a specialized channel type for document processing wor
 ### New Channel Type
 
 - Add `#data-processor` as a specialized channel type with document processing capabilities
-- Automatic popup modal triggered when users upload image files (PNG, JPG, PDF images)
+- Automatic redirect to `/data-processing/{channelId}/{documentId}` when users upload image files (PNG, JPG) or PDFs (first page preview)
 - Interactive document viewer with pan, zoom, and annotation tools
+- Extract and store the PDF text layer when available
 
 ### Document Annotation System
 
@@ -21,6 +22,7 @@ The IRC application needs a specialized channel type for document processing wor
 
 ### Backend OCR Pipeline (OpenCV)
 
+- PDF ingestion: rasterize first page to image and capture text layer metadata
 - Image preprocessing: noise reduction (Gaussian blur, bilateral filtering)
 - Deskew correction using Hough transform line detection
 - Automatic region detection for common document elements
@@ -54,14 +56,16 @@ The IRC application needs a specialized channel type for document processing wor
 - Affected code:
   - `data-processor/` (new Django REST framework microservice)
   - `data-processor/Dockerfile` (new)
-  - `data-processor/requirements.txt` (django, djangorestframework, opencv-python, pytesseract, numpy, scikit-image)
+  - `data-processor/requirements.txt` (django, djangorestframework, opencv-python, pytesseract, numpy, scikit-image, pdf2image, pdfplumber)
   - `data-processor/api/views.py` (new)
   - `data-processor/services/ocr_pipeline.py` (new)
+  - `data-processor/services/pdf_extractor.py` (new)
   - `data-processor/services/template_matcher.py` (new)
   - `data-processor/models/document.py` (new)
   - `data-processor/models/template.py` (new)
   - `docker-compose.yml` (add data-processor service)
   - `frontend/src/components/DataProcessorChannel.tsx` (new)
+  - `frontend/src/routes/data-processing.$channelId.$documentId.tsx` (new)
   - `frontend/src/components/DocumentAnnotationModal.tsx` (new)
   - `frontend/src/components/AnnotationToolbar.tsx` (new)
   - `frontend/src/hooks/useDocumentProcessor.ts` (new)

@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useCallback, useState, useRef } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Upload,
@@ -15,26 +16,16 @@ import {
 import {
   uploadDocument,
   deleteDocument,
+  listDocuments,
   listTemplates,
 } from '../api/dataProcessor'
-import type { OcrStatus } from '../types'
-import { DocumentAnnotationModal } from './DocumentAnnotationModal'
+import type { Document, OcrStatus } from '../types'
 import { TemplateManager } from './TemplateManager'
 import { BatchStatusDashboard } from './BatchStatusDashboard'
 
 interface DataProcessorChannelProps {
   channelId: number
   channelName: string
-}
-
-// Mock document list for now - in a real implementation this would come from the API
-// The data-processor service stores documents in memory, so we'll track uploads locally
-type LocalDocument = {
-  id: string
-  filename: string
-  status: OcrStatus
-  image_url?: string
-  created_at: string
 }
 
 const STATUS_ICONS: Record<OcrStatus, React.ReactNode> = {
@@ -55,15 +46,29 @@ export function DataProcessorChannel({
   channelId,
   channelName,
 }: DataProcessorChannelProps) {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [documents, setDocuments] = useState<LocalDocument[]>([])
-  const [selectedDocument, setSelectedDocument] =
-    useState<LocalDocument | null>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(
+    null,
+  )
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false)
   const [isBatchDashboardOpen, setIsBatchDashboardOpen] = useState(false)
+
+  // Fetch documents for this channel
+  const {
+    data: documentsResponse,
+    isLoading: isLoadingDocuments,
+    isError: isDocumentsError,
+    error: documentsError,
+    refetch: refetchDocuments,
+  } = useQuery({
+    queryKey: ['documents', channelId],
+    queryFn: () => listDocuments(channelId),
+  })
+
+  const documents = documentsResponse?.documents || []
 
   // Fetch templates for batch processing
   const { data: templates = [] } = useQuery({
@@ -71,25 +76,31 @@ export function DataProcessorChannel({
     queryFn: () => listTemplates(channelId),
   })
 
+  const navigateToDocument = useCallback(
+    (documentId: string) => {
+      navigate({
+        to: '/data-processing/$channelId/$documentId',
+        params: {
+          channelId: String(channelId),
+          documentId,
+        },
+      }).catch(() => {
+        window.location.assign(`/data-processing/${channelId}/${documentId}`)
+      })
+    },
+    [channelId, navigate],
+  )
+
   // Upload mutation
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       return uploadDocument(file, channelId)
     },
     onSuccess: (data) => {
-      // Add to local document list
-      const newDoc: LocalDocument = {
-        id: data.id,
-        filename: data.filename,
-        status: 'pending',
-        created_at: new Date().toISOString(),
-      }
-      setDocuments((prev) => [newDoc, ...prev])
-
-      // Open annotation modal
-      setSelectedDocument(newDoc)
-      setIsModalOpen(true)
+      setSelectedDocumentId(data.id)
       setUploadError(null)
+      void queryClient.invalidateQueries({ queryKey: ['documents', channelId] })
+      navigateToDocument(data.id)
     },
     onError: (error: Error) => {
       setUploadError(error.message)
@@ -102,8 +113,11 @@ export function DataProcessorChannel({
       await deleteDocument(documentId)
       return documentId
     },
-    onSuccess: (documentId) => {
-      setDocuments((prev) => prev.filter((doc) => doc.id !== documentId))
+    onSuccess: async (documentId) => {
+      if (selectedDocumentId === documentId) {
+        setSelectedDocumentId(null)
+      }
+      await queryClient.invalidateQueries({ queryKey: ['documents', channelId] })
     },
   })
 
@@ -118,9 +132,15 @@ export function DataProcessorChannel({
     if (!file) return
 
     // Validate file type
-    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+    const validTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'application/pdf',
+    ]
     if (!validTypes.includes(file.type)) {
-      setUploadError('Please upload a valid image file (JPEG, PNG, or WebP)')
+      setUploadError('Please upload a valid image or PDF file (JPEG, PNG, WebP, or PDF)')
       return
     }
 
@@ -133,20 +153,15 @@ export function DataProcessorChannel({
     uploadMutation.mutate(file)
   }
 
-  const handleViewDocument = (doc: LocalDocument) => {
-    setSelectedDocument(doc)
-    setIsModalOpen(true)
+  const handleViewDocument = (doc: Document) => {
+    setSelectedDocumentId(doc.id)
+    navigateToDocument(doc.id)
   }
 
-  const handleDeleteDocument = (doc: LocalDocument) => {
-    if (confirm(`Delete "${doc.filename}"?`)) {
+  const handleDeleteDocument = (doc: Document) => {
+    if (confirm(`Delete "${doc.original_filename}"?`)) {
       deleteMutation.mutate(doc.id)
     }
-  }
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false)
-    setSelectedDocument(null)
   }
 
   return (
@@ -157,7 +172,7 @@ export function DataProcessorChannel({
           <div>
             <h2 className="text-lg font-semibold">Document Processor</h2>
             <p className="text-sm chat-meta">
-              Upload documents to annotate and extract data
+              Upload documents to annotate and extract data in {channelName}
             </p>
           </div>
           <div className="flex gap-2">
@@ -193,7 +208,7 @@ export function DataProcessorChannel({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/jpg,image/png,image/webp"
+            accept="image/jpeg,image/jpg,image/png,image/webp,application/pdf"
             onChange={handleFileChange}
             className="hidden"
           />
@@ -208,12 +223,33 @@ export function DataProcessorChannel({
 
       {/* Document List */}
       <div className="flex-1 overflow-y-auto p-4">
-        {documents.length === 0 ? (
+        {isLoadingDocuments ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 size={48} className="animate-spin text-gray-500" />
+          </div>
+        ) : isDocumentsError ? (
+          <div className="flex flex-col items-center justify-center h-full text-center gap-3">
+            <div className="text-red-600 font-semibold">
+              Failed to load documents.
+            </div>
+            {documentsError instanceof Error ? (
+              <div className="text-sm text-gray-500 max-w-md">
+                {documentsError.message}
+              </div>
+            ) : null}
+            <button
+              onClick={() => refetchDocuments()}
+              className="px-4 py-2 rounded-lg chat-send-button min-h-[44px]"
+            >
+              Retry
+            </button>
+          </div>
+        ) : documents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <FileImage size={64} className="chat-meta mb-4" />
             <h3 className="text-lg font-medium mb-2">No documents yet</h3>
             <p className="chat-meta mb-4 max-w-md">
-              Upload an image document to start annotating regions of interest
+              Upload an image or PDF to start annotating regions of interest
               and extracting structured data.
             </p>
             <button
@@ -237,7 +273,7 @@ export function DataProcessorChannel({
                   {doc.image_url ? (
                     <img
                       src={doc.image_url}
-                      alt={doc.filename}
+                      alt={doc.original_filename}
                       className="w-full h-full object-contain rounded"
                     />
                   ) : (
@@ -247,13 +283,16 @@ export function DataProcessorChannel({
 
                 {/* Document Info */}
                 <div className="mb-3">
-                  <h4 className="font-medium truncate" title={doc.filename}>
-                    {doc.filename}
+                  <h4
+                    className="font-medium truncate"
+                    title={doc.original_filename}
+                  >
+                    {doc.original_filename}
                   </h4>
                   <div className="flex items-center gap-2 mt-1">
-                    {STATUS_ICONS[doc.status]}
+                    {STATUS_ICONS[doc.ocr_status]}
                     <span className="text-sm chat-meta">
-                      {STATUS_LABELS[doc.status]}
+                      {STATUS_LABELS[doc.ocr_status]}
                     </span>
                   </div>
                 </div>
@@ -281,31 +320,14 @@ export function DataProcessorChannel({
         )}
       </div>
 
-      {/* Annotation Modal */}
-      {isModalOpen && selectedDocument && (
-        <DocumentAnnotationModal
-          documentId={selectedDocument.id}
-          filename={selectedDocument.filename}
-          channelId={channelId}
-          onClose={handleCloseModal}
-          onStatusChange={(status: OcrStatus) => {
-            setDocuments((prev) =>
-              prev.map((doc) =>
-                doc.id === selectedDocument.id ? { ...doc, status } : doc,
-              ),
-            )
-          }}
-        />
-      )}
-
       {/* Template Manager Modal */}
       <TemplateManager
         channelId={channelId}
         isOpen={isTemplateManagerOpen}
         onClose={() => setIsTemplateManagerOpen(false)}
-        selectedDocumentId={selectedDocument?.id}
+        selectedDocumentId={selectedDocumentId || undefined}
         onApplyTemplate={() => {
-          // Refresh happens via query invalidation in TemplateManager
+          queryClient.invalidateQueries({ queryKey: ['documents', channelId] })
           setIsTemplateManagerOpen(false)
         }}
       />
@@ -318,10 +340,7 @@ export function DataProcessorChannel({
         documentIds={documents.map((doc) => doc.id)}
         templates={templates}
         onBatchComplete={() => {
-          // Refresh document statuses
-          setDocuments((prev) =>
-            prev.map((doc) => ({ ...doc, status: 'completed' as OcrStatus })),
-          )
+          queryClient.invalidateQueries({ queryKey: ['documents', channelId] })
         }}
       />
     </div>

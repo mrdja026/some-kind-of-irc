@@ -6,7 +6,9 @@ Template, and related data structures.
 """
 
 import mimetypes
+from urllib.parse import urlparse
 
+from django.conf import settings
 from rest_framework import serializers
 from storage.in_memory import (
     LabelType,
@@ -18,6 +20,26 @@ from storage.in_memory import (
     Template,
     BatchJob,
 )
+
+
+def _normalize_media_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    public_base = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "").rstrip("/")
+    if not public_base:
+        return url
+    if url.startswith(public_base):
+        return url
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    path = parsed.path or ""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{public_base}{path}"
 
 
 class BoundingBoxSerializer(serializers.Serializer):
@@ -98,6 +120,9 @@ class DocumentSerializer(serializers.Serializer):
     channel_id = serializers.CharField(max_length=255, required=True)
     uploaded_by = serializers.CharField(max_length=255, required=False, allow_blank=True)
     original_filename = serializers.CharField(max_length=500, required=True)
+    file_type = serializers.CharField(read_only=True)
+    page_count = serializers.IntegerField(read_only=True, min_value=1)
+    pdf_text_layer = serializers.JSONField(read_only=True, allow_null=True)
     image_url = serializers.URLField(read_only=True, allow_null=True)
     thumbnail_url = serializers.URLField(read_only=True, allow_null=True)
     width = serializers.IntegerField(read_only=True, min_value=0)
@@ -124,18 +149,28 @@ class DocumentSerializer(serializers.Serializer):
     def to_representation(self, instance):
         """Convert Document dataclass to dict."""
         if isinstance(instance, dict):
-            return instance
-        return instance.to_dict()
+            data = instance
+        else:
+            data = instance.to_dict()
+        data["image_url"] = _normalize_media_url(data.get("image_url"))
+        data["thumbnail_url"] = _normalize_media_url(data.get("thumbnail_url"))
+        return data
 
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_DOCUMENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "application/pdf",
+}
 
 
 class DocumentUploadSerializer(serializers.Serializer):
     """Serializer for document upload requests."""
     channel_id = serializers.CharField(max_length=255, required=True)
     uploaded_by = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
-    image = serializers.ImageField(required=True)
+    image = serializers.FileField(required=True)
     apply_template_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     preprocessing_options = serializers.DictField(required=False, default=dict)
 
@@ -144,9 +179,9 @@ class DocumentUploadSerializer(serializers.Serializer):
             getattr(value, "content_type", None)
             or mimetypes.guess_type(getattr(value, "name", ""))[0]
         )
-        if content_type not in ALLOWED_IMAGE_TYPES:
+        if content_type not in ALLOWED_DOCUMENT_TYPES:
             raise serializers.ValidationError(
-                "Unsupported file type. Use JPEG, PNG, or WebP."
+                "Unsupported file type. Use JPEG, PNG, WebP, or PDF."
             )
         return value
 
