@@ -8,6 +8,8 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+COPY alembic.ini /app/alembic.ini
+COPY alembic /app/alembic
 COPY create_test_user.py /app/create_test_user.py
 COPY seed_users.json /app/seed_users.json
 COPY src /app/src

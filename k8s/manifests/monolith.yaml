@@ -33,8 +33,11 @@ spec:
             - secretRef:
                 name: irc-app-secret
           env:
-            - name: DATABASE_URL
-              value: "sqlite:////data/chat.db"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: DB_PASSWORD
           resources:
             requests:
               memory: "128Mi"
@@ -54,25 +57,6 @@ spec:
               port: 8002
             initialDelaySeconds: 15
             periodSeconds: 20
-          volumeMounts:
-            - name: sqlite-data
-              mountPath: /data
-      volumes:
-        - name: sqlite-data
-          persistentVolumeClaim:
-            claimName: monolith-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: monolith-pvc
-  namespace: irc-app
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

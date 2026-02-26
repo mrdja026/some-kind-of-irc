@@ -9,7 +9,7 @@
 # After running, verify with:
 #   kubectl get pods -n irc-app
 #   kubectl exec -n irc-app deploy/redis -- redis-cli ping
-#   kubectl exec -n irc-app deploy/postgresql -- pg_isready -U auth_user -d auth_db
+#   kubectl exec -n irc-app deploy/postgresql -- pg_isready -U app_user -d app_db
 
 set -euo pipefail
 
@@ -45,7 +45,7 @@ kubectl exec -n irc-app deploy/redis -- redis-cli ping
 echo ""
 
 echo "Verifying PostgreSQL..."
-kubectl exec -n irc-app deploy/postgresql -- pg_isready -U auth_user -d auth_db
+kubectl exec -n irc-app deploy/postgresql -- pg_isready -U app_user -d app_db
 echo ""
 
-echo "Next step: Run 05-deploy-monolith-hello.sh"
+echo "Next step: Run 05-deploy-services.sh"

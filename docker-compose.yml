@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${DB_NAME:-app_db}"
+      POSTGRES_USER: "${DB_USER:-app_user}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app_user} -d ${DB_NAME:-app_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   redis:
     image: redis:7-alpine
     ports:
@@ -6,6 +24,23 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+
+  redis-log:
+    image: redis:7-alpine
+    command: redis-server --save '' --appendonly no
+
+  redis-log-sink:
+    build:
+      context: ./redis-log-sink
+      dockerfile: Dockerfile
+    environment:
+      REDIS_LOG_URL: "${REDIS_LOG_URL:-redis://redis-log:6379/0}"
+      REDIS_LOG_STREAM_KEY: "${REDIS_LOG_STREAM_KEY:-caddy:warn_error_logs}"
+      REDIS_LOG_MAXLEN: "${REDIS_LOG_MAXLEN:-200}"
+      LOG_SINK_HOST: 0.0.0.0
+      LOG_SINK_PORT: "6001"
+    depends_on:
+      - redis-log
 
   backend:
     build:
@@ -24,9 +59,17 @@ services:
       GMAIL_OAUTH_CLIENT_SECRET: "${GMAIL_OAUTH_CLIENT_SECRET:-}"
       GMAIL_OAUTH_REDIRECT_URL: "${GMAIL_OAUTH_REDIRECT_URL:-http://localhost:8002/api/auth/callback}"
       GMAIL_OAUTH_SCOPES: "${GMAIL_OAUTH_SCOPES:-https://www.googleapis.com/auth/gmail.readonly}"
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+      DB_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
     ports:
       - "8002:8002"
     depends_on:
+      - postgres
       - redis
       - audit-logger
 
@@ -132,9 +175,17 @@ services:
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+      DB_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
     ports:
       - "8003:8003"
     depends_on:
+      - postgres
       - backend
       - minio
 
@@ -152,9 +203,15 @@ services:
       - ai-service
       - media-storage
       - data-processor
+      - redis-log-sink
 
 volumes:
+  postgres_data:
   minio-data:
   caddy-data:
   caddy-config:
   redis_data:
+
+secrets:
+  pg_app_password:
+    file: ./infra_resource/postgres_app_password.txt
