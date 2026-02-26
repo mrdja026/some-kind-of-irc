@@ -60,7 +60,9 @@ export function DocumentAnnotationModal({
     useState<Annotation | null>(null)
   const [activeLabelType, setActiveLabelType] = useState<LabelType>('custom')
   const [labelName, setLabelName] = useState('')
-  const [tool, setTool] = useState<'select' | 'draw'>('select')
+  const [labelNameError, setLabelNameError] = useState<string | null>(null)
+  const [tool, setTool] = useState<'select' | 'draw'>('draw')
+  const labelInputRef = useRef<HTMLInputElement>(null)
   const [zoom, setZoom] = useState(1)
   const [ocrProgress, setOcrProgress] = useState<{
     stage: string
@@ -173,16 +175,50 @@ export function DocumentAnnotationModal({
   // Handle creating annotation from canvas drawing
   const handleCreateAnnotation = useCallback(
     (box: { x: number; y: number; width: number; height: number }) => {
-      const name = labelName || `${activeLabelType} ${annotations.length + 1}`
+      if (tool === 'draw' && activeLabelType === 'custom' && !labelName.trim()) {
+        if (labelInputRef.current) {
+          labelInputRef.current.reportValidity()
+        }
+        setLabelNameError('Label name is required for custom labels.')
+        return
+      }
+
+      const name =
+        labelName.trim() || `${activeLabelType} ${annotations.length + 1}`
+
       createAnnotationMutation.mutate({
         label_type: activeLabelType,
         label_name: name,
         color: LABEL_COLORS[activeLabelType],
-        ...box,
+        bounding_box: { ...box, rotation: 0 },
       })
       setLabelName('')
+      setLabelNameError(null)
     },
-    [activeLabelType, labelName, annotations.length, createAnnotationMutation],
+    [
+      activeLabelType,
+      labelName,
+      annotations.length,
+      createAnnotationMutation,
+      tool,
+    ],
+  )
+  const handleLabelTypeChange = useCallback((type: LabelType) => {
+    setActiveLabelType(type)
+    setTool('draw')
+    setLabelNameError(null)
+  }, [])
+
+  const handleToolChange = useCallback(
+    (next: 'select' | 'draw') => {
+      setTool(next)
+      if (next === 'draw') {
+        setActiveLabelType('custom')
+      }
+      setLabelNameError(null)
+      // Preserve the active label type; do not force custom on tool change
+    },
+    [],
   )
 
   // Handle annotation update from canvas manipulation
@@ -191,7 +227,10 @@ export function DocumentAnnotationModal({
       id: string,
       box: { x: number; y: number; width: number; height: number },
     ) => {
-      updateAnnotationMutation.mutate({ id, ...box })
+      updateAnnotationMutation.mutate({
+        id,
+        bounding_box: { ...box, rotation: 0 },
+      })
     },
     [updateAnnotationMutation],
   )
@@ -308,20 +347,24 @@ export function DocumentAnnotationModal({
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Toolbar */}
-        <AnnotationToolbar
-          activeLabelType={activeLabelType}
-          onLabelTypeChange={setActiveLabelType}
-          tool={tool}
-          onToolChange={setTool}
-          labelName={labelName}
-          onLabelNameChange={setLabelName}
-          onDelete={handleDeleteSelected}
-          hasSelection={!!selectedAnnotation}
-          templates={templates || []}
-          onApplyTemplate={(templateId: string) =>
-            applyTemplateMutation.mutate(templateId)
-          }
-        />
+      <AnnotationToolbar
+        activeLabelType={activeLabelType}
+        onLabelTypeChange={handleLabelTypeChange}
+        tool={tool}
+        onToolChange={handleToolChange}
+        labelName={labelName}
+        onLabelNameChange={setLabelName}
+        onDelete={handleDeleteSelected}
+        hasSelection={!!selectedAnnotation}
+        templates={templates || []}
+        onApplyTemplate={(templateId: string) =>
+          applyTemplateMutation.mutate(templateId)
+        }
+        isLabelNameRequired={activeLabelType === 'custom'}
+        labelNameError={labelNameError}
+        disableLabelTypes={tool === 'draw'}
+        labelInputRef={labelInputRef}
+      />
 
         {/* Canvas Area */}
         <div className="flex-1 relative overflow-hidden bg-gray-950">
@@ -404,12 +447,13 @@ export function DocumentAnnotationModal({
                         className="w-3 h-3 rounded"
                         style={{ backgroundColor: annotation.color }}
                       />
-                      <span className="font-medium text-white text-sm">
+                      <span className="font-medium text-white text-sm truncate">
                         {annotation.label_name}
                       </span>
-                    </div>
-                    <div className="text-xs text-gray-400 mb-1">
-                      {annotation.label_type}
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+                        style={{ backgroundColor: `${annotation.color}22`, color: annotation.color }}>
+                        {annotation.label_type}
+                      </span>
                     </div>
                     {annotation.extracted_text && (
                       <div className="text-xs text-gray-300 bg-gray-900 p-2 rounded mt-2 line-clamp-2">

@@ -189,11 +189,13 @@ export type CreateAnnotationRequest = {
   label_type: LabelType;
   label_name: string;
   color?: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
+  bounding_box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rotation?: number;
+  };
 };
 
 export type UpdateAnnotationRequest = Partial<CreateAnnotationRequest>;
@@ -205,13 +207,21 @@ export const createAnnotation = async (
   documentId: string,
   annotation: CreateAnnotationRequest
 ): Promise<Annotation> => {
+  const payload = {
+    ...annotation,
+    bounding_box: {
+      ...annotation.bounding_box,
+      rotation: annotation.bounding_box.rotation ?? 0,
+    },
+  };
+
   const response = await fetch(`${DATA_PROCESSOR_URL}/documents/${documentId}/annotations/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     credentials: 'include',
-    body: JSON.stringify(annotation),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -230,6 +240,14 @@ export const updateAnnotation = async (
   annotationId: string,
   updates: UpdateAnnotationRequest
 ): Promise<Annotation> => {
+  const payload = { ...updates };
+  if (updates.bounding_box) {
+    payload.bounding_box = {
+      ...updates.bounding_box,
+      rotation: updates.bounding_box.rotation ?? 0,
+    };
+  }
+
   const response = await fetch(
     `${DATA_PROCESSOR_URL}/documents/${documentId}/annotations/${annotationId}/`,
     {
@@ -238,7 +256,7 @@ export const updateAnnotation = async (
         'Content-Type': 'application/json',
       },
       credentials: 'include',
-      body: JSON.stringify(updates),
+      body: JSON.stringify(payload),
     }
   );
 

@@ -7,7 +7,6 @@ import {
   PenTool,
   Calendar,
   DollarSign,
-  Tag,
   Layout,
 } from 'lucide-react'
 import type { LabelType, Template } from '../types'
@@ -23,6 +22,10 @@ interface AnnotationToolbarProps {
   hasSelection: boolean
   templates: Template[]
   onApplyTemplate: (templateId: string) => void
+  isLabelNameRequired?: boolean
+  labelNameError?: string | null
+  disableLabelTypes?: boolean
+  labelInputRef?: React.RefObject<HTMLInputElement>
 }
 
 // Label type configuration
@@ -62,12 +65,6 @@ const LABEL_TYPES: {
     color: '#EF4444',
     icon: <DollarSign size={16} />,
   },
-  {
-    type: 'custom',
-    label: 'Custom',
-    color: '#6B7280',
-    icon: <Tag size={16} />,
-  },
 ]
 
 export function AnnotationToolbar({
@@ -81,6 +78,10 @@ export function AnnotationToolbar({
   hasSelection,
   templates,
   onApplyTemplate,
+  isLabelNameRequired,
+  labelNameError,
+  disableLabelTypes,
+  labelInputRef,
 }: AnnotationToolbarProps) {
   return (
     <div className="w-64 bg-gray-900 border-r border-gray-700 flex flex-col">
@@ -125,15 +126,23 @@ export function AnnotationToolbar({
             <button
               key={type}
               onClick={() => onLabelTypeChange(type)}
+              disabled={disableLabelTypes}
               className={`flex items-center gap-2 px-3 py-2 rounded text-sm min-h-[44px] ${
-                activeLabelType === type
+                activeLabelType === type && !disableLabelTypes
                   ? 'ring-2 ring-blue-500'
                   : 'hover:bg-gray-800'
               }`}
               style={{
                 backgroundColor:
-                  activeLabelType === type ? `${color}33` : 'rgb(31 41 55)',
-                color: activeLabelType === type ? color : '#9CA3AF',
+                  activeLabelType === type && !disableLabelTypes
+                    ? `${color}33`
+                    : 'rgb(31 41 55)',
+                color:
+                  activeLabelType === type && !disableLabelTypes
+                    ? color
+                    : '#9CA3AF',
+                opacity: disableLabelTypes ? 0.4 : 1,
+                cursor: disableLabelTypes ? 'not-allowed' : 'pointer',
               }}
             >
               {icon}
@@ -150,14 +159,22 @@ export function AnnotationToolbar({
         </h3>
         <input
           type="text"
+          ref={labelInputRef}
           value={labelName}
           onChange={(e) => onLabelNameChange(e.target.value)}
           placeholder={`${activeLabelType} label`}
           className="w-full px-3 py-2 rounded bg-gray-800 text-white text-sm border border-gray-700 focus:border-blue-500 focus:outline-none min-h-[44px]"
+          aria-invalid={isLabelNameRequired ? 'true' : 'false'}
+          required={isLabelNameRequired}
         />
         <p className="text-xs text-gray-500 mt-2">
-          Optional name for the next annotation. Leave empty to auto-generate.
+          {isLabelNameRequired
+            ? 'Required for custom labels.'
+            : 'Optional; will auto-name if left blank.'}
         </p>
+        {labelNameError && (
+          <p className="text-xs text-red-400 mt-1">{labelNameError}</p>
+        )}
       </div>
 
       {/* Actions Section */}
