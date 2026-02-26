@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DemoStartServerFuncsRouteImport } from './routes/demo/start.server-funcs'
 import { Route as DemoStartApiRequestRouteImport } from './routes/demo/start.api-request'
 import { Route as DemoApiNamesRouteImport } from './routes/demo/api.names'
+import { Route as DataProcessingChannelIdDocumentIdRouteImport } from './routes/data-processing.$channelId.$documentId'
 import { Route as DemoStartSsrIndexRouteImport } from './routes/demo/start.ssr.index'
 import { Route as DemoStartSsrSpaModeRouteImport } from './routes/demo/start.ssr.spa-mode'
 import { Route as DemoStartSsrFullSsrRouteImport } from './routes/demo/start.ssr.full-ssr'
@@ -56,6 +57,12 @@ const DemoApiNamesRoute = DemoApiNamesRouteImport.update({
   path: '/demo/api/names',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DataProcessingChannelIdDocumentIdRoute =
+  DataProcessingChannelIdDocumentIdRouteImport.update({
+    id: '/data-processing/$channelId/$documentId',
+    path: '/data-processing/$channelId/$documentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DemoStartSsrIndexRoute = DemoStartSsrIndexRouteImport.update({
   id: '/demo/start/ssr/',
   path: '/demo/start/ssr/',
@@ -82,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/chat': typeof ChatRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/data-processing/$channelId/$documentId': typeof DataProcessingChannelIdDocumentIdRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
@@ -95,6 +103,7 @@ export interface FileRoutesByTo {
   '/chat': typeof ChatRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/data-processing/$channelId/$documentId': typeof DataProcessingChannelIdDocumentIdRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
@@ -109,6 +118,7 @@ export interface FileRoutesById {
   '/chat': typeof ChatRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
+  '/data-processing/$channelId/$documentId': typeof DataProcessingChannelIdDocumentIdRoute
   '/demo/api/names': typeof DemoApiNamesRoute
   '/demo/start/api-request': typeof DemoStartApiRequestRoute
   '/demo/start/server-funcs': typeof DemoStartServerFuncsRoute
@@ -124,6 +134,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/login'
     | '/settings'
+    | '/data-processing/$channelId/$documentId'
     | '/demo/api/names'
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
@@ -137,6 +148,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/login'
     | '/settings'
+    | '/data-processing/$channelId/$documentId'
     | '/demo/api/names'
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
@@ -150,6 +162,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/login'
     | '/settings'
+    | '/data-processing/$channelId/$documentId'
     | '/demo/api/names'
     | '/demo/start/api-request'
     | '/demo/start/server-funcs'
@@ -164,6 +177,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRoute
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
+  DataProcessingChannelIdDocumentIdRoute: typeof DataProcessingChannelIdDocumentIdRoute
   DemoApiNamesRoute: typeof DemoApiNamesRoute
   DemoStartApiRequestRoute: typeof DemoStartApiRequestRoute
   DemoStartServerFuncsRoute: typeof DemoStartServerFuncsRoute
@@ -224,6 +238,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DemoApiNamesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/data-processing/$channelId/$documentId': {
+      id: '/data-processing/$channelId/$documentId'
+      path: '/data-processing/$channelId/$documentId'
+      fullPath: '/data-processing/$channelId/$documentId'
+      preLoaderRoute: typeof DataProcessingChannelIdDocumentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/demo/start/ssr/': {
       id: '/demo/start/ssr/'
       path: '/demo/start/ssr'
@@ -260,6 +281,8 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRoute,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
+  DataProcessingChannelIdDocumentIdRoute:
+    DataProcessingChannelIdDocumentIdRoute,
   DemoApiNamesRoute: DemoApiNamesRoute,
   DemoStartApiRequestRoute: DemoStartApiRequestRoute,
   DemoStartServerFuncsRoute: DemoStartServerFuncsRoute,

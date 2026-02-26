@@ -452,7 +452,7 @@ interface ExportRequestedEvent {
 ### Phase 3: Frontend Deployment
 
 1. Add DataProcessorChannel component
-2. Wire annotation modal to upload flow
+2. Wire annotation route navigation to upload flow (`/data-processing/{channelId}/{documentId}`)
 3. Add channel type checkbox in channel creation
 4. Rollback: Hide channel type in UI
 

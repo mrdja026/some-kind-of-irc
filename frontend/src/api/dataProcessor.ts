@@ -63,6 +63,11 @@ export type DocumentUploadResponse = {
   message?: string;
 };
 
+export type DocumentListResponse = {
+  documents: Document[];
+  count: number;
+};
+
 /**
  * Upload a document to the data processor service.
  */
@@ -83,6 +88,29 @@ export const uploadDocument = async (
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
     throw new Error(error.detail || 'Upload failed');
+  }
+
+  return response.json();
+};
+
+/**
+ * List documents, optionally filtered by channel.
+ */
+export const listDocuments = async (
+  channelId?: string | number
+): Promise<DocumentListResponse> => {
+  const url = new URL(`${DATA_PROCESSOR_URL}/documents/`);
+  if (channelId !== undefined && channelId !== null) {
+    url.searchParams.set('channel_id', String(channelId));
+  }
+
+  const response = await fetch(url.toString(), {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to list documents' }));
+    throw new Error(error.detail || 'Failed to list documents');
   }
 
   return response.json();

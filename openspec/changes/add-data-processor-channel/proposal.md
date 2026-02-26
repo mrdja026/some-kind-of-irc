@@ -9,7 +9,7 @@ The IRC application needs a specialized channel type for document processing wor
 ### New Channel Type
 
 - Add `#data-processor` as a specialized channel type with document processing capabilities
-- Automatic popup modal triggered when users upload image files (PNG, JPG) or PDFs (first page preview)
+- Automatic redirect to `/data-processing/{channelId}/{documentId}` when users upload image files (PNG, JPG) or PDFs (first page preview)
 - Interactive document viewer with pan, zoom, and annotation tools
 - Extract and store the PDF text layer when available
 
@@ -65,6 +65,7 @@ The IRC application needs a specialized channel type for document processing wor
   - `data-processor/models/template.py` (new)
   - `docker-compose.yml` (add data-processor service)
   - `frontend/src/components/DataProcessorChannel.tsx` (new)
+  - `frontend/src/routes/data-processing.$channelId.$documentId.tsx` (new)
   - `frontend/src/components/DocumentAnnotationModal.tsx` (new)
   - `frontend/src/components/AnnotationToolbar.tsx` (new)
   - `frontend/src/hooks/useDocumentProcessor.ts` (new)
