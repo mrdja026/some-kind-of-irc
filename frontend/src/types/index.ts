@@ -256,6 +256,26 @@ export type AIStatus = {
   max_requests_per_hour: number;
 };
 
+export type LocalAIMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+};
+
+export type LocalAIQueryResponse = {
+  status: 'ok' | 'rejected' | 'fallback';
+  message: string;
+  agent: string;
+  rejected: boolean;
+};
+
+export type LocalAIStatus = {
+  enabled: boolean;
+  online: boolean;
+  available: boolean;
+  remaining_requests: number;
+  max_requests_per_hour: number;
+};
+
 // Game types
 export type GameState = {
   user_id: number;

@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import List, Optional, cast, Any
+from functools import lru_cache
 
 from src.core.database import get_db
 from src.core.config import settings
+from src.core.admin import is_user_admin
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.message import Message
@@ -38,6 +40,41 @@ def _as_opt_str(value: Any) -> Optional[str]:
     if value is None:
         return None
     return str(value)
+
+
+def _local_qa_channel_name() -> str:
+    configured = settings.LOCAL_QA_CHANNEL_NAME.strip()
+    return configured if configured else "#qa-local"
+
+
+@lru_cache(maxsize=1)
+def _ai_allowlist() -> set[str]:
+    raw = settings.AI_ALLOWLIST or ""
+    if not raw.strip():
+        raw = "admina;guest2;guest3"
+    return {
+        entry.strip().lower()
+        for entry in raw.split(";")
+        if entry.strip()
+    }
+
+
+def _user_has_local_qa_access(user: User) -> bool:
+    username = _as_str(user.username).lower()
+    return is_user_admin(username) or username in _ai_allowlist()
+
+
+def _is_local_qa_channel(channel: Channel) -> bool:
+    return _as_str(channel.name) == _local_qa_channel_name()
+
+
+def _is_local_qa_channel_name(name: str) -> bool:
+    return name == _local_qa_channel_name()
+
+
+def _enforce_local_qa_access(channel: Channel, current_user: User) -> None:
+    if _is_local_qa_channel(channel) and not _user_has_local_qa_access(current_user):
+        raise HTTPException(status_code=404, detail="Channel not found")
 
 # Pydantic models
 class ChannelCreate(BaseModel):
@@ -78,6 +115,12 @@ async def create_channel(channel: ChannelCreate, current_user: User = Depends(ge
     current_user_id = _as_int(current_user.id)
     if channel.type == "public" and not channel.name.startswith("#"):
         raise HTTPException(status_code=400, detail="Public channel name must start with #")
+
+    if _is_local_qa_channel_name(channel.name):
+        if not settings.local_qa_enabled:
+            raise HTTPException(status_code=400, detail="Local Q&A channel is not enabled")
+        if not _user_has_local_qa_access(current_user):
+            raise HTTPException(status_code=404, detail="Channel not found")
     
     # Check if data processor feature is enabled when creating data processor channel
     if channel.is_data_processor and not settings.data_processor_enabled:
@@ -147,6 +190,7 @@ async def create_channel(channel: ChannelCreate, current_user: User = Depends(ge
 async def get_channels(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get all public channels (visible to all logged-in users)
     public_channels = db.query(Channel).filter(Channel.type == "public").all()
+    can_access_local_qa = _user_has_local_qa_access(current_user)
     
     # Get private channels the user is a member of
     memberships = db.query(Membership).filter(Membership.user_id == current_user.id).all()
@@ -163,6 +207,8 @@ async def get_channels(current_user: User = Depends(get_current_user), db: Sessi
     seen_ids = set()
     unique_channels = []
     for channel in all_channels:
+        if _is_local_qa_channel(channel) and not can_access_local_qa:
+            continue
         if channel.id not in seen_ids:
             seen_ids.add(channel.id)
             unique_channels.append(channel)
@@ -173,6 +219,7 @@ async def get_channels(current_user: User = Depends(get_current_user), db: Sessi
 async def search_channels(name: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Search for channels by name (case-insensitive)
     channels = db.query(Channel).filter(Channel.name.ilike(f"%{name}%")).all()
+    can_access_local_qa = _user_has_local_qa_access(current_user)
     return [
         ChannelResponse(
             id=cast(int, ch.id),
@@ -181,6 +228,7 @@ async def search_channels(name: str, current_user: User = Depends(get_current_us
             is_data_processor=cast(bool, ch.is_data_processor),
         )
         for ch in channels
+        if can_access_local_qa or cast(str, ch.name) != _local_qa_channel_name()
     ]
 
 @router.get("/dms", response_model=List[ChannelResponse])
@@ -262,6 +310,7 @@ async def get_messages(channel_id: int, current_user: User = Depends(get_current
     channel = db.query(Channel).filter(Channel.id == channel_id).first()
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
     
     channel_type = _as_str(channel.type)
     # For private channels, check if user is a member
@@ -300,6 +349,11 @@ async def get_messages(channel_id: int, current_user: User = Depends(get_current
 
 @router.post("/{channel_id}/messages", response_model=MessageResponse)
 async def send_message(channel_id: int, message: MessageCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
+
     # Check if user is a member of the channel
     current_user_id = _as_int(current_user.id)
     membership = db.query(Membership).filter(
@@ -308,9 +362,6 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
     ).first()
     if not membership:
         raise HTTPException(status_code=403, detail="You are not a member of this channel")
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
     new_message = Message(
         content=message.content,
         image_url=message.image_url,
@@ -345,21 +396,22 @@ async def send_message(channel_id: int, message: MessageCreate, current_user: Us
 
 @router.post("/{channel_id}/join")
 async def join_channel(channel_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
+
     current_user_id = _as_int(current_user.id)
     membership = db.query(Membership).filter(
         Membership.user_id == current_user_id,
         Membership.channel_id == channel_id,
     ).first()
     if membership:
-        channel = db.query(Channel).filter(Channel.id == channel_id).first()
-        name = _as_str(channel.name) if channel else str(channel_id)
+        name = _as_str(channel.name)
         return {"message": f"Already a member of channel {name}"}
     new_membership = Membership(user_id=current_user_id, channel_id=channel_id)
     db.add(new_membership)
     db.commit()
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
     channel_name = _as_str(channel.name)
     game_service = GameService(db)
 
@@ -406,6 +458,11 @@ async def join_channel(channel_id: int, current_user: User = Depends(get_current
 
 @router.post("/{channel_id}/leave")
 async def leave_channel(channel_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
+
     current_user_id = _as_int(current_user.id)
     membership = db.query(Membership).filter(
         Membership.user_id == current_user_id,
@@ -415,9 +472,6 @@ async def leave_channel(channel_id: int, current_user: User = Depends(get_curren
         raise HTTPException(status_code=400, detail="Not a member of this channel")
     db.delete(membership)
     db.commit()
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
     channel_name = _as_str(channel.name)
     # Update WebSocket manager to remove user from this channel
     manager.remove_client_from_channel(current_user_id, channel_id)
@@ -451,6 +505,11 @@ async def get_channel_members(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
+
     # Check if current user is a member of the channel
     current_membership = db.query(Membership).filter(
         Membership.user_id == _as_int(current_user.id),
@@ -517,6 +576,11 @@ async def add_member_to_channel(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    _enforce_local_qa_access(channel, current_user)
+
     # Check if current user is a member of the channel
     current_membership = db.query(Membership).filter(
         Membership.user_id == _as_int(current_user.id),
@@ -546,9 +610,6 @@ async def add_member_to_channel(
     # Update WebSocket manager to include the added user in this channel
     manager.add_client_to_channel(user_to_add_id, channel_id)
     
-    channel = db.query(Channel).filter(Channel.id == channel_id).first()
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
     channel_name = _as_str(channel.name)
     await manager.broadcast({
         "type": "join",

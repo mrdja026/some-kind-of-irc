@@ -41,9 +41,30 @@ def get_ai_allowlist() -> Set[str]:
     return allowlist
 
 
+@lru_cache(maxsize=1)
+def get_admin_allowlist() -> Set[str]:
+    """Parse ADMIN_ALLOWLIST env var into set of lowercase usernames."""
+    raw = settings.ADMIN_ALLOWLIST or ""
+    if not raw.strip():
+        raw = "admina"
+
+    allowlist = {
+        username.strip().lower()
+        for username in raw.split(";")
+        if username.strip()
+    }
+    logger.info("Admin allowlist loaded: %s users", len(allowlist))
+    return allowlist
+
+
+def is_user_admin(username: str) -> bool:
+    return username.lower() in get_admin_allowlist()
+
+
 def is_user_allowed_for_ai(username: str) -> bool:
-    """Check if username is in AI allowlist (case-insensitive)."""
-    return username.lower() in get_ai_allowlist()
+    """Check if username is admin or in AI allowlist (case-insensitive)."""
+    username_norm = username.lower()
+    return username_norm in get_ai_allowlist() or username_norm in get_admin_allowlist()
 
 
 def get_username_from_token(request: Request) -> str:
@@ -80,3 +101,8 @@ async def require_ai_access(request: Request) -> str:
     if not is_user_allowed_for_ai(username):
         raise HTTPException(status_code=404, detail="Not Found")
     return username
+
+
+async def require_local_ai_access(request: Request) -> str:
+    """Local Q&A uses the same admin-or-AI allowlist policy."""
+    return await require_ai_access(request)

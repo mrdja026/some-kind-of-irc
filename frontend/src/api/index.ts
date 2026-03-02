@@ -7,6 +7,9 @@ import type {
   AIQueryResponse,
   AIStatus,
   AIStreamEvent,
+  LocalAIMessage,
+  LocalAIQueryResponse,
+  LocalAIStatus,
 } from '../types';
 
 const API_BASE_URL =
@@ -521,6 +524,41 @@ export const getAIHealth = async (): Promise<{ service: string; status: string }
   });
   if (!response.ok) {
     throw new Error('AI service health check failed');
+  }
+  return response.json();
+};
+
+export const getLocalAIStatus = async (): Promise<LocalAIStatus> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/local/status`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error(await parseAIError(response, 'Failed to get local AI status'));
+  }
+  return response.json();
+};
+
+export const queryLocalAI = async (
+  query: string,
+  options: {
+    mode?: 'chat' | 'greeting';
+    history?: LocalAIMessage[];
+  } = {},
+): Promise<LocalAIQueryResponse> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/local/query`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      query,
+      mode: options.mode ?? 'chat',
+      history: options.history ?? [],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseAIError(response, 'Local AI query failed'));
   }
   return response.json();
 };

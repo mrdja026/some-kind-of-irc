@@ -169,7 +169,7 @@ export function ChannelsSidebar({
               <FileText size={14} className="text-blue-600 flex-shrink-0" />
             )}
             <span className="text-sm md:text-base truncate">
-              {channel.name}
+              {channel.name === '#qa-local' ? 'Q&A local' : channel.name}
             </span>
           </div>
         ))}
