@@ -1,3 +1,11 @@
+{
+  log default {
+    level WARN
+    output net redis-log-sink:6001
+    format json
+  }
+}
+
 :80 {
   encode gzip
 

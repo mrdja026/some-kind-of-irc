@@ -1,88 +1,86 @@
 # IRC Chat Application
 
-A modern, real-time IRC-like chat application built with a full-stack architecture, featuring persistent channels, direct messages, and media sharing.
+A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Redis, and MinIO.
 
-## 📚 Documentation & Specs
+## OpenSpec
 
-This project follows **OpenSpec** for specification-driven development.
-- **Project Context**: `openspec/project.md`
-- **Change Proposals**: `openspec/changes/`
-- **Active Specs**: `openspec/specs/`
+- Project context: `openspec/project.md`
+- Active changes: `openspec/changes/`
+- Specs: `openspec/specs/`
 
-## 🚀 Tech Stack
+## Default Local Stack
 
-- **Frontend**: React, TanStack Start, TanStack Query, TailwindCSS, Vite
-- **Backend**: Python (FastAPI), SQLAlchemy, SQLite
-- **Microservices**:
-  - **Media Storage**: Flask + MinIO (Object Storage)
-  - **Data Processor**: Django (OCR/Image Processing)
-  - **Audit Logger**: FastAPI
-- **Infrastructure**: Redis, MinIO, Pixi (Task Runner/Env Manager)
+- Backend DB: **Postgres 16**
+- Backend + data-processor schema: **shared `app_db`**
+- DB user: **`app_user`**
+- DB password source: **docker secret file `infra_resource/postgres_app_password.txt`**
+- App Redis: `redis://redis:6379/0`
+- Caddy warn/error log sink: Redis stream `caddy:warn_error_logs` on `redis-log` (maxlen 200, no persistence)
 
-## 🛠️ Local Development
-
-The recommended dev environment is **Linux**, using `./deploy-local.sh` to bring up the full stack (including the data-processor). Windows relies on **pixi** tasks with the data-processor disabled.
+## Local Development (Linux)
 
 ### Prerequisites
-1. Install **[pixi](https://prefix.dev/)**.
-2. Docker + Docker Compose (Linux recommended).
 
-### Quick Start
+1. Docker + Docker Compose
+2. Optional: [pixi](https://prefix.dev/) for non-docker workflows
 
-#### 🐧 Linux (Recommended)
-1. **Run**: Start the full stack with Docker Compose.
-   ```bash
-   AI_API_SERVICE_KEY=your_key ./deploy-local.sh --build
-   ```
-   - Set `AI_API_SERVICE_KEY` to enable #ai.
-   - Frontend: http://localhost:4269
-   - Backend: http://localhost:8002
-   - MinIO Console: http://localhost:9001
+### Run
 
-#### Debug Logs (Frontend)
-- Enable client debug logs by visiting any route with `?debug=1` (stored in `localStorage`).
-- Disable with `?debug=0`.
+```bash
+AI_API_SERVICE_KEY=your_key ./deploy-local.sh --build
+```
 
-#### 🪟 Windows 25.02.2026 out of sync, need to check, working on linux since its easier
-1. **Setup**: Install dependencies (data-processor disabled).
-   ```bash
-   pixi run setup-windows
-   ```
-2. **Run**: Start services (PowerShell background jobs).
-   ```bash
-   pixi run start-all-windows
-   ```
-   *Note: The data-processor service is disabled on Windows.*
+`deploy-local.sh` now runs this flow:
 
-## 📋 Current Status & Next Steps
+1. Start infra first (`postgres`, `redis`, `redis-log`, `redis-log-sink`, `minio`)
+2. Run backend Alembic migrations
+3. Run data-processor Django migrations
+4. Start application services
+5. Seed users + run smoke scripts (API + Postgres + Redis log sink)
 
-### Active Development
-- **Infrastructure**: Local run stabilized via Docker Compose + `deploy-local.sh`.
-- **Data Processor**: MVP complete (OCR, templates, export).
-- **Deployment**: Hetzner deployment active but experiencing stability issues.
+### URLs
 
-### Known Issues (TODOs)
-- **Frontend**: Currently not working reliably; UI/hydration issues remain.
-- **Frontend (TD)**: Handle Gmail dates as UTC+0 with Temporal UI.
-- **Windows Support**: Data processor is disabled on Windows builds.
-- **Stability**: Channel join bugs and UI consistency.
+- Frontend: `http://localhost:4269`
+- Frontend via Caddy: `http://localhost:8080`
+- Backend: `http://localhost:8002`
+- Data-processor via Caddy: `http://localhost:8080/data-processor/`
+- MinIO console: `http://localhost:9001`
+- Postgres: `localhost:5432`
 
-## 📂 Project Structure
+## Smoke Verification
 
-- `backend/` - Main API (FastAPI)
-- `frontend/` - UI (TanStack Start)
-- `media-storage/` - File upload service
-- `data-processor/` - OCR and image processing
-- `audit-logger/` - Activity logging
-- `openspec/` - Specifications and change proposals
-- `scripts/` - Helper scripts for local execution
+- `upload_data_procesor_test.sh` verifies upload path
+- `scripts/postgres_redis_smoke.sh` verifies:
+  - health endpoints
+  - channel create
+  - document upload
+  - annotation create
+  - template list
+  - row persistence in Postgres
+  - Caddy warn/error entries in Redis log stream (`<=200`)
 
-## MAJOR TODOs
-- Migrate to SQL * whatever - PRIORITY Too many transient entities that should be persistent. eg data/procesor/storage/in-memory.py
-- Data procesor works after upload
-- minio buckets must makes sense 
-- data-processor: replace in-memory store with Redis/DB + progress tracking
-- Agents rewrite
-    - Total context collapse fragile LLMs no embedings ect
----
-*Powered by OpenSpec*
+## Important Migration Note
+
+This migration is a **fresh start** for persistence:
+
+- No SQLite-to-Postgres data migration is performed
+- Old SQLite/in-memory state is not imported
+- Backend and data-processor now use one shared Postgres schema in `app_db`
+
+## Rollback (Local)
+
+If you need to back out locally:
+
+1. `docker compose down --remove-orphans`
+2. Revert compose/config changes back to SQLite/in-memory baseline
+3. Remove Postgres volume if needed: `docker volume rm some-kind-of-irc_postgres_data`
+
+## Project Structure
+
+- `backend/` - FastAPI API + Alembic migrations
+- `data-processor/` - Django OCR/annotation service + Django migrations
+- `frontend/` - TanStack/React frontend
+- `media-storage/` - MinIO-backed media service
+- `redis-log-sink/` - TCP sink that forwards Caddy warn/error logs to Redis
+- `k8s/` - K3s manifests and helper scripts
+- `openspec/` - specs and change proposals

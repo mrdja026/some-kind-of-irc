@@ -16,7 +16,7 @@ The data-processor service provides:
 This is a standalone microservice that:
 
 - Runs independently from the main FastAPI backend
-- Uses in-memory storage for MVP (data cleared on restart)
+- Persists documents, annotations, templates, and batch jobs in Postgres
 - Integrates with MinIO for image storage
 - Communicates with the FastAPI backend for channel/user context
 
@@ -25,7 +25,7 @@ This is a standalone microservice that:
 - **Framework**: Django 4.2 with Django REST Framework
 - **OCR Engine**: Tesseract OCR 5.x
 - **Image Processing**: OpenCV, scikit-image
-- **Storage**: In-memory (MVP), MinIO for images
+- **Storage**: Postgres + MinIO
 - **Server**: Gunicorn
 
 ## API Endpoints
@@ -58,6 +58,11 @@ Environment variables (with defaults):
 | `MINIO_ACCESS_KEY` | `minioadmin`                        | MinIO access key        |
 | `MINIO_SECRET_KEY` | `minioadmin`                        | MinIO secret key        |
 | `BACKEND_URL`      | `http://backend:8002`               | FastAPI backend URL     |
+| `DB_HOST`          | `postgres`                          | Postgres host           |
+| `DB_PORT`          | `5432`                              | Postgres port           |
+| `DB_NAME`          | `app_db`                            | Shared app database     |
+| `DB_USER`          | `app_user`                          | Shared app DB user      |
+| `DB_PASSWORD`      | *(unset)*                           | DB password (or use secret file) |
 | `MAX_IMAGE_WIDTH`  | `1024`                              | Maximum image width     |
 | `MAX_IMAGE_HEIGHT` | `1024`                              | Maximum image height    |
 
@@ -69,7 +74,7 @@ The service is part of the docker-compose stack. To run:
 ./deploy-local.sh
 ```
 
-Access the API at: `http://localhost/data-processor/api/`
+Access the API at: `http://localhost:8080/data-processor/`
 
 ## Image Processing Constraints
 
@@ -77,12 +82,11 @@ Access the API at: `http://localhost/data-processor/api/`
 - Sequential document processing (one at a time)
 - Supported formats: PNG, JPG, TIFF
 
-## MVP Limitations
+## Notes
 
-- **In-memory storage**: All data is lost on service restart
-- **No persistent database**: Templates and documents exist only in memory
-- **Single-user sessions**: One user per document at a time
-- **SQLite-only SQL export**: Export format limited to SQLite syntax
+- Data persistence is now Postgres-backed.
+- Existing SQLite/in-memory state is not migrated (fresh-start expectation).
+- SQL export endpoint output is generic SQL statements for extracted fields.
 
 ## Directory Structure
 

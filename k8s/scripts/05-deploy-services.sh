@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2.5 — Deploy monolith, ai-service, and data-processor containers
+# 2.5 — Deploy application services and redis log sink container image
 # Run after Redis and PostgreSQL are deployed.
 #
 # Prerequisites:
@@ -32,6 +32,9 @@ docker build -t ai-service:latest "${PROJECT_ROOT}/ai-service"
 echo "Building data-processor image..."
 docker build -t data-processor:latest "${PROJECT_ROOT}/data-processor"
 
+echo "Building redis-log-sink image..."
+docker build -t redis-log-sink:latest "${PROJECT_ROOT}/redis-log-sink"
+
 echo "Building frontend image (SSR)..."
 docker build -t irc-frontend:latest \
   --build-arg VITE_API_URL=http://monolith:8002 \
@@ -51,6 +54,9 @@ docker save ai-service:latest | sudo k3s ctr images import -
 
 echo "Importing data-processor:latest..."
 docker save data-processor:latest | sudo k3s ctr images import -
+
+echo "Importing redis-log-sink:latest..."
+docker save redis-log-sink:latest | sudo k3s ctr images import -
 
 echo "Importing irc-frontend:latest..."
 docker save irc-frontend:latest | sudo k3s ctr images import -
@@ -85,6 +91,9 @@ kubectl wait --for=condition=available --timeout=300s deployment/ai-service -n i
 
 echo "Waiting for data-processor to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/data-processor -n irc-app
+
+echo "Waiting for redis-log-sink to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/redis-log-sink -n irc-app
 
 echo "Waiting for frontend to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/frontend -n irc-app

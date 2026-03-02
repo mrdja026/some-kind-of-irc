@@ -17,7 +17,7 @@ from src.services.websocket_manager import manager
 from src.services.irc_logger import log_privmsg
 from src.services.game_service import GameService
 from src.services.event_subscriber import start_event_subscriber, stop_event_subscriber
-from src.models import User, Channel, Message, Membership, GameState, GameSession
+from src.models import Channel, Message
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger("uvicorn.error")
@@ -28,43 +28,68 @@ async def lifespan(app: FastAPI):
     # Create database tables
     Base.metadata.create_all(bind=engine)
 
-    # Ensure new columns exist for existing databases
-    with engine.connect() as connection:
-        # Check messages table
-        result = connection.execute(text("PRAGMA table_info(messages)"))
-        columns = {row[1] for row in result}
-        if columns and "image_url" not in columns:
-            connection.execute(text("ALTER TABLE messages ADD COLUMN image_url TEXT"))
-            connection.commit()
-        if columns and "target_user_id" not in columns:
-            connection.execute(text("ALTER TABLE messages ADD COLUMN target_user_id INTEGER"))
-            connection.commit()
-        
-        # Check users table
-        result = connection.execute(text("PRAGMA table_info(users)"))
-        user_columns = {row[1] for row in result}
-        if user_columns and "profile_picture_url" not in user_columns:
-            connection.execute(text("ALTER TABLE users ADD COLUMN profile_picture_url TEXT"))
-            connection.commit()
-        if user_columns and "display_name" not in user_columns:
-            connection.execute(text("ALTER TABLE users ADD COLUMN display_name TEXT"))
-            connection.execute(text("UPDATE users SET display_name = username WHERE display_name IS NULL"))
-            connection.commit()
-        if user_columns and "display_name_updated_at" not in user_columns:
-            connection.execute(text("ALTER TABLE users ADD COLUMN display_name_updated_at DATETIME"))
-            connection.commit()
-        if user_columns and "updated_at" not in user_columns:
-            # SQLite doesn't allow non-constant defaults in ALTER TABLE
-            connection.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
-            connection.execute(text("UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
-            connection.commit()
-    
-        # Check channels table for is_data_processor column
-        result = connection.execute(text("PRAGMA table_info(channels)"))
-        channel_columns = {row[1] for row in result}
-        if channel_columns and "is_data_processor" not in channel_columns:
-            connection.execute(text("ALTER TABLE channels ADD COLUMN is_data_processor BOOLEAN DEFAULT 0"))
-            connection.commit()
+    # Preserve SQLite compatibility for old local databases.
+    if engine.dialect.name == "sqlite":
+        with engine.connect() as connection:
+            # Check messages table
+            result = connection.execute(text("PRAGMA table_info(messages)"))
+            columns = {row[1] for row in result}
+            if columns and "image_url" not in columns:
+                connection.execute(text("ALTER TABLE messages ADD COLUMN image_url TEXT"))
+                connection.commit()
+            if columns and "target_user_id" not in columns:
+                connection.execute(
+                    text("ALTER TABLE messages ADD COLUMN target_user_id INTEGER")
+                )
+                connection.commit()
+
+            # Check users table
+            result = connection.execute(text("PRAGMA table_info(users)"))
+            user_columns = {row[1] for row in result}
+            if user_columns and "profile_picture_url" not in user_columns:
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN profile_picture_url TEXT")
+                )
+                connection.commit()
+            if user_columns and "display_name" not in user_columns:
+                connection.execute(text("ALTER TABLE users ADD COLUMN display_name TEXT"))
+                connection.execute(
+                    text(
+                        "UPDATE users SET display_name = username "
+                        "WHERE display_name IS NULL"
+                    )
+                )
+                connection.commit()
+            if user_columns and "display_name_updated_at" not in user_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE users "
+                        "ADD COLUMN display_name_updated_at DATETIME"
+                    )
+                )
+                connection.commit()
+            if user_columns and "updated_at" not in user_columns:
+                # SQLite doesn't allow non-constant defaults in ALTER TABLE
+                connection.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
+                connection.execute(
+                    text(
+                        "UPDATE users SET updated_at = CURRENT_TIMESTAMP "
+                        "WHERE updated_at IS NULL"
+                    )
+                )
+                connection.commit()
+
+            # Check channels table for is_data_processor column
+            result = connection.execute(text("PRAGMA table_info(channels)"))
+            channel_columns = {row[1] for row in result}
+            if channel_columns and "is_data_processor" not in channel_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE channels "
+                        "ADD COLUMN is_data_processor BOOLEAN DEFAULT 0"
+                    )
+                )
+                connection.commit()
     
     # Create default channels on startup
     from src.core.database import SessionLocal
@@ -84,29 +109,6 @@ async def lifespan(app: FastAPI):
             db.add(new_channel)
     db.commit()
 
-    # Reset #game memberships and sessions, keep guest2 only
-    game_channel = db.query(Channel).filter(Channel.name == "#game").first()
-    if game_channel:
-        channel_id = game_channel.id
-        sessions = db.query(GameSession).filter(GameSession.channel_id == channel_id).all()
-        game_state_ids = [session.game_state_id for session in sessions if session.game_state_id is not None]
-        for session in sessions:
-            db.delete(session)
-        if game_state_ids:
-            db.query(GameState).filter(GameState.id.in_(game_state_ids)).delete(synchronize_session=False)
-        db.query(Membership).filter(Membership.channel_id == channel_id).delete(synchronize_session=False)
-
-        guest_users = db.query(User).filter(
-            User.username.like("guest_%"),
-            User.username != "guest2",
-        ).all()
-        npc_users = db.query(User).filter(User.username.like("npc_%")).all()
-        for user in guest_users + npc_users:
-            db.query(Membership).filter(Membership.user_id == user.id).delete(synchronize_session=False)
-            db.query(GameSession).filter(GameSession.user_id == user.id).delete(synchronize_session=False)
-            db.query(GameState).filter(GameState.user_id == user.id).delete(synchronize_session=False)
-            db.delete(user)
-        db.commit()
     db.close()
     
     # Start Redis event subscriber for auto-join functionality

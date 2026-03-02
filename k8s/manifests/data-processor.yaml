@@ -36,6 +36,11 @@ spec:
               value: "*"
             - name: DEBUG
               value: "false"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: DB_PASSWORD
           resources:
             requests:
               memory: "256Mi"

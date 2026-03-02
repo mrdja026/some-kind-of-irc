@@ -1,1 +1,1 @@
-"""Storage package for in-memory document and template storage."""
+"""Storage package for persistent document and template storage."""
