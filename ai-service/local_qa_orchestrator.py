@@ -53,28 +53,66 @@ class LocalQAOrchestrator:
 
     def __init__(self) -> None:
         self._llm: Optional[Any] = None
+        self._llm_model_name: Optional[str] = None
+        self._last_model_mismatch: Optional[tuple[str, str]] = None
 
-    def _ensure_llm(self) -> Any:
-        if self._llm is not None:
+    def _ensure_llm(self, model_name: str) -> Any:
+        if self._llm is not None and self._llm_model_name == model_name:
             return self._llm
         if LLM is None:
             raise RuntimeError("CrewAI is not installed.")
         self._llm = LLM(
-            model=f"openai/{settings.LOCAL_QA_MODEL_NAME}",
+            model=f"openai/{model_name}",
             base_url=settings.LOCAL_QA_VLLM_BASE_URL,
             api_key=settings.LOCAL_QA_API_KEY,
         )
+        self._llm_model_name = model_name
         return self._llm
 
-    async def is_local_ai_online(self) -> bool:
+    async def _fetch_served_model_ids(self) -> list[str]:
         base = settings.LOCAL_QA_VLLM_BASE_URL.rstrip("/")
         url = f"{base}/models"
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
                 response = await client.get(url)
-            return response.status_code == 200
+            if response.status_code != 200:
+                return []
+            payload = response.json()
+            data = payload.get("data", []) if isinstance(payload, dict) else []
+            model_ids: list[str] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                model_id = item.get("id")
+                if isinstance(model_id, str) and model_id.strip():
+                    model_ids.append(model_id.strip())
+            return model_ids
         except Exception:
-            return False
+            return []
+
+    async def _resolve_model_name(self) -> Optional[str]:
+        configured = settings.LOCAL_QA_MODEL_NAME.strip()
+        served_model_ids = await self._fetch_served_model_ids()
+        if not served_model_ids:
+            return None
+
+        if configured and configured in served_model_ids:
+            return configured
+
+        selected = served_model_ids[0]
+        mismatch = (configured, selected)
+        if configured and configured != selected and self._last_model_mismatch != mismatch:
+            logger.warning(
+                "Configured LOCAL_QA_MODEL_NAME=%r not found in served models %r; using %r.",
+                configured,
+                served_model_ids,
+                selected,
+            )
+            self._last_model_mismatch = mismatch
+        return selected
+
+    async def is_local_ai_online(self) -> bool:
+        return bool(await self._fetch_served_model_ids())
 
     def is_supported_topic(self, query: str) -> bool:
         text = query.lower()
@@ -84,10 +122,11 @@ class LocalQAOrchestrator:
         return _DEFAULT_FALLBACK
 
     async def generate_greeting(self) -> tuple[str, str]:
-        if not await self.is_local_ai_online():
+        model_name = await self._resolve_model_name()
+        if not model_name:
             return self.fallback_message(), "System"
         try:
-            llm = self._ensure_llm()
+            llm = self._ensure_llm(model_name)
             if Agent is None or Crew is None or Task is None or Process is None:
                 raise RuntimeError("CrewAI runtime is unavailable.")
 
@@ -119,10 +158,11 @@ class LocalQAOrchestrator:
             return "Hello, how can I help you with art or photography today?", "System"
 
     async def answer_query(self, query: str, history: Optional[list[dict[str, str]]] = None) -> tuple[str, str]:
-        if not await self.is_local_ai_online():
+        model_name = await self._resolve_model_name()
+        if not model_name:
             return self.fallback_message(), "System"
         try:
-            llm = self._ensure_llm()
+            llm = self._ensure_llm(model_name)
             if Agent is None or Crew is None or Task is None or Process is None:
                 raise RuntimeError("CrewAI runtime is unavailable.")
 

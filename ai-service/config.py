@@ -33,8 +33,8 @@ class Settings(BaseSettings):
 
     # Local Q&A configuration (CrewAI + local vLLM)
     FEATURE_LOCAL_QA: bool = True
-    LOCAL_QA_VLLM_BASE_URL: str = "http://host.docker.internal:8000/v1"
-    LOCAL_QA_MODEL_NAME: str = "katanemo/Arch-Function-3B"
+    LOCAL_QA_VLLM_BASE_URL: str = "http://host.docker.internal:8066/v1"
+    LOCAL_QA_MODEL_NAME: str = "phi3-mini"
     LOCAL_QA_API_KEY: str = "NA"
 
 

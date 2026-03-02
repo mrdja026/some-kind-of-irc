@@ -5,8 +5,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     SERVICE_HOST=0.0.0.0 \
     SERVICE_PORT=8100 \
-    VLLM_PORT=8000 \
-    VLLM_API_URL=http://localhost:8000/v1/completions \
+    VLLM_PORT=8066 \
+    VLLM_API_URL=http://localhost:8066/v1/completions \
     VLLM_MODEL_ID=katanemo/Arch-Function-3B
 
 RUN apt-get update \
@@ -26,6 +26,6 @@ RUN python3 -m pip install -U pip \
 
 COPY . /app
 
-EXPOSE 8000 8100
+EXPOSE 8066 8100
 
 CMD ["bash", "-lc", "python /app/quant_arch_function_3b.py"]

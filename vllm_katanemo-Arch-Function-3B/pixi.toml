@@ -1,7 +1,7 @@
 [project]
 name = "arch-function-3b-local"
 version = "0.1.0"
-description = "Local vLLM + Streamlit UI for Arch-Function-3B"
+description = "Local vLLM analyzer for art/photography workflows"
 channels = ["conda-forge"]
 platforms = ["linux-64"]
 
@@ -11,5 +11,5 @@ pip = "*"
 
 [tasks]
 install = "python -m pip install -r requirements-app.txt"
-api = { cmd = "python quant_arch_function_3b.py", depends_on = ["install"] }
-all = { cmd = "python quant_arch_function_3b.py", depends_on = ["install"] }
+api = { cmd = "python quant_arch_function_3b.py", depends-on = ["install"] }
+all = { cmd = "bash -lc 'if [ -z \"$VLLM_MODEL_ID\" ]; then export VLLM_MODEL_ID=\"Sreenington/Phi-3-mini-4k-instruct-AWQ\"; fi; if [ -z \"$VLLM_SERVED_MODEL_NAME\" ]; then export VLLM_SERVED_MODEL_NAME=\"phi3-mini\"; fi; if [ -z \"$VLLM_TOKENIZER\" ]; then export VLLM_TOKENIZER=\"microsoft/Phi-3-mini-4k-instruct\"; fi; if [ -z \"$VLLM_QUANTIZATION\" ]; then export VLLM_QUANTIZATION=\"awq\"; fi; if [ -z \"$VLLM_LOAD_FORMAT\" ]; then export VLLM_LOAD_FORMAT=\"auto\"; fi; if [ -z \"$VLLM_DTYPE\" ]; then export VLLM_DTYPE=\"half\"; fi; if [ -z \"$VLLM_MAX_MODEL_LEN\" ]; then export VLLM_MAX_MODEL_LEN=\"4096\"; fi; if [ -z \"$VLLM_GPU_MEMORY_UTILIZATION\" ]; then export VLLM_GPU_MEMORY_UTILIZATION=\"0.75\"; fi; if [ -z \"$VLLM_ENFORCE_EAGER\" ]; then export VLLM_ENFORCE_EAGER=\"true\"; fi; if [ -z \"$PYTORCH_CUDA_ALLOC_CONF\" ]; then export PYTORCH_CUDA_ALLOC_CONF=\"expandable_segments:True\"; fi; python quant_arch_function_3b.py'", depends-on = ["install"] }

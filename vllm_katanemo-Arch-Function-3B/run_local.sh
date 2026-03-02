@@ -40,19 +40,31 @@ fi
 
 export SERVICE_HOST="0.0.0.0"
 export SERVICE_PORT="8100"
-export VLLM_PORT="8000"
+export VLLM_PORT="8066"
 export VLLM_API_URL="http://localhost:${VLLM_PORT}/v1/completions"
-export VLLM_MODEL_ID="${VLLM_MODEL_ID:-$PROJECT_DIR/models/Arch-Function-3B-Q6_K.gguf}"
 export VLLM_SERVED_MODEL_NAME="${VLLM_SERVED_MODEL_NAME:-katanemo/Arch-Function-3B}"
 export VLLM_TOKENIZER="${VLLM_TOKENIZER:-katanemo/Arch-Function-3B}"
-export VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-gguf}"
 export VLLM_LOAD_FORMAT="${VLLM_LOAD_FORMAT:-gguf}"
-export VLLM_DTYPE="${VLLM_DTYPE:-auto}"
-export VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-2048}"
-export VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.55}"
 export VLLM_ENFORCE_EAGER="${VLLM_ENFORCE_EAGER:-true}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+# Point directly to the Hugging Face repo
+export VLLM_MODEL_ID="Sreenington/Phi-3-mini-4k-instruct-AWQ"
 
+# Force AWQ quantization to reduce weight size
+export VLLM_QUANTIZATION="awq"
+
+# Crucial for 6GB VRAM: 0.65 means vLLM will only take ~3.9GB total.
+# This leaves ~2.1GB for your operating system and display manager.
+export VLLM_GPU_MEMORY_UTILIZATION="0.72"
+
+# Match the model's maximum context length (4096 tokens)
+export VLLM_MAX_MODEL_LEN="4096"
+
+# Half-precision is standard for AWQ models
+export VLLM_DTYPE="half"
+
+# (Optional but recommended) Give it a clean alias for CrewAI to call
+export VLLM_SERVED_MODEL_NAME="phi3-mini"
 if [[ "$VLLM_MODEL_ID" == *.gguf ]] && [[ ! -f "$VLLM_MODEL_ID" ]]; then
   echo "GGUF model file not found: $VLLM_MODEL_ID"
   echo "Set VLLM_MODEL_ID to a valid Q6 GGUF file path and retry."

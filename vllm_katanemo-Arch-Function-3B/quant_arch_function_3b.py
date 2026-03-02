@@ -29,7 +29,7 @@ VLLM_MAX_MODEL_LEN = os.getenv("VLLM_MAX_MODEL_LEN", "8192")
 VLLM_GPU_MEMORY_UTILIZATION = os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.85")
 VLLM_ENFORCE_EAGER = os.getenv("VLLM_ENFORCE_EAGER", "false").lower() == "true"
 VLLM_EXTRA_ARGS = os.getenv("VLLM_EXTRA_ARGS", "").strip()
-VLLM_PORT = int(os.getenv("VLLM_PORT", "8000"))
+VLLM_PORT = int(os.getenv("VLLM_PORT", "8066"))
 VLLM_API_URL = os.getenv("VLLM_API_URL", f"http://localhost:{VLLM_PORT}/v1/completions")
 AUTO_START_VLLM = os.getenv("AUTO_START_VLLM", "true").lower() == "true"
 VLLM_WARMUP_SECONDS = int(os.getenv("VLLM_WARMUP_SECONDS", "60"))
@@ -85,40 +85,47 @@ def start_vllm_server() -> Optional[subprocess.Popen]:
     if not AUTO_START_VLLM:
         logger.info("AUTO_START_VLLM disabled; assuming server already running")
         return None
+        
     vllm_bin = os.path.join(os.path.dirname(sys.executable), "vllm")
+    
     cmd = [
         vllm_bin,
         "serve",
         MODEL_ID,
-        "--port",
-        str(VLLM_PORT),
-        "--dtype",
-        VLLM_DTYPE,
-        "--max-model-len",
-        VLLM_MAX_MODEL_LEN,
-        "--gpu-memory-utilization",
-        VLLM_GPU_MEMORY_UTILIZATION,
-        "--served-model-name",
-        SERVED_MODEL_NAME,
+        "--port", str(VLLM_PORT),
+        "--dtype", VLLM_DTYPE,
+        "--max-model-len", VLLM_MAX_MODEL_LEN,
+        "--gpu-memory-utilization", VLLM_GPU_MEMORY_UTILIZATION,
+        "--served-model-name", SERVED_MODEL_NAME,
+        "--enable-auto-tool-choice",      # Natively enables tool calling for agents
+        "--tool-call-parser", "hermes",   # Best fallback parser for quantized agent models
     ]
+    
     if VLLM_TOKENIZER:
         cmd.extend(["--tokenizer", VLLM_TOKENIZER])
+        
     if VLLM_QUANTIZATION:
         cmd.extend(["--quantization", VLLM_QUANTIZATION])
+        
     effective_load_format = VLLM_LOAD_FORMAT
     if not effective_load_format and VLLM_QUANTIZATION == "gguf":
         effective_load_format = "gguf"
     if effective_load_format:
         cmd.extend(["--load-format", effective_load_format])
+        
     if VLLM_ENFORCE_EAGER:
         cmd.append("--enforce-eager")
+        
     if VLLM_EXTRA_ARGS:
         cmd.extend(shlex.split(VLLM_EXTRA_ARGS))
-    logger.info("Launching vLLM: %s", " ".join(cmd))
+        
+    logger.info("Launching vLLM with Tool Support: %s", " ".join(cmd))
+    
     env = os.environ.copy()
     env.setdefault("TORCH_COMPILE_DISABLE", "1")
     env.setdefault("TORCHINDUCTOR_DISABLE", "1")
     env.setdefault("VLLM_DISABLE_TORCH_COMPILE", "1")
+    
     proc = subprocess.Popen(cmd, env=env)
     time.sleep(VLLM_WARMUP_SECONDS)
     return proc

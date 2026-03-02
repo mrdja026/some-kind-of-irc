@@ -13,10 +13,15 @@ The system SHALL provide a local AI channel identified as `#qa-local` and shown 
 
 ### Requirement: Local AI query endpoints for Q&A local
 The `ai-service` SHALL expose non-streaming local AI endpoints at `/ai/local/status` and `/ai/local/query` for the `#qa-local` flow.
+The local vLLM integration default base URL SHALL be `http://host.docker.internal:8066/v1`.
 
 #### Scenario: Local AI status is requested
 - **WHEN** an authorized user requests `/ai/local/status`
 - **THEN** the service returns current local AI availability status
+
+#### Scenario: Local vLLM default endpoint is applied
+- **WHEN** local Q&A is enabled without overriding `LOCAL_QA_VLLM_BASE_URL`
+- **THEN** the service targets `http://host.docker.internal:8066/v1`
 
 #### Scenario: Local AI query succeeds
 - **WHEN** an authorized user sends an art/photography request to `/ai/local/query`

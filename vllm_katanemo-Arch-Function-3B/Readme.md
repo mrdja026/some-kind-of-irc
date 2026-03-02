@@ -178,13 +178,13 @@ Persistent memory (saving to disk) can be added by dumping `history` to JSON on 
 While the chat script runs, the server also exposes an **OpenAI-compatible endpoint**:
 
 ```
-POST http://localhost:8000/v1/completions
+POST http://localhost:8066/v1/completions
 ```
 
 Example curl:
 
 ```bash
-curl http://localhost:8000/v1/completions \
+curl http://localhost:8066/v1/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"katanemo/Arch-Function-3B","prompt":"Hello!","max_tokens":50}'
 ```
@@ -215,6 +215,5 @@ Refer to [katanemo/Arch-Function-3B on Hugging Face](https://huggingface.co/kata
 * [vLLM Team](https://github.com/vllm-project/vllm) for the inference engine
 * [Katanemo AI](https://huggingface.co/katanemo) for Arch-Function-3B
 * Script & docs adapted by @ Mrdjan Stajić 2025
-
 
 

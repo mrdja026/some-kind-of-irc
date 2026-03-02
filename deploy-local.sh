@@ -65,8 +65,8 @@ export LOCAL_QA_RATE_LIMIT_PER_HOUR="${LOCAL_QA_RATE_LIMIT_PER_HOUR:-100}"
 export AI_SERVICE_API_KEY="${AI_SERVICE_API_KEY:-}"
 export AI_API_SERVICE_KEY="${AI_API_SERVICE_KEY:-}"
 export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest2;guest3}"
-export LOCAL_QA_VLLM_BASE_URL="${LOCAL_QA_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}"
-export LOCAL_QA_MODEL_NAME="${LOCAL_QA_MODEL_NAME:-katanemo/Arch-Function-3B}"
+export LOCAL_QA_VLLM_BASE_URL="${LOCAL_QA_VLLM_BASE_URL:-http://host.docker.internal:8066/v1}"
+export LOCAL_QA_MODEL_NAME="${LOCAL_QA_MODEL_NAME:-phi3-mini}"
 export LOCAL_QA_API_KEY="${LOCAL_QA_API_KEY:-NA}"
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   if [ -n "$AI_API_SERVICE_KEY" ]; then
@@ -233,7 +233,7 @@ Deploy summary
 - Backend API:         http://localhost:8002
 - AI Service:          http://localhost:8080/ai/
 - Q&A local channel:   #qa-local (shown as Q&A local)
-- Local vLLM endpoint: http://host.docker.internal:8000/v1
+- Local vLLM endpoint: http://host.docker.internal:8066/v1
 - Data Processor:      http://localhost:8080/data-processor/
 - Media proxy:         http://localhost:8080/media/...
 - MinIO console:       http://localhost:9001
