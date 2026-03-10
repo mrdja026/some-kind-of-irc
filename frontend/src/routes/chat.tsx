@@ -24,7 +24,7 @@ import {
 } from '../api/server'
 import { useChatSocket } from '../hooks/useChatSocket'
 import { useUserProfileInvalidation } from '../hooks/useUserProfileInvalidation'
-import type { Channel, Message, User } from '../types'
+import type { AIIntent, Channel, Message, User } from '../types'
 import {
   Home,
   LogIn,
@@ -292,6 +292,7 @@ function ChatPage() {
   const [channelModes, setChannelModes] = useState<
     Record<number, 'chat' | 'ai' | 'game' | 'localqa'>
   >({})
+  const [pendingAiIntent, setPendingAiIntent] = useState<AIIntent | null>(null)
   const [showCreateChannel, setShowCreateChannel] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
   const [newChannelType, setNewChannelType] = useState<'public' | 'private'>(
@@ -903,14 +904,17 @@ function ChatPage() {
           return
         case 'ai':
           setChannelMode('ai')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'chat':
           setChannelMode('chat')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'game':
           setChannelMode('game')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'qa-local':
@@ -933,16 +937,13 @@ function ChatPage() {
           } catch (error) {
             console.error('Failed to switch to Q&A local:', error)
           }
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'gmail-helper':
         case 'gmail-agent':
           setChannelMode('ai')
-          // We need to trigger the gmail intent on the AI channel
-          // Since we can't pass props imperatively here easily without context ref,
-          // we'll rely on the user seeing the 'Summarize my Gmail' option or
-          // implementing a more robust command-to-intent bridge later.
-          // For now, let's just switch to AI mode.
+          setPendingAiIntent('gmail')
           setMessageInput('')
           return
         default:
@@ -1327,17 +1328,27 @@ function ChatPage() {
                 onCommand={(command) => {
                   if (command === 'chat') {
                     setChannelMode('chat')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'ai') {
                     setChannelMode('ai')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'game') {
                     setChannelMode('game')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'localqa') {
                     setChannelMode('localqa')
+                    setPendingAiIntent(null)
+                  }
+                  if (command === 'gmail-helper' || command === 'gmail-agent') {
+                    setChannelMode('ai')
+                    setPendingAiIntent('gmail')
                   }
                 }}
+                requestedIntent={pendingAiIntent}
+                onIntentHandled={() => setPendingAiIntent(null)}
               />
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel

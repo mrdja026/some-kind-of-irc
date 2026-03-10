@@ -136,14 +136,21 @@ export const getUserById = async (userId: number): Promise<User> => {
 };
 
 export const generateGmailQuestions = async (
+  emails: any[],
   interest: string,
-  previousAnswers: string[] = []
+  previousAnswers: string[] = [],
+  questionCount = 2,
 ): Promise<{ questions: string[] }> => {
   const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ interest, previous_answers: previousAnswers }),
+    body: JSON.stringify({
+      emails,
+      interest,
+      previous_answers: previousAnswers,
+      question_count: questionCount,
+    }),
   });
   if (!response.ok) {
     throw new Error('Failed to generate questions');

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   createDirectMessageChannel,
@@ -53,6 +53,8 @@ interface AIChannelProps {
   showHeader?: boolean
   currentUserId?: number | null
   onCommand?: (command: string) => void
+  requestedIntent?: AIIntent | null
+  onIntentHandled?: () => void
 }
 
 type ConversationEntry = {
@@ -187,6 +189,8 @@ export function AIChannel({
   showHeader = true,
   currentUserId,
   onCommand,
+  requestedIntent,
+  onIntentHandled,
 }: AIChannelProps) {
   const [selectedIntent, setSelectedIntent] = useState<AIIntent | null>(null)
   const [query, setQuery] = useState('')
@@ -246,7 +250,7 @@ export function AIChannel({
   const aiAccessMessage =
     aiStatusError instanceof Error ? aiStatusError.message : null
 
-  const handleIntentSelect = async (intent: AIIntent | 'gmail') => {
+  const handleIntentSelect = useCallback(async (intent: AIIntent | 'gmail') => {
     // Reset standard AI state
     setClarificationState(null)
     setActiveQuestion(null)
@@ -282,21 +286,28 @@ export function AIChannel({
         const { emails } = await fetchGmailMessages()
         setGmailEmails(emails)
         setGmailStage('quiz')
+
+        setStreamProgress('Generating first question...')
+        const { questions } = await generateGmailQuestions(emails, '', [], 1)
+        const firstQuestion =
+          questions?.[0] ||
+          'What are your primary interests? (e.g., Tech news, Finance, Photography...)'
+        const q1 = `Step 1: ${firstQuestion}`
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            intent: 'gmail',
+            query: '',
+            response: q1,
+            agent: 'Gmail Agent',
+            disclaimer: '',
+            mode: 'agent_message' as any,
+          },
+        ])
+        setActiveQuestion(q1)
         setStreamProgress(null)
         setIsSubmitting(false)
-        
-        // Initial Question
-        const q1 = "Step 1: What are your primary interests? (e.g., Tech news, Finance, Photography...)"
-        setResponses(prev => [...prev, {
-          id: Date.now() + 1,
-          intent: 'gmail',
-          query: '',
-          response: q1,
-          agent: 'Gmail Agent',
-          disclaimer: '',
-          mode: 'agent_message' as any
-        }])
-        setActiveQuestion(q1)
       } catch (e) {
         setStreamError('Failed to fetch Gmail messages. Are you connected?')
         setSelectedIntent(null)
@@ -305,7 +316,15 @@ export function AIChannel({
     } else {
       setSelectedIntent(intent as AIIntent)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!requestedIntent) {
+      return
+    }
+    void handleIntentSelect(requestedIntent)
+    onIntentHandled?.()
+  }, [requestedIntent, handleIntentSelect, onIntentHandled])
 
   const handleGmailSubmit = async (answer: string) => {
     if (!answer.trim()) return
@@ -330,44 +349,61 @@ export function AIChannel({
     try {
       // Step 1: Initial Interest -> Get 2 Questions
       if (gmailAnswers.length === 0) {
-        const { questions } = await generateGmailQuestions(answer)
-        setGmailQuestions(questions)
+        const { questions } = await generateGmailQuestions(
+          gmailEmails,
+          answer,
+          [],
+          2,
+        )
+        const followUpQuestions = questions ?? []
+        setGmailQuestions(followUpQuestions)
         setGmailAnswers([answer])
         setStreamProgress(null)
-        
+
+        const nextQuestionText =
+          followUpQuestions[0] || 'What should we prioritize next?'
         // Push next question to chat
-        const nextQ = `Step 2: ${questions[0]}`
-        setResponses(prev => [...prev, {
-          id: Date.now() + 1,
-          intent: 'gmail',
-          query: '', // No query for AI-initiated message
-          response: nextQ,
-          agent: 'Gmail Agent',
-          disclaimer: '',
-          mode: 'agent_message' as any
-        }])
+        const nextQ = `Step 2: ${nextQuestionText}`
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            intent: 'gmail',
+            query: '',
+            response: nextQ,
+            agent: 'Gmail Agent',
+            disclaimer: '',
+            mode: 'agent_message' as any,
+          },
+        ])
         setActiveQuestion(nextQ)
-      } 
+      }
       // Step 2 & 3: Answer Follow-ups
       else if (gmailAnswers.length < 3) {
         const newAnswers = [...gmailAnswers, answer]
         setGmailAnswers(newAnswers)
         
-        if (newAnswers.length < 3) {
-           // Ask next question
-           const nextQ = `Step ${newAnswers.length + 1}: ${gmailQuestions[newAnswers.length - 1]}`
-           setResponses(prev => [...prev, {
-             id: Date.now() + 1,
-             intent: 'gmail',
-             query: '',
-             response: nextQ,
-             agent: 'Gmail Agent',
-             disclaimer: '',
-             mode: 'agent_message' as any
-           }])
-           setActiveQuestion(nextQ)
-           setStreamProgress(null)
-        } else {
+         if (newAnswers.length < 3) {
+            const followUpQuestion =
+              gmailQuestions[newAnswers.length - 1] || 'Any other priorities?'
+            // Ask next question
+            const nextQ = `Step ${newAnswers.length + 1}: ${followUpQuestion}`
+            setResponses((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                intent: 'gmail',
+                query: '',
+                response: nextQ,
+                agent: 'Gmail Agent',
+                disclaimer: '',
+                mode: 'agent_message' as any,
+              },
+            ])
+            setActiveQuestion(nextQ)
+            setStreamProgress(null)
+         } else {
+
           // Quiz complete, generate summary
           setGmailStage('analyzing')
           setStreamProgress('Analyzing 100 emails and generating summary...')
