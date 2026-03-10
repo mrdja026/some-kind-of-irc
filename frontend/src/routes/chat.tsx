@@ -41,6 +41,7 @@ import {
 import { AIChannel } from '../components/AIChannel'
 import { GameChannel } from '../components/GameChannel'
 import { DataProcessorChannel } from '../components/DataProcessorChannel'
+import { LocalQAChannel } from '../components/LocalQAChannel'
 import { MentionAutocomplete } from '../components/MentionAutocomplete'
 import { UserProfileModal } from '../components/UserProfileModal'
 import { UserContextMenu } from '../components/UserContextMenu'
@@ -289,7 +290,7 @@ function ChatPage() {
   const messagesLengthRef = useRef<number>(0)
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [channelModes, setChannelModes] = useState<
-    Record<number, 'chat' | 'ai' | 'game'>
+    Record<number, 'chat' | 'ai' | 'game' | 'localqa'>
   >({})
   const [showCreateChannel, setShowCreateChannel] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
@@ -371,12 +372,14 @@ function ChatPage() {
       ? 'ai'
       : selectedChannel?.name === '#game'
         ? 'game'
+        : selectedChannel?.name === '#qa-local'
+          ? 'localqa'
         : 'chat'
   const activeMode = selectedChannelId
     ? (channelModes[selectedChannelId] ?? defaultMode)
     : 'chat'
 
-  const setChannelMode = (mode: 'chat' | 'ai' | 'game') => {
+  const setChannelMode = (mode: 'chat' | 'ai' | 'game' | 'localqa') => {
     if (!selectedChannelId) return
     setChannelModes((prev) => ({ ...prev, [selectedChannelId]: mode }))
   }
@@ -436,6 +439,10 @@ function ChatPage() {
   const selectedChannelLabel = useMemo(() => {
     if (!selectedChannel) {
       return selectedChannelId ? `Channel ${selectedChannelId}` : 'Channel'
+    }
+
+    if (selectedChannel.name === '#qa-local') {
+      return 'Q&A local'
     }
 
     if (selectedChannel.type !== 'private' || !user) {
@@ -604,6 +611,8 @@ function ChatPage() {
     setActiveChannel(channel.id)
     if (channel.name === '#ai') {
       setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
+    } else if (channel.name === '#qa-local') {
+      setChannelModes((prev) => ({ ...prev, [channel.id]: 'localqa' }))
     }
     // Join channel if not already joined
     try {
@@ -812,6 +821,8 @@ function ChatPage() {
                 await refetchChannels() // Refetch channels to update list
                 if (channel.name === '#ai') {
                   setChannelModes((prev) => ({ ...prev, [channel.id]: 'ai' }))
+                } else if (channel.name === '#qa-local') {
+                  setChannelModes((prev) => ({ ...prev, [channel.id]: 'localqa' }))
                 }
                 setActiveChannel(channel.id) // Join the channel
               } else {
@@ -900,6 +911,28 @@ function ChatPage() {
           return
         case 'game':
           setChannelMode('game')
+          setMessageInput('')
+          return
+        case 'qa-local':
+          try {
+            const localChannels = await searchChannels('#qa-local')
+            const localChannel = localChannels.find(
+              (channel) => channel.name === '#qa-local',
+            )
+            if (localChannel) {
+              await joinChannel(localChannel.id)
+              await refetchChannels()
+              setChannelModes((prev) => ({
+                ...prev,
+                [localChannel.id]: 'localqa',
+              }))
+              setActiveChannel(localChannel.id)
+            } else {
+              console.error('Q&A local channel not found')
+            }
+          } catch (error) {
+            console.error('Failed to switch to Q&A local:', error)
+          }
           setMessageInput('')
           return
         case 'gmail-helper':
@@ -1248,6 +1281,20 @@ function ChatPage() {
                   >
                     AI
                   </button>
+                  {selectedChannel?.name === '#qa-local' && (
+                    <button
+                      type="button"
+                      onClick={() => setChannelMode('localqa')}
+                      disabled={isInteractionDisabled}
+                      className={`px-2 md:px-3 py-2 text-xs md:text-sm rounded transition-colors min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed ${
+                        activeMode === 'localqa'
+                          ? 'chat-send-button'
+                          : 'chat-attach-button'
+                      }`}
+                    >
+                      Local Q&A
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setChannelMode('game')}
@@ -1287,7 +1334,16 @@ function ChatPage() {
                   if (command === 'game') {
                     setChannelMode('game')
                   }
+                  if (command === 'localqa') {
+                    setChannelMode('localqa')
+                  }
                 }}
+              />
+            ) : activeMode === 'localqa' ? (
+              <LocalQAChannel
+                channelId={selectedChannelId}
+                channelName={selectedChannelLabel}
+                currentUserId={user?.id ?? null}
               />
             ) : activeMode === 'game' ? (
               <GameChannel

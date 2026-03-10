@@ -75,6 +75,8 @@ async def lifespan(app: FastAPI):
     # Add data-processor channel if feature is enabled
     if settings.data_processor_enabled:
         default_channels.append("#data-processor")
+    if settings.local_qa_enabled:
+        default_channels.append(settings.LOCAL_QA_CHANNEL_NAME)
     
     for channel_name in default_channels:
         db_channel = db.query(Channel).filter(Channel.name == channel_name).first()

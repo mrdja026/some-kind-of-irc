@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # AI rate limiting
     AI_RATE_LIMIT_PER_HOUR: int = 10
+    LOCAL_QA_RATE_LIMIT_PER_HOUR: int = 20
 
     # Development diagnostics
     AI_DEBUG_LOG: bool = False
@@ -29,6 +30,12 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
+
+    # Local Q&A configuration (CrewAI + local vLLM)
+    FEATURE_LOCAL_QA: bool = True
+    LOCAL_QA_VLLM_BASE_URL: str = "http://host.docker.internal:8066/v1"
+    LOCAL_QA_MODEL_NAME: str = "phi3-mini"
+    LOCAL_QA_API_KEY: str = "NA"
 
 
 settings = Settings()
