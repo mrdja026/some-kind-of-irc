@@ -182,13 +182,21 @@ echo "Starting infra services (postgres, redis, redis-log, redis-log-sink, minio
 "${COMPOSE_CMD[@]}" up -d postgres redis redis-log redis-log-sink minio
 
 echo "Waiting for Postgres to become ready..."
+POSTGRES_READY=0
 for _ in {1..40}; do
   if "${COMPOSE_CMD[@]}" exec -T postgres sh -lc 'PGPASSWORD="$(cat /run/secrets/pg_app_password)" pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
     echo "Postgres is up."
+    POSTGRES_READY=1
     break
   fi
   sleep 2
 done
+
+if [ "$POSTGRES_READY" -ne 1 ]; then
+  echo "Error: Postgres did not become ready within timeout"
+  "${COMPOSE_CMD[@]}" logs --tail=50 postgres || true
+  exit 1
+fi
 
 echo "Running backend Alembic migrations..."
 "${COMPOSE_CMD[@]}" run --rm backend alembic upgrade head

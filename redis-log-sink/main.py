@@ -62,17 +62,34 @@ class LogLineHandler(socketserver.StreamRequestHandler):
             except json.JSONDecodeError:
                 payload = {"msg": raw_line}
 
+            if not isinstance(payload, dict):
+                payload = {"msg": raw_line}
+
             level = str(payload.get("level", "")).lower()
             if level not in ALLOWED_LEVELS:
                 continue
 
             entry = _build_stream_entry(payload, raw_line, level)
-            redis_client.xadd(
-                REDIS_LOG_STREAM_KEY,
-                entry,
-                maxlen=REDIS_LOG_MAXLEN,
-                approximate=False,
-            )
+            try:
+                redis_client.xadd(
+                    REDIS_LOG_STREAM_KEY,
+                    entry,
+                    maxlen=REDIS_LOG_MAXLEN,
+                    approximate=False,
+                )
+            except redis.RedisError as exc:
+                LOG.error(
+                    "Redis error writing to stream %s: %s (entry: %r)",
+                    REDIS_LOG_STREAM_KEY,
+                    exc,
+                    entry,
+                )
+            except Exception as exc:
+                LOG.exception(
+                    "Unexpected error writing to stream %s: %s",
+                    REDIS_LOG_STREAM_KEY,
+                    exc,
+                )
 
         LOG.info("Stream closed from %s", peer)
 

@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     ADMIN_ALLOWLIST: str = "admina"
 
     # Browser origins allowed to call ai-service directly.
-    ALLOWED_ORIGINS: str = "http://localhost:4269,http://127.0.0.1:4269,http://localhost"
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:4269,http://127.0.0.1:4269,http://localhost"
+    )
 
     # Redis (shared with monolith for rate limiting)
     REDIS_URL: str = "redis://redis:6379/0"
@@ -33,8 +35,8 @@ class Settings(BaseSettings):
 
     # Local Q&A configuration (CrewAI + local vLLM)
     FEATURE_LOCAL_QA: bool = True
-    LOCAL_QA_VLLM_BASE_URL: str = "http://host.docker.internal:8066/v1"
-    LOCAL_QA_MODEL_NAME: str = "phi3-mini"
+    LOCAL_QA_VLLM_BASE_URL: str = "http://192.168.0.234:8666/v1"
+    LOCAL_QA_MODEL_NAME: str = "Qwen/Qwen3.5-4B"
     LOCAL_QA_API_KEY: str = "NA"
 
 

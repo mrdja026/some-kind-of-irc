@@ -108,7 +108,11 @@ class LocalQAOrchestrator:
 
         selected = served_model_ids[0]
         mismatch = (configured, selected)
-        if configured and configured != selected and self._last_model_mismatch != mismatch:
+        if (
+            configured
+            and configured != selected
+            and self._last_model_mismatch != mismatch
+        ):
             logger.warning(
                 "Configured LOCAL_QA_MODEL_NAME=%r not found in served models %r; using %r.",
                 configured,
@@ -137,7 +141,9 @@ class LocalQAOrchestrator:
         history: Optional[list[dict[str, str]]] = None,
     ) -> list[dict[str, str]]:
         query_text = _normalize_text(query)
-        messages: list[dict[str, str]] = [{"role": "system", "content": _STREAM_SYSTEM_PROMPT}]
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": _STREAM_SYSTEM_PROMPT}
+        ]
         cleaned_history: list[dict[str, str]] = []
 
         for item in history or []:
@@ -149,7 +155,11 @@ class LocalQAOrchestrator:
                 continue
             cleaned_history.append({"role": role, "content": content})
 
-        if cleaned_history and cleaned_history[-1]["role"] == "user" and cleaned_history[-1]["content"] == query_text:
+        if (
+            cleaned_history
+            and cleaned_history[-1]["role"] == "user"
+            and cleaned_history[-1]["content"] == query_text
+        ):
             cleaned_history = cleaned_history[:-1]
 
         for item in cleaned_history[-12:]:
@@ -172,14 +182,17 @@ class LocalQAOrchestrator:
         payload = {
             "model": resolved_model,
             "messages": self._build_stream_messages(query, history),
-            "temperature": 0.4,
+            "temperature": 0.7,
+            "max_tokens": 400,
             "stream": True,
         }
         headers = {"Authorization": f"Bearer {settings.LOCAL_QA_API_KEY}"}
 
         timeout = httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=30.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as response:
+            async with client.stream(
+                "POST", url, json=payload, headers=headers
+            ) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="ignore")
                     raise RuntimeError(
@@ -245,15 +258,26 @@ class LocalQAOrchestrator:
                 expected_output="A single concise greeting sentence.",
                 agent=greeter,
             )
-            crew = Crew(agents=[greeter], tasks=[task], process=Process.sequential, verbose=False)
+            crew = Crew(
+                agents=[greeter],
+                tasks=[task],
+                process=Process.sequential,
+                verbose=False,
+            )
             result = crew.kickoff()
             raw = _normalize_text(str(getattr(result, "raw", result)))
-            return (raw or "Hello, how can I help you with art or photography today?"), "Studio Greeter"
+            return (
+                raw or "Hello, how can I help you with art or photography today?"
+            ), "Studio Greeter"
         except Exception:
-            logger.exception("Local greeting generation failed, using deterministic fallback.")
+            logger.exception(
+                "Local greeting generation failed, using deterministic fallback."
+            )
             return "Hello, how can I help you with art or photography today?", "System"
 
-    async def answer_query(self, query: str, history: Optional[list[dict[str, str]]] = None) -> tuple[str, str]:
+    async def answer_query(
+        self, query: str, history: Optional[list[dict[str, str]]] = None
+    ) -> tuple[str, str]:
         model_name = await self._resolve_model_name()
         if not model_name:
             return self.fallback_message(), "System"
@@ -268,7 +292,11 @@ class LocalQAOrchestrator:
                 content = _normalize_text(item.get("content", ""))
                 if role and content:
                     cleaned_history.append(f"{role}: {content}")
-            history_block = "\n".join(cleaned_history[-12:]) if cleaned_history else "No prior messages."
+            history_block = (
+                "\n".join(cleaned_history[-12:])
+                if cleaned_history
+                else "No prior messages."
+            )
 
             specialist = Agent(
                 role="Photography & Art Consultant",
@@ -300,10 +328,15 @@ class LocalQAOrchestrator:
             result = crew.kickoff()
             raw = _normalize_text(str(getattr(result, "raw", result)))
             if not raw:
-                return "I can help with art and photography questions. Please share more detail.", "Photography & Art Consultant"
+                return (
+                    "I can help with art and photography questions. Please share more detail.",
+                    "Photography & Art Consultant",
+                )
             return raw, "Photography & Art Consultant"
         except Exception:
-            logger.exception("Local query generation failed, using deterministic fallback.")
+            logger.exception(
+                "Local query generation failed, using deterministic fallback."
+            )
             return self.fallback_message(), "System"
 
 

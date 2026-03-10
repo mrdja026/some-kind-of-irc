@@ -75,7 +75,8 @@ export function LocalQAChannel({
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!currentUserId || greetingAttempted) return
-    if (sessionStorage.getItem(greetedKey) === '1') return
+    // Allow retry if greeted but messages are empty (e.g., sessionStorage cleared)
+    if (sessionStorage.getItem(greetedKey) === '1' && messages.length > 0) return
 
     setGreetingAttempted(true)
     queryLocalAI('', { mode: 'greeting' })

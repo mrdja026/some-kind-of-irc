@@ -1,7 +1,10 @@
 {
   log default {
     level WARN
-    output net redis-log-sink:6001
+    output net redis-log-sink:6001 {
+      soft_start
+      dial_timeout 5s
+    }
     format json
   }
 }
