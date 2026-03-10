@@ -784,7 +784,7 @@ class DocumentExportView(APIView):
             )
         
         elif export_format == "sql":
-            # Build SQLite INSERT statements
+            # Build SQL INSERT statements for extracted fields.
             sql_statements = []
             parameters = []
             

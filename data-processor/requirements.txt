@@ -2,6 +2,7 @@
 Django>=4.2,<5.0
 djangorestframework>=3.14,<4.0
 django-cors-headers>=4.3,<5.0
+psycopg[binary]>=3.2,<4.0
 
 # Image Processing
 opencv-python-headless>=4.8,<5.0

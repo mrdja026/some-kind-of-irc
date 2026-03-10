@@ -1,5 +1,5 @@
 ---
-# Redis Deployment for rate limiting, caching, and pub/sub
+# Redis deployment for rate limiting, caching, and pub/sub
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -75,4 +75,98 @@ spec:
   ports:
     - port: 6379
       targetPort: 6379
+  type: ClusterIP
+---
+# Ephemeral Redis sink for warn/error logs (no persistence)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-log
+  namespace: irc-app
+  labels:
+    app: redis-log
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-log
+  template:
+    metadata:
+      labels:
+        app: redis-log
+    spec:
+      containers:
+        - name: redis-log
+          image: redis:7-alpine
+          command: ["redis-server", "--save", "", "--appendonly", "no"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-log
+  namespace: irc-app
+spec:
+  selector:
+    app: redis-log
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-log-sink
+  namespace: irc-app
+  labels:
+    app: redis-log-sink
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-log-sink
+  template:
+    metadata:
+      labels:
+        app: redis-log-sink
+    spec:
+      containers:
+        - name: redis-log-sink
+          image: redis-log-sink:latest
+          imagePullPolicy: Never
+          env:
+            - name: REDIS_LOG_URL
+              value: redis://redis-log:6379/0
+            - name: REDIS_LOG_STREAM_KEY
+              value: caddy:warn_error_logs
+            - name: REDIS_LOG_MAXLEN
+              value: "200"
+            - name: LOG_SINK_PORT
+              value: "6001"
+          ports:
+            - containerPort: 6001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-log-sink
+  namespace: irc-app
+spec:
+  selector:
+    app: redis-log-sink
+  ports:
+    - port: 6001
+      targetPort: 6001
   type: ClusterIP

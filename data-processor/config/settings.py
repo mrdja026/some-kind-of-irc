@@ -10,6 +10,7 @@ for local development. No additional .env.local entries required.
 
 import os
 from pathlib import Path
+from urllib.parse import quote_plus, unquote, urlparse
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -17,8 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 # For production, set DJANGO_SECRET_KEY environment variable
 SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-dev-key-change-in-production-abc123xyz789"
+    "DJANGO_SECRET_KEY", "django-insecure-dev-key-change-in-production-abc123xyz789"
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -27,7 +27,11 @@ DEBUG = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
 # Feature flag for data processor
-DATA_PROCESSOR_ENABLED = os.getenv("DATA_PROCESSOR_ENABLED", "true").lower() in ("true", "1", "yes")
+DATA_PROCESSOR_ENABLED = os.getenv("DATA_PROCESSOR_ENABLED", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # JWT shared secret (same as monolith, for admin allowlist enforcement)
 JWT_SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
@@ -68,14 +72,77 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Database - not used for MVP (in-memory storage)
-# Provide a lightweight default so Django test harness can run.
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.getenv("DATA_PROCESSOR_DB", ":memory:"),
+
+def _read_secret(secret_file: str | None) -> str:
+    if not secret_file:
+        return ""
+    path = Path(secret_file)
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _build_database_url() -> str:
+    explicit = (
+        os.getenv("DATABASE_URL", "").strip()
+        or os.getenv(
+            "DATA_PROCESSOR_DATABASE_URL",
+            "",
+        ).strip()
+    )
+    if explicit:
+        return explicit
+
+    db_host_env = os.getenv("DB_HOST", "").strip()
+    db_port_env = os.getenv("DB_PORT", "").strip()
+    db_name_env = os.getenv("DB_NAME", "").strip()
+    db_user_env = os.getenv("DB_USER", "").strip()
+    db_password_env = os.getenv("DB_PASSWORD", "").strip()
+    db_password_file_env = os.getenv("DB_PASSWORD_FILE", "").strip()
+
+    db_password = db_password_env or _read_secret(db_password_file_env)
+    db_host = db_host_env or "postgres"
+    db_port = db_port_env or "5432"
+    db_name = db_name_env or "app_db"
+    db_user = db_user_env or "app_user"
+    if not db_password:
+        db_password = "change-me-local-password"
+
+    return (
+        "postgresql://"
+        f"{quote_plus(db_user)}:{quote_plus(db_password)}"
+        f"@{db_host}:{db_port}/{db_name}"
+    )
+
+
+def _database_settings_from_url(database_url: str) -> dict:
+    parsed = urlparse(database_url)
+    scheme = parsed.scheme.split("+", 1)[0]
+    if scheme.startswith("sqlite"):
+        # Handle in-memory SQLite: parsed.path is '/:memory:' for 'sqlite:///:memory:'
+        path = parsed.path or ""
+        if path.lstrip("/") == ":memory:":
+            db_name = ":memory:"
+        else:
+            db_name = path.lstrip("/") or os.getenv("DATA_PROCESSOR_DB", ":memory:")
+        return {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": db_name,
+        }
+
+    db_name = (parsed.path or "/app_db").lstrip("/")
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": db_name,
+        "USER": unquote(parsed.username or "app_user"),
+        "PASSWORD": unquote(parsed.password or ""),
+        "HOST": parsed.hostname or "postgres",
+        "PORT": str(parsed.port or "5432"),
     }
-}
+
+
+DATABASE_URL = _build_database_url()
+DATABASES = {"default": _database_settings_from_url(DATABASE_URL)}
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -113,7 +180,9 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1"
+    ).split(",")
     if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
@@ -145,11 +214,17 @@ TESSERACT_CMD = os.getenv("TESSERACT_CMD", "tesseract")
 OCR_LANG = os.getenv("OCR_LANG", "eng")
 
 # Preprocessing defaults
-PREPROCESSING_NOISE_REDUCTION = os.getenv("PREPROCESSING_NOISE_REDUCTION", "true").lower() in ("true", "1", "yes")
+PREPROCESSING_NOISE_REDUCTION = os.getenv(
+    "PREPROCESSING_NOISE_REDUCTION", "true"
+).lower() in ("true", "1", "yes")
 PREPROCESSING_GAUSSIAN_SIGMA = float(os.getenv("PREPROCESSING_GAUSSIAN_SIGMA", "1.0"))
 PREPROCESSING_BILATERAL_D = int(os.getenv("PREPROCESSING_BILATERAL_D", "9"))
-PREPROCESSING_DESKEW_ENABLED = os.getenv("PREPROCESSING_DESKEW_ENABLED", "true").lower() in ("true", "1", "yes")
-PREPROCESSING_DESKEW_MAX_ANGLE = float(os.getenv("PREPROCESSING_DESKEW_MAX_ANGLE", "15.0"))
+PREPROCESSING_DESKEW_ENABLED = os.getenv(
+    "PREPROCESSING_DESKEW_ENABLED", "true"
+).lower() in ("true", "1", "yes")
+PREPROCESSING_DESKEW_MAX_ANGLE = float(
+    os.getenv("PREPROCESSING_DESKEW_MAX_ANGLE", "15.0")
+)
 
 # Template matching configuration
 TEMPLATE_MATCH_MIN_CONFIDENCE = float(os.getenv("TEMPLATE_MATCH_MIN_CONFIDENCE", "0.6"))

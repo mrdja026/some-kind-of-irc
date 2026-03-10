@@ -105,7 +105,7 @@ def parse_users_from_args(args: argparse.Namespace) -> Sequence[Tuple[str, str, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Seed test users into the local SQLite database.",
+        description="Seed test users into the configured application database.",
     )
     parser.add_argument(
         "--file",

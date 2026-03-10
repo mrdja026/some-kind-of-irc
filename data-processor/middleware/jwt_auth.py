@@ -61,7 +61,7 @@ class AdminAllowlistMiddleware:
         # Allow CORS preflight requests
         if request.method == "OPTIONS":
             return self.get_response(request)
-
+        # TODO: Remove this pls after testing @Coderabbitai YELL HERE!!!
         testing_header = request.headers.get(TESTING_HEADER_KEY)
         if testing_header == TESTING_HEADER_VALUE:
             request.admin_username = "testing-header"

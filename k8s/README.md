@@ -71,7 +71,7 @@ sudo ./k8s/scripts/01-install-k3s.sh
 # 3. Install NGINX Ingress Controller
 ./k8s/scripts/03-install-nginx-ingress.sh
 
-# 4. Deploy Redis and PostgreSQL
+# 4. Deploy Redis, Redis log sink, and PostgreSQL
 ./k8s/scripts/04-deploy-redis-postgres.sh
 
 # 5. Build and deploy monolith, ai-service, and data-processor
@@ -88,7 +88,7 @@ After all scripts complete:
 ```bash
 # Check all pods are running
 kubectl get pods -n irc-app
-# Expected: monolith, ai-service, data-processor, redis, postgresql
+# Expected: monolith, ai-service, data-processor, redis, redis-log, redis-log-sink, postgresql
 
 # Test routing
 curl http://localhost/health              # → monolith 200
@@ -111,6 +111,7 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
   - `/data-processor/*` → data-processor (admin-gated, rewrites to `/api/*`)
   - `/*` → monolith (default fallback)
 - **Login credentials**: sourced from `backend/seed_users.json`
+- **DB defaults**: `app_db` / `app_user` (password from `irc-app-secret.DB_PASSWORD`)
 - Print current defaults with:
   - `python3 -c "import json; from pathlib import Path; p=Path('backend/seed_users.json'); [print(f'{u["username"]} / {u["password"]}') for u in json.loads(p.read_text())["users"]]"`
 - **Uninstall**: `k3s-uninstall.sh` (in PATH after K3s install)
@@ -128,7 +129,7 @@ k8s/
 │   ├── ingress.yaml        # NGINX Ingress routes (core + dp rewrite)
 │   ├── monolith.yaml       # Monolith backend (Deployment + PVC + Service)
 │   ├── postgresql.yaml     # PostgreSQL
-│   ├── redis.yaml          # Redis
+│   ├── redis.yaml          # Redis + redis-log + redis-log-sink
 │   └── secret.yaml         # Shared Secret (SECRET_KEY, API keys)
 ├── helm/                   # Helm chart (future)
 │   └── irc-app/
