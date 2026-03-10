@@ -79,6 +79,12 @@ echo "=== Deploying data-processor ==="
 kubectl apply -f "${MANIFESTS_DIR}/data-processor.yaml"
 
 echo ""
+echo "=== Applying redis.yaml (redis-log + redis-log-sink) ==="
+# Idempotent — also applied by 04-deploy-redis-postgres.sh, but we re-apply here
+# to ensure redis-log-sink is present when this script is run standalone.
+kubectl apply -f "${MANIFESTS_DIR}/redis.yaml"
+
+echo ""
 echo "=== Deploying frontend ==="
 kubectl apply -f "${MANIFESTS_DIR}/frontend.yaml"
 
