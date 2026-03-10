@@ -40,3 +40,6 @@ backend/api/endpoints/__pycache__/*.pyc
 secrets/
 .env.local
 .env
+vllm_katanemo-Arch-Function-3B/__pycache__/
+vllm_katanemo-Arch-Function-3B/__pycache__/*.pyc
+vllm_katanemo-Arch-Function-3B/.pytest_cache/

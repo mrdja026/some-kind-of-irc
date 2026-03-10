@@ -256,6 +256,62 @@ export type AIStatus = {
   max_requests_per_hour: number;
 };
 
+export type LocalAIMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+};
+
+export type LocalAIQueryResponse = {
+  status: 'ok' | 'rejected' | 'fallback';
+  message: string;
+  agent: string;
+  rejected: boolean;
+};
+
+export type LocalAIStatus = {
+  enabled: boolean;
+  online: boolean;
+  available: boolean;
+  remaining_requests: number;
+  max_requests_per_hour: number;
+};
+
+export type LocalAIStreamEvent =
+  | {
+      type: 'meta';
+      mode: 'chat';
+      agent: string;
+      disclaimer: string;
+    }
+  | {
+      type: 'progress';
+      stage: string;
+      message: string;
+    }
+  | {
+      type: 'delta';
+      text: string;
+      agent?: string;
+    }
+  | {
+      type: 'rejected';
+      message: string;
+      agent?: string;
+    }
+  | {
+      type: 'fallback';
+      message: string;
+      agent?: string;
+    }
+  | {
+      type: 'error';
+      message: string;
+    }
+  | {
+      type: 'done';
+      mode?: 'chat';
+    };
+
 // Game types
 export type GameState = {
   user_id: number;

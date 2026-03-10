@@ -69,7 +69,8 @@ class Settings(BaseSettings):
     # Admin Allowlist Configuration (semicolon-separated usernames)
     # Example: ADMIN_ALLOWLIST=alice;bob;charlie
     ADMIN_ALLOWLIST: str = ""
-
+    AI_ALLOWLIST: str = "admina;guest2;guest3"
+    
     # Audit Logger Microservice URL
     AUDIT_LOGGER_URL: str = "http://localhost:8004"
 
@@ -82,6 +83,10 @@ class Settings(BaseSettings):
     GMAIL_OAUTH_REDIRECT_URL: str = ""
     GMAIL_OAUTH_SCOPES: str = "https://www.googleapis.com/auth/gmail.readonly"
 
+    # Local Q&A Channel Configuration
+    FEATURE_LOCAL_QA: bool = False
+    LOCAL_QA_CHANNEL_NAME: str = "#qa-local"
+    
     @property
     def data_processor_enabled(self) -> bool:
         """Check if data processor feature is enabled."""
@@ -90,5 +95,11 @@ class Settings(BaseSettings):
             return True
         return self.FEATURE_DATA_PROCESSOR
 
+    @property
+    def local_qa_enabled(self) -> bool:
+        env_value = os.getenv("FEATURE_LOCAL_QA", "").lower()
+        if env_value in ("true", "1", "yes"):
+            return True
+        return self.FEATURE_LOCAL_QA
 
 settings = Settings()
