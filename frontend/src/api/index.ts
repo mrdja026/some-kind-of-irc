@@ -9,6 +9,7 @@ import type {
   AIStreamEvent,
   LocalAIMessage,
   LocalAIQueryResponse,
+  LocalAIStreamEvent,
   LocalAIStatus,
 } from '../types';
 
@@ -561,6 +562,77 @@ export const queryLocalAI = async (
     throw new Error(await parseAIError(response, 'Local AI query failed'));
   }
   return response.json();
+};
+
+export const queryLocalAIStream = async (
+  query: string,
+  handlers: {
+    onEvent?: (event: LocalAIStreamEvent) => void;
+    onError?: (message: string) => void;
+    signal?: AbortSignal;
+  } = {},
+  options: {
+    mode?: 'chat' | 'greeting';
+    history?: LocalAIMessage[];
+  } = {},
+): Promise<void> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/local/query/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify({
+      query,
+      mode: options.mode ?? 'chat',
+      history: options.history ?? [],
+    }),
+    signal: handlers.signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseAIError(response, 'Local AI stream failed'));
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming not supported by the browser');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const emit = (event: LocalAIStreamEvent) => {
+    handlers.onEvent?.(event);
+    if (event.type === 'error') {
+      handlers.onError?.(event.message);
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let separatorIndex = buffer.indexOf('\n\n');
+    while (separatorIndex !== -1) {
+      const chunk = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const lines = chunk.split(/\r?\n/);
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        try {
+          const event = JSON.parse(payload) as LocalAIStreamEvent;
+          emit(event);
+        } catch {
+          // Ignore malformed chunks
+        }
+      }
+      separatorIndex = buffer.indexOf('\n\n');
+    }
+  }
 };
 
 export const getGmailAuthUrl = async (): Promise<{ authorization_url: string }> => {

@@ -1,8 +1,16 @@
 :80 {
-  encode gzip
+  @compressible {
+    not path /ai/query/stream /ai/local/query/stream
+  }
+  encode @compressible gzip
 
   @api path /auth/* /channels/* /health
   reverse_proxy @api backend:8002
+
+  @ai_stream path /ai/query/stream /ai/local/query/stream
+  reverse_proxy @ai_stream ai-service:8001 {
+    flush_interval -1
+  }
 
   @ai path /ai/*
   reverse_proxy @ai ai-service:8001

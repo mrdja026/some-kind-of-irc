@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getLocalAIStatus, queryLocalAI } from '../api'
+import { getLocalAIStatus, queryLocalAI, queryLocalAIStream } from '../api'
 import type { LocalAIMessage } from '../types'
 
 type LocalChatMessage = LocalAIMessage & {
@@ -44,6 +44,7 @@ export function LocalQAChannel({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [greetingAttempted, setGreetingAttempted] = useState(false)
+  const streamAbortRef = useRef<AbortController | null>(null)
 
   const { data: localStatus } = useQuery({
     queryKey: ['localAiStatus', channelId],
@@ -63,6 +64,13 @@ export function LocalQAChannel({
     if (typeof window === 'undefined') return
     sessionStorage.setItem(messagesKey, JSON.stringify(messages))
   }, [messages, messagesKey])
+
+  useEffect(() => {
+    return () => {
+      streamAbortRef.current?.abort()
+      streamAbortRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -116,26 +124,85 @@ export function LocalQAChannel({
     setInput('')
     setIsSubmitting(true)
 
+    const abortController = new AbortController()
+    streamAbortRef.current?.abort()
+    streamAbortRef.current = abortController
+    let streamProducedOutput = false
+
     try {
-      const response = await queryLocalAI(query, {
-        mode: 'chat',
-        history: nextMessages.map((item) => ({
-          role: item.role,
-          content: item.content,
-        })),
-      })
-      setMessages((prev) => [
-        ...prev,
+      let streamMessageId: number | null = null
+      let assistantAgent = 'Photography & Art Consultant'
+
+      await queryLocalAIStream(
+        query,
         {
-          id: Date.now() + 1,
-          role: response.rejected ? 'system' : 'assistant',
-          content: response.message,
-          agent: response.agent,
+          signal: abortController.signal,
+          onError: (message) => setError(message),
+          onEvent: (event) => {
+            if (event.type === 'meta') {
+              assistantAgent = event.agent || assistantAgent
+              return
+            }
+
+            if (event.type === 'delta') {
+              if (!event.text) return
+              streamProducedOutput = true
+              if (streamMessageId === null) {
+                streamMessageId = Date.now() + 1
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: streamMessageId as number,
+                    role: 'assistant',
+                    content: event.text,
+                    agent: event.agent || assistantAgent,
+                  },
+                ])
+                return
+              }
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === streamMessageId
+                    ? { ...message, content: `${message.content}${event.text}` }
+                    : message,
+                ),
+              )
+              return
+            }
+
+            if (event.type === 'rejected' || event.type === 'fallback') {
+              streamProducedOutput = true
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: Date.now() + 2,
+                  role: 'system',
+                  content: event.message,
+                  agent: event.agent || (event.type === 'rejected' ? 'Scope Guard' : 'System'),
+                },
+              ])
+            }
+          },
         },
-      ])
+        {
+          mode: 'chat',
+          history: nextMessages.map((item) => ({
+            role: item.role,
+            content: item.content,
+          })),
+        },
+      )
+
+      if (!streamProducedOutput) {
+        setError('No streamed response was received. Please retry.')
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Local Q&A request failed')
+      if (abortController.signal.aborted) return
+      setError(err instanceof Error ? err.message : 'Local Q&A stream failed')
     } finally {
+      if (streamAbortRef.current === abortController) {
+        streamAbortRef.current = null
+      }
       setIsSubmitting(false)
     }
   }

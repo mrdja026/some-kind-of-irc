@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 
@@ -41,6 +42,12 @@ _ART_KEYWORDS = (
 _DEFAULT_FALLBACK = (
     "Welcome to the studio! Local AI is warming up right now. "
     "Please try again in a moment."
+)
+
+_STREAM_SYSTEM_PROMPT = (
+    "You are a Photography & Art Consultant. "
+    "Give technically accurate, practical guidance for art and photography. "
+    "Be concise, specific, and helpful."
 )
 
 
@@ -114,12 +121,101 @@ class LocalQAOrchestrator:
     async def is_local_ai_online(self) -> bool:
         return bool(await self._fetch_served_model_ids())
 
+    async def resolve_model_name(self) -> Optional[str]:
+        return await self._resolve_model_name()
+
     def is_supported_topic(self, query: str) -> bool:
         text = query.lower()
         return any(keyword in text for keyword in _ART_KEYWORDS)
 
     def fallback_message(self) -> str:
         return _DEFAULT_FALLBACK
+
+    def _build_stream_messages(
+        self,
+        query: str,
+        history: Optional[list[dict[str, str]]] = None,
+    ) -> list[dict[str, str]]:
+        query_text = _normalize_text(query)
+        messages: list[dict[str, str]] = [{"role": "system", "content": _STREAM_SYSTEM_PROMPT}]
+        cleaned_history: list[dict[str, str]] = []
+
+        for item in history or []:
+            role = _normalize_text(item.get("role", "")).lower()
+            content = _normalize_text(item.get("content", ""))
+            if role not in {"user", "assistant", "system"}:
+                continue
+            if not content:
+                continue
+            cleaned_history.append({"role": role, "content": content})
+
+        if cleaned_history and cleaned_history[-1]["role"] == "user" and cleaned_history[-1]["content"] == query_text:
+            cleaned_history = cleaned_history[:-1]
+
+        for item in cleaned_history[-12:]:
+            messages.append(item)
+        messages.append({"role": "user", "content": query_text})
+        return messages
+
+    async def stream_answer_query_tokens(
+        self,
+        query: str,
+        history: Optional[list[dict[str, str]]] = None,
+        *,
+        model_name: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        resolved_model = model_name or await self._resolve_model_name()
+        if not resolved_model:
+            raise RuntimeError("Local model is unavailable.")
+
+        url = f"{settings.LOCAL_QA_VLLM_BASE_URL.rstrip('/')}/chat/completions"
+        payload = {
+            "model": resolved_model,
+            "messages": self._build_stream_messages(query, history),
+            "temperature": 0.4,
+            "stream": True,
+        }
+        headers = {"Authorization": f"Bearer {settings.LOCAL_QA_API_KEY}"}
+
+        timeout = httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode(errors="ignore")
+                    raise RuntimeError(
+                        f"Local vLLM streaming failed ({response.status_code}): {body[:500]}"
+                    )
+
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choices = chunk.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0] if isinstance(choices[0], dict) else {}
+                    delta = choice.get("delta") if isinstance(choice, dict) else None
+
+                    token = None
+                    if isinstance(delta, dict):
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            token = content
+                    if token is None and isinstance(choice, dict):
+                        text = choice.get("text")
+                        if isinstance(text, str) and text:
+                            token = text
+                    if token:
+                        yield token
 
     async def generate_greeting(self) -> tuple[str, str]:
         model_name = await self._resolve_model_name()

@@ -10,6 +10,7 @@ Endpoints:
   /ai/status          — Rate limit status + AI availability (AI allowlist)
   /ai/local/status    — Local vLLM availability for Q&A local channel
   /ai/local/query     — Non-streaming local CrewAI query for Q&A local channel
+  /ai/local/query/stream — SSE streaming local Q&A response for Q&A local channel
   /ai/gmail/questions — Gmail agent quiz generation
   /ai/gmail/summary   — Gmail agent summarization
 """
@@ -452,6 +453,124 @@ async def query_local_ai(
     message, agent = await local_qa_orchestrator.answer_query(query_text, history_payload)
     status = "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
     return LocalAIQueryResponse(status=status, message=message, agent=agent, rejected=False)
+
+
+@app.post("/ai/local/query/stream")
+async def query_local_ai_stream(
+    request: LocalAIQueryRequest,
+    http_request: Request,
+    username: str = Depends(require_local_ai_access),
+):
+    """Stream local Q&A response (SSE) for art/photography assistant."""
+    if not settings.FEATURE_LOCAL_QA:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    if request.mode != "chat":
+        raise HTTPException(
+            status_code=400,
+            detail="Streaming is only available for chat mode. Use /ai/local/query for greeting mode.",
+        )
+
+    query_text = request.query.strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    max_requests = settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    await enforce_rate_limit(
+        user_id=f"local:{username}",
+        max_requests=max_requests,
+        window_seconds=3600,
+    )
+
+    history_payload = [
+        {"role": item.role, "content": item.content}
+        for item in request.history
+        if item.content.strip()
+    ]
+
+    async def event_generator():
+        def sse(event: dict) -> str:
+            return f"data: {json.dumps(event)}\n\n"
+
+        assistant_agent = "Photography & Art Consultant"
+        yield sse(
+            {
+                "type": "meta",
+                "mode": "chat",
+                "agent": assistant_agent,
+                "disclaimer": (
+                    "AI responses are for informational purposes only. "
+                    "Always verify important decisions with qualified professionals."
+                ),
+            }
+        )
+
+        if not local_qa_orchestrator.is_supported_topic(query_text):
+            yield sse(
+                {
+                    "type": "rejected",
+                    "message": (
+                        "I can only help with art and photography topics in Q&A local. "
+                        "Please ask about composition, lighting, camera settings, editing, or visual style."
+                    ),
+                    "agent": "Scope Guard",
+                }
+            )
+            yield sse({"type": "done", "mode": "chat"})
+            return
+
+        model_name = await local_qa_orchestrator.resolve_model_name()
+        if not model_name:
+            yield sse(
+                {
+                    "type": "fallback",
+                    "message": local_qa_orchestrator.fallback_message(),
+                    "agent": "System",
+                }
+            )
+            yield sse({"type": "done", "mode": "chat"})
+            return
+
+        token_sent = False
+        try:
+            async for token in local_qa_orchestrator.stream_answer_query_tokens(
+                query_text,
+                history_payload,
+                model_name=model_name,
+            ):
+                if await http_request.is_disconnected():
+                    logger.info("Client disconnected from /ai/local/query/stream")
+                    return
+                token_sent = True
+                yield sse({"type": "delta", "text": token, "agent": assistant_agent})
+        except Exception:
+            logger.exception("Local AI streaming failed for /ai/local/query/stream")
+            if token_sent:
+                yield sse({"type": "error", "message": "Local AI stream interrupted. Please retry."})
+            else:
+                yield sse(
+                    {
+                        "type": "fallback",
+                        "message": local_qa_orchestrator.fallback_message(),
+                        "agent": "System",
+                    }
+                )
+            yield sse({"type": "done", "mode": "chat"})
+            return
+
+        if not token_sent:
+            yield sse({"type": "error", "message": "Local AI returned no content."})
+        yield sse({"type": "done", "mode": "chat"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/ai/query", response_model=AIQueryResponse)
