@@ -1357,6 +1357,8 @@ function ChatPage() {
                     setPendingAiIntent(null)
                   }
                 }}
+                requestedIntent={pendingAiIntent}
+                onIntentHandled={() => setPendingAiIntent(null)}
               />
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel

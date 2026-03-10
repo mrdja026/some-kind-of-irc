@@ -116,9 +116,7 @@ class LocalAIQueryResponse(BaseModel):
     rejected: bool = False
 
 
-# ---------------------------------------------------------------------------
-# FastAPI App
-# ---------------------------------------------------------------------------
+
 
 app = FastAPI(title="AI Service", version="1.0.0")
 
