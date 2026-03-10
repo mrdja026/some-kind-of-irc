@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
+  createCalendarEvent,
   createDirectMessageChannel,
   fetchGmailMessages,
+  generateCalendarQuestion,
   generateGmailQuestions,
   generateGmailSummary,
   generatePdf,
@@ -18,8 +20,9 @@ import type {
   AIClarificationState,
   AIIntent,
   AIStreamEvent,
+  CalendarEventPayload,
 } from '../types'
-import { DollarSign, BookOpen, Bot, Sparkles, Mail } from 'lucide-react'
+import { DollarSign, BookOpen, Bot, Sparkles, Mail, ArrowUp } from 'lucide-react'
 
 const INTENTS: {
   id: AIIntent
@@ -201,15 +204,31 @@ export function AIChannel({
   const [streamProgress, setStreamProgress] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const inputBarRef = useRef<HTMLDivElement | null>(null)
   
   // Gmail Agent State
-  const [gmailStage, setGmailStage] = useState<'initial' | 'quiz' | 'analyzing' | 'summary'>('initial')
+  const [gmailStage, setGmailStage] = useState<
+    | 'initial'
+    | 'choice'
+    | 'quiz'
+    | 'analyzing'
+    | 'summary'
+    | 'calendar-intake'
+    | 'calendar-clarify'
+    | 'calendar-confirm'
+    | 'calendar-done'
+  >('initial')
   const [gmailInterest, setGmailInterest] = useState('')
   const [gmailQuestions, setGmailQuestions] = useState<string[]>([])
   const [gmailAnswers, setGmailAnswers] = useState<string[]>([])
   const [gmailSummary, setGmailSummary] = useState<{ final_summary: string; top_email_ids: string[]; reasoning: string } | null>(null)
   const [gmailEmails, setGmailEmails] = useState<any[]>([])
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState<string | null>(null)
+  const [calendarAnswers, setCalendarAnswers] = useState<string[]>([])
+  const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
+  const [calendarEventDraft, setCalendarEventDraft] =
+    useState<CalendarEventPayload | null>(null)
 
   const {
     data: aiHealth,
@@ -240,6 +259,26 @@ export function AIChannel({
   }, [aiHealth?.status, channelName])
 
   useEffect(() => {
+    if (!containerRef.current || !inputBarRef.current) {
+      return
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const updatePadding = () => {
+      const height = inputBarRef.current?.offsetHeight ?? 0
+      containerRef.current?.style.setProperty(
+        '--floating-input-height',
+        `${height}px`,
+      )
+    }
+    updatePadding()
+    const observer = new ResizeObserver(updatePadding)
+    observer.observe(inputBarRef.current)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     if (aiHealthError) {
       console.warn('[AIChannel] health check failed', aiHealthError)
     }
@@ -266,56 +305,32 @@ export function AIChannel({
     setGmailSummary(null)
     setGmailEmails([])
     setGeneratedPdfUrl(null)
+    setCalendarAnswers([])
+    setCalendarQuestionsAsked(0)
+    setCalendarEventDraft(null)
 
     if (intent === 'gmail') {
       setSelectedIntent('gmail')
-      setIsSubmitting(true) // Show loading indicator
-      try {
-        setStreamProgress('Fetching emails...')
-        // Add system message
-        setResponses(prev => [...prev, {
+      const choicePrompt =
+        'Step 1: Choose an option:\n1) Analyze recent discovery emails\n2) Create a meeting in your calendar'
+      setResponses((prev) => [
+        ...prev,
+        {
           id: Date.now(),
           intent: 'gmail',
           query: '',
-          response: 'Fetching your recent emails for analysis...',
-          agent: 'System',
+          response: choicePrompt,
+          agent: 'Gmail Agent',
           disclaimer: '',
-          mode: 'agent_message' as any
-        }])
-        
-        const { emails } = await fetchGmailMessages()
-        setGmailEmails(emails)
-        setGmailStage('quiz')
-
-        setStreamProgress('Generating first question...')
-        const { questions } = await generateGmailQuestions(emails, '', [], 1)
-        const firstQuestion =
-          questions?.[0] ||
-          'What are your primary interests? (e.g., Tech news, Finance, Photography...)'
-        const q1 = `Step 1: ${firstQuestion}`
-        setResponses((prev) => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            intent: 'gmail',
-            query: '',
-            response: q1,
-            agent: 'Gmail Agent',
-            disclaimer: '',
-            mode: 'agent_message' as any,
-          },
-        ])
-        setActiveQuestion(q1)
-        setStreamProgress(null)
-        setIsSubmitting(false)
-      } catch (e) {
-        setStreamError('Failed to fetch Gmail messages. Are you connected?')
-        setSelectedIntent(null)
-        setIsSubmitting(false)
-      }
-    } else {
-      setSelectedIntent(intent as AIIntent)
+          mode: 'agent_message' as any,
+        },
+      ])
+      setGmailStage('choice')
+      setActiveQuestion(choicePrompt)
+      return
     }
+
+    setSelectedIntent(intent as AIIntent)
   }, [])
 
   useEffect(() => {
@@ -326,43 +341,251 @@ export function AIChannel({
     onIntentHandled?.()
   }, [requestedIntent, handleIntentSelect, onIntentHandled])
 
+  const isAffirmativeResponse = (value: string) => {
+    const normalized = value.trim().toLowerCase()
+    return ['yes', 'y', 'yep', 'sure', 'ok', 'okay', 'confirm'].some((token) =>
+      normalized.startsWith(token),
+    )
+  }
+
   const handleGmailSubmit = async (answer: string) => {
-    if (!answer.trim()) return
+    const trimmedAnswer = answer.trim()
+    if (!trimmedAnswer) return
 
     setIsSubmitting(true)
-    setStreamProgress('Generating questions...')
-    
-    // Add user answer to chat
+    setStreamProgress(null)
+    setStreamError(null)
+
     const responseId = Date.now()
     setResponses((prev) => [
-      ...prev, 
+      ...prev,
       {
         id: responseId,
         intent: 'gmail',
-        query: answer,
+        query: trimmedAnswer,
         response: '',
         agent: 'Me',
         disclaimer: '',
-      }
+      },
     ])
 
     try {
-      // Step 1: Initial Interest -> Get 2 Questions
+      if (gmailStage === 'choice') {
+        const choiceToken = trimmedAnswer.trim().split(/\s+/)[0]
+        const normalizedChoice = choiceToken.replace(/[^0-9]/g, '')
+        const choseAnalysis = normalizedChoice === '1'
+        const choseMeeting = normalizedChoice === '2'
+
+        if (choseAnalysis) {
+          setStreamProgress('Fetching emails...')
+          const { emails } = await fetchGmailMessages()
+          setGmailEmails(emails)
+          setGmailStage('quiz')
+          setGmailAnswers([])
+          setGmailQuestions([])
+
+          setStreamProgress('Generating first question...')
+          const { questions } = await generateGmailQuestions(emails, '', [], 1)
+          const firstQuestion =
+            questions?.[0] ||
+            'What are your primary interests? (e.g., Tech news, Finance, Photography...)'
+          const q1 = `Step 1: ${firstQuestion}`
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              intent: 'gmail',
+              query: '',
+              response: q1,
+              agent: 'Gmail Agent',
+              disclaimer: '',
+              mode: 'agent_message' as any,
+            },
+          ])
+          setActiveQuestion(q1)
+          setStreamProgress(null)
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        if (choseMeeting) {
+          const greeting =
+            "Hi, I'm your calendar assistant. Describe the meeting you'd like to schedule."
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              intent: 'gmail',
+              query: '',
+              response: greeting,
+              agent: 'Calendar Agent',
+              disclaimer: '',
+              mode: 'agent_message' as any,
+            },
+          ])
+          setGmailStage('calendar-intake')
+          setActiveQuestion(greeting)
+          setStreamProgress(null)
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        setStreamError('Reply with 1 (emails) or 2 (meeting) to continue.')
+        return
+      }
+
+      if (gmailStage === 'calendar-intake' || gmailStage === 'calendar-clarify') {
+        setStreamProgress('Reviewing meeting details...')
+        const { status, question, event } = await generateCalendarQuestion(
+          trimmedAnswer,
+          calendarAnswers,
+        )
+        const updatedAnswers = [...calendarAnswers, trimmedAnswer]
+        setCalendarAnswers(updatedAnswers)
+
+        if (status === 'clarify') {
+          const nextCount = calendarQuestionsAsked + 1
+          setCalendarQuestionsAsked(nextCount)
+          setCalendarEventDraft(event)
+
+          if (nextCount > 3) {
+            setStreamError('Unable to confirm meeting details in 3 questions.')
+            setGmailStage('calendar-done')
+            setStreamProgress(null)
+            return
+          }
+
+          const nextQ = `Step ${nextCount}: ${question}`
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              intent: 'gmail',
+              query: '',
+              response: nextQ,
+              agent: 'Calendar Agent',
+              disclaimer: '',
+              mode: 'agent_message' as any,
+            },
+          ])
+          setGmailStage('calendar-clarify')
+          setActiveQuestion(nextQ)
+          setStreamProgress(null)
+          return
+        }
+
+        const confirmQ = `Confirm: ${question}`
+        setCalendarEventDraft(event)
+        setGmailStage('calendar-confirm')
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            intent: 'gmail',
+            query: '',
+            response: confirmQ,
+            agent: 'Calendar Agent',
+            disclaimer: '',
+            mode: 'agent_message' as any,
+          },
+        ])
+        setActiveQuestion(confirmQ)
+        setStreamProgress(null)
+        return
+      }
+
+      if (gmailStage === 'calendar-confirm') {
+        if (!calendarEventDraft) {
+          setStreamError('Missing meeting details to confirm.')
+          return
+        }
+
+        if (isAffirmativeResponse(trimmedAnswer)) {
+          setStreamProgress('Creating calendar event...')
+          try {
+            const result = await createCalendarEvent(calendarEventDraft)
+            if (!result.event_id && !result.html_link) {
+              throw new Error('Calendar event creation failed')
+            }
+            const details: string[] = []
+            if (calendarEventDraft.title) {
+              details.push(calendarEventDraft.title)
+            }
+            if (calendarEventDraft.start_datetime && calendarEventDraft.end_datetime) {
+              details.push(
+                `${calendarEventDraft.start_datetime} → ${calendarEventDraft.end_datetime} (${calendarEventDraft.timezone || 'UTC'})`,
+              )
+            }
+            const detailText = details.join(' — ') || result.summary || 'your event'
+            const confirmation = result.html_link
+              ? `Meeting created in your calendar: ${detailText}. Link: ${result.html_link}`
+              : `Meeting created in your calendar: ${detailText}.`
+
+            setResponses((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 1,
+                intent: 'gmail',
+                query: '',
+                response: confirmation,
+                agent: 'Calendar Agent',
+                disclaimer: '',
+                mode: 'agent_message' as any,
+              },
+            ])
+            setGmailStage('calendar-done')
+            setActiveQuestion(null)
+            setStreamProgress(null)
+            return
+          } catch (error) {
+            setStreamError(
+              'Failed to create the calendar event. Please reconnect Gmail/Calendar and try again.',
+            )
+            setStreamProgress(null)
+            return
+          }
+        }
+
+        const retryPrompt =
+          'Okay, please describe the meeting details again (title, date, time, duration).'
+        setCalendarAnswers([])
+        setCalendarQuestionsAsked(0)
+        setCalendarEventDraft(null)
+        setGmailStage('calendar-intake')
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            intent: 'gmail',
+            query: '',
+            response: retryPrompt,
+            agent: 'Calendar Agent',
+            disclaimer: '',
+            mode: 'agent_message' as any,
+          },
+        ])
+        setActiveQuestion(retryPrompt)
+        setStreamProgress(null)
+        return
+      }
+
       if (gmailAnswers.length === 0) {
+        setStreamProgress('Generating questions...')
         const { questions } = await generateGmailQuestions(
           gmailEmails,
-          answer,
+          trimmedAnswer,
           [],
           2,
         )
         const followUpQuestions = questions ?? []
         setGmailQuestions(followUpQuestions)
-        setGmailAnswers([answer])
+        setGmailAnswers([trimmedAnswer])
         setStreamProgress(null)
 
         const nextQuestionText =
           followUpQuestions[0] || 'What should we prioritize next?'
-        // Push next question to chat
         const nextQ = `Step 2: ${nextQuestionText}`
         setResponses((prev) => [
           ...prev,
@@ -377,84 +600,87 @@ export function AIChannel({
           },
         ])
         setActiveQuestion(nextQ)
+        return
       }
-      // Step 2 & 3: Answer Follow-ups
-      else if (gmailAnswers.length < 3) {
-        const newAnswers = [...gmailAnswers, answer]
-        setGmailAnswers(newAnswers)
-        
-         if (newAnswers.length < 3) {
-            const followUpQuestion =
-              gmailQuestions[newAnswers.length - 1] || 'Any other priorities?'
-            // Ask next question
-            const nextQ = `Step ${newAnswers.length + 1}: ${followUpQuestion}`
-            setResponses((prev) => [
-              ...prev,
-              {
-                id: Date.now() + 1,
-                intent: 'gmail',
-                query: '',
-                response: nextQ,
-                agent: 'Gmail Agent',
-                disclaimer: '',
-                mode: 'agent_message' as any,
-              },
-            ])
-            setActiveQuestion(nextQ)
-            setStreamProgress(null)
-         } else {
 
-          // Quiz complete, generate summary
-          setGmailStage('analyzing')
-          setStreamProgress('Analyzing 100 emails and generating summary...')
-          
-          const result = await generateGmailSummary(
-            gmailEmails,
-            newAnswers[0], // Interest
-            newAnswers.slice(1) // Follow-up answers
-          )
-          
-          setGmailSummary(result)
-          setGmailStage('summary')
-          
-          // Generate PDF
-          setStreamProgress('Generating PDF report...')
-          const { url } = await generatePdf(
-            `Gmail Summary: ${newAnswers[0]}`,
-            [
-              { heading: 'Executive Summary', content: result.final_summary },
-              { heading: 'AI Reasoning', content: result.reasoning }
-            ],
-            result.top_email_ids.map(id => 
-              gmailEmails.find(e => e.message_id === id)?.permalink || ''
-            ).filter(Boolean)
-          )
-          setGeneratedPdfUrl(url)
-          
-          // Send final result as chat message
-           setResponses(prev => [...prev, {
-              id: Date.now() + 2,
+      if (gmailAnswers.length < 3) {
+        const newAnswers = [...gmailAnswers, trimmedAnswer]
+        setGmailAnswers(newAnswers)
+
+        if (newAnswers.length < 3) {
+          const followUpQuestion =
+            gmailQuestions[newAnswers.length - 1] || 'Any other priorities?'
+          const nextQ = `Step ${newAnswers.length + 1}: ${followUpQuestion}`
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: Date.now() + 1,
               intent: 'gmail',
               query: '',
-              response: result.final_summary,
+              response: nextQ,
               agent: 'Gmail Agent',
               disclaimer: '',
               mode: 'agent_message' as any,
-              emails: result.top_email_ids.map(id => gmailEmails.find(e => e.message_id === id)),
-              pdfUrl: url
-           }])
-
-          
+            },
+          ])
+          setActiveQuestion(nextQ)
           setStreamProgress(null)
-          setActiveQuestion(null)
+          return
         }
+
+        setGmailStage('analyzing')
+        setStreamProgress('Analyzing emails and generating summary...')
+
+        const result = await generateGmailSummary(
+          gmailEmails,
+          newAnswers[0],
+          newAnswers.slice(1),
+        )
+
+        setGmailSummary(result)
+        setGmailStage('summary')
+
+        setStreamProgress('Generating PDF report...')
+        const { url } = await generatePdf(
+          `Gmail Summary: ${newAnswers[0]}`,
+          [
+            { heading: 'Executive Summary', content: result.final_summary },
+            { heading: 'AI Reasoning', content: result.reasoning },
+          ],
+          result.top_email_ids
+            .map((id) => gmailEmails.find((e) => e.message_id === id)?.permalink || '')
+            .filter(Boolean),
+        )
+        setGeneratedPdfUrl(url)
+
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 2,
+            intent: 'gmail',
+            query: '',
+            response: result.final_summary,
+            agent: 'Gmail Agent',
+            disclaimer: '',
+            mode: 'agent_message' as any,
+            emails: result.top_email_ids.map((id) =>
+              gmailEmails.find((e) => e.message_id === id),
+            ),
+            pdfUrl: url,
+          },
+        ])
+
+        setStreamProgress(null)
+        setActiveQuestion(null)
+        return
       }
     } catch (err) {
       setStreamError('Gmail agent failed. Please try again.')
+      setStreamProgress(null)
       console.error(err)
     } finally {
       setIsSubmitting(false)
-      setQuery('') // Clear input
+      setQuery('')
     }
   }
 
@@ -490,8 +716,11 @@ export function AIChannel({
       setStreamProgress(null)
       return
     }
-    if (!selectedIntent) return
-    if (!clarificationState && trimmed.length < 10) return
+    if (!selectedIntent) {
+      setStreamError('Select an assistant above to continue.')
+      return
+    }
+    if (selectedIntent !== 'gmail' && !clarificationState && trimmed.length < 10) return
 
     const responseId = Date.now()
     const initialResponse: ConversationEntry = {
@@ -714,7 +943,8 @@ export function AIChannel({
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+      <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
+
       {/* Channel header */}
       {showHeader && (
         <div className="p-3 md:p-4 border-b chat-header">
@@ -743,7 +973,12 @@ export function AIChannel({
 
 
       {/* Messages area - Standard AI & Gmail */}
-      <div className="flex-1 overflow-y-auto p-2 md:p-4 touch-pan-y">
+      <div
+        className="flex-1 overflow-y-auto p-2 md:p-4 touch-pan-y"
+        style={{
+          paddingBottom: 'calc(var(--floating-input-height, 0px) + 24px)',
+        }}
+      >
         {/* Welcome message */}
         {responses.length === 0 && !selectedIntent && (
           <div className="text-center py-6 md:py-8 px-4">
@@ -1016,49 +1251,79 @@ export function AIChannel({
         )}
       </div>
 
-      {/* Input area - show when intent is selected */}
-      {selectedIntent && !isSubmitting && (
-        <div className="p-2 md:p-4 border-t chat-input-bar">
+      {/* Input area - always visible */}
+      <div
+        ref={inputBarRef}
+        className="absolute bottom-4 left-0 right-0 z-20 px-4 pointer-events-none"
+      >
+        <div className="max-w-4xl mx-auto w-full pointer-events-auto">
           <div className="mb-2 md:mb-3 flex items-center gap-2 flex-wrap">
-            <button
-              onClick={handleBack}
-              className="text-sm px-2 py-2 rounded chat-attach-button min-h-[44px]"
-            >
-              ← Back
-            </button>
-            <span className="text-xs md:text-sm font-medium">
-              {INTENTS.find((i) => i.id === selectedIntent)?.label}
+            {selectedIntent && (
+              <button
+                onClick={handleBack}
+                className="text-xs md:text-sm px-3 py-1.5 rounded-lg chat-attach-button min-h-[32px] hover:bg-stone-100 transition-colors"
+              >
+                ← Back
+              </button>
+            )}
+            <span className="text-xs md:text-sm font-medium px-2 py-1 bg-amber-100/50 rounded-md text-amber-800">
+              {selectedIntent
+                ? INTENTS.find((i) => i.id === selectedIntent)?.label
+                : 'Select an assistant'}
             </span>
             {clarificationState && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
                 Question {clarificationState.answers.length + 1}/
                 {clarificationState.max_rounds ?? clarificationState.questions.length}
               </span>
             )}
           </div>
-          <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={getPlaceholder(selectedIntent, clarificationState, activeQuestion)}
-              className="flex-1 px-3 md:px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-sm md:text-base"
-              autoFocus
-              minLength={query.trim().startsWith('/') ? 1 : clarificationState ? 1 : 10}
-            />
+          <form
+            onSubmit={handleSubmit}
+            className="flex flex-col sm:flex-row gap-2 relative bg-white/80 p-2 rounded-2xl shadow-xl border border-stone-200/50 backdrop-blur-sm"
+          >
+            <div className="flex-1 relative min-w-0">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={
+                  selectedIntent
+                    ? getPlaceholder(selectedIntent, clarificationState, activeQuestion)
+                    : 'Choose an assistant above or type /gmail-helper'
+                }
+                className="w-full px-3 py-3 bg-transparent border-0 focus:ring-0 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-stone-400"
+                style={{ minHeight: '44px' }}
+                autoFocus
+                disabled={isSubmitting || Boolean(healthMessage) || Boolean(aiAccessMessage)}
+                minLength={
+                  query.trim().startsWith('/') ||
+                  clarificationState ||
+                  selectedIntent === 'gmail'
+                    ? 1
+                    : 10
+                }
+              />
+            </div>
             <button
               type="submit"
               disabled={
+                isSubmitting ||
+                Boolean(healthMessage) ||
+                Boolean(aiAccessMessage) ||
                 !query.trim() ||
-                (!query.trim().startsWith('/') && !clarificationState && query.length < 10)
+                (!query.trim().startsWith('/') &&
+                  !clarificationState &&
+                  selectedIntent !== 'gmail' &&
+                  query.length < 10)
               }
-              className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm md:text-base w-full sm:w-auto"
+              className="p-2 rounded-xl transition-all chat-send-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 shadow-sm"
             >
-              {clarificationState ? 'Submit answer' : 'Ask AI'}
+              <ArrowUp size={20} />
             </button>
           </form>
           {clarificationState && clarificationState.answers.length > 0 && (
-            <div className="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-xs md:text-sm text-amber-900">
+            <div className="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-xs md:text-sm text-amber-900 shadow-sm">
               <div className="font-semibold mb-1">Your previous answers</div>
               {buildClarificationSummary(clarificationState).map((entry, idx) => (
                 <div key={`active-recap-${idx}`} className="mb-1">
@@ -1077,13 +1342,14 @@ export function AIChannel({
           {query.length > 0 &&
             query.length < 10 &&
             !clarificationState &&
+            selectedIntent !== 'gmail' &&
             !query.trim().startsWith('/') && (
-              <div className="mt-2 text-xs text-amber-600">
+              <div className="mt-2 text-xs text-amber-600 text-center">
                 Please provide more details (at least 10 characters)
               </div>
             )}
         </div>
-      )}
+      </div>
 
       {/* Show prompt to select intent when viewing responses */}
       {!selectedIntent && responses.length > 0 && !isSubmitting && (

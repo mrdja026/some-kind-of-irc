@@ -134,7 +134,7 @@ export DB_PORT="${DB_PORT:-5432}"
 export DB_NAME="${DB_NAME:-app_db}"
 export DB_USER="${DB_USER:-app_user}"
 
-export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest2;guest3}"
+export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest;guest2;guest3}"
 export LOCAL_QA_VLLM_BASE_URL="${LOCAL_QA_VLLM_BASE_URL:-http://host.docker.internal:8066/v1}"
 export LOCAL_QA_MODEL_NAME="${LOCAL_QA_MODEL_NAME:-phi3-mini}"
 export LOCAL_QA_API_KEY="${LOCAL_QA_API_KEY:-NA}"

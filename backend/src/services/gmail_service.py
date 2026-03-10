@@ -83,6 +83,30 @@ def _extract_body(payload: Dict[str, Any]) -> str:
     return html_body or text_body
 
 
+def _refresh_credentials_if_needed(
+    creds: Credentials,
+    db_token: GmailToken,
+    db: Session,
+) -> None:
+    if creds.expired and creds.refresh_token:
+        from google.auth.exceptions import RefreshError
+        from google.auth.transport.requests import Request
+
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            raise ValueError("Gmail authorization expired. Please reconnect.") from exc
+
+        db_token.access_token = creds.token
+        if creds.expiry:
+            db_token.expires_at = (
+                creds.expiry.astimezone(timezone.utc).replace(tzinfo=None)
+                if creds.expiry.tzinfo is not None
+                else creds.expiry
+            )
+        db.commit()
+
+
 async def fetch_latest_emails(
     db: Session, user_id: int, max_results: int = 10
 ) -> List[Dict[str, Any]]:
@@ -94,25 +118,7 @@ async def fetch_latest_emails(
     creds = _get_credentials(db_token)
 
     try:
-        if creds.expired and creds.refresh_token:
-            from google.auth.exceptions import RefreshError
-            from google.auth.transport.requests import Request
-
-            try:
-                creds.refresh(Request())
-            except RefreshError as exc:
-                raise ValueError(
-                    "Gmail authorization expired. Please reconnect."
-                ) from exc
-
-            db_token.access_token = creds.token
-            if creds.expiry:
-                db_token.expires_at = (
-                    creds.expiry.astimezone(timezone.utc).replace(tzinfo=None)
-                    if creds.expiry.tzinfo is not None
-                    else creds.expiry
-                )
-            db.commit()
+        _refresh_credentials_if_needed(creds, db_token, db)
 
         # Build the service
         service = build("gmail", "v1", credentials=creds)

@@ -144,6 +144,14 @@ export type WebSocketMessage = {
 // AI Agent types
 export type AIIntent = 'afford' | 'learn' | 'gmail';
 
+export type CalendarEventPayload = {
+  title: string;
+  start_datetime: string;
+  end_datetime: string;
+  timezone: string;
+  attendees: string[];
+};
+
 export type AIQueryRequest = {
   intent: AIIntent;
   query: string;

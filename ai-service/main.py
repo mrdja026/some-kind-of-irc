@@ -30,6 +30,7 @@ from config import settings
 from orchestrator import orchestrator
 from rate_limiter import enforce_rate_limit, remaining_requests
 from gmail_agent import GmailAgent
+from calendar_agent import CalendarAgent
 from local_qa_orchestrator import local_qa_orchestrator
 
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,10 @@ MANDATORY_GUARDRAIL_QUESTION = "Do you have a 6-month emergency fund?"
 CLARIFICATION_MAX_ROUNDS = 4
 
 gmail_agent = GmailAgent(api_key=settings.ANTHROPIC_API_KEY)
+calendar_agent = CalendarAgent(
+    api_key=settings.ANTHROPIC_API_KEY,
+    backend_url=settings.BACKEND_URL,
+)
 
 
 def _debug_log(message: str, *args):
@@ -194,6 +199,35 @@ class GmailSummaryResponse(BaseModel):
 
 class GmailQuestionsResponse(BaseModel):
     questions: List[str]
+
+
+class CalendarEventPayload(BaseModel):
+    title: str
+    start_datetime: str
+    end_datetime: str
+    timezone: str = "UTC"
+    attendees: List[str] = []
+
+
+class CalendarQuestionRequest(BaseModel):
+    request: str
+    previous_answers: List[str] = []
+
+
+class CalendarQuestionResponse(BaseModel):
+    status: Literal["clarify", "confirm"]
+    question: str
+    event: CalendarEventPayload
+
+
+class CalendarCreateRequest(BaseModel):
+    event: CalendarEventPayload
+
+
+class CalendarCreateResponse(BaseModel):
+    event_id: Optional[str] = None
+    html_link: Optional[str] = None
+    summary: Optional[str] = None
 
 
 class LocalAIMessage(BaseModel):
@@ -989,6 +1023,83 @@ async def generate_gmail_summary(
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
+
+    # 1. Generate dual summaries
+    summaries = await gmail_agent.generate_summaries(
+        emails=request.emails,
+        interest=request.interest,
+        answers=request.answers,
+    )
+
+    # 2. Judge and rank
+    result = await gmail_agent.judge_and_rank(
+        emails=request.emails,
+        summary_a=summaries.get("summary_a", ""),
+        summary_b=summaries.get("summary_b", ""),
+        interest=request.interest,
+        answers=request.answers,
+    )
+
+    return GmailSummaryResponse(
+        final_summary=result.get("final_summary", ""),
+        top_email_ids=result.get("top_email_ids", []),
+        reasoning=result.get("reasoning", ""),
+    )
+
+
+@app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)
+async def generate_calendar_question(
+    request: CalendarQuestionRequest,
+    username: str = Depends(require_ai_access),
+):
+    """Generate calendar clarification or confirmation question."""
+    await enforce_rate_limit(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+
+    result = await calendar_agent.plan_event(
+        request_text=request.request,
+        previous_answers=request.previous_answers,
+    )
+    status = "clarify" if result.get("needs_clarification") else "confirm"
+    event_payload = result.get("event") or {
+        "title": "",
+        "start_datetime": "",
+        "end_datetime": "",
+        "timezone": "UTC",
+        "attendees": [],
+    }
+    return CalendarQuestionResponse(
+        status=status,
+        question=result.get("question", ""),
+        event=event_payload,
+    )
+
+
+@app.post("/ai/calendar/create", response_model=CalendarCreateResponse)
+async def create_calendar_event_endpoint(
+    request: CalendarCreateRequest,
+    http_request: Request,
+    username: str = Depends(require_ai_access),
+):
+    """Create a calendar event after confirmation."""
+    await enforce_rate_limit(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+
+    auth_token = http_request.cookies.get("access_token")
+    if not auth_token:
+        raise HTTPException(status_code=400, detail="Missing session token")
+
+    result = await calendar_agent.create_event(
+        event=request.event.model_dump(),
+        auth_token=auth_token,
+    )
+    return CalendarCreateResponse(**result)
 
     # 1. Generate dual summaries
     summaries = await gmail_agent.generate_summaries(
