@@ -24,7 +24,7 @@ import {
 } from '../api/server'
 import { useChatSocket } from '../hooks/useChatSocket'
 import { useUserProfileInvalidation } from '../hooks/useUserProfileInvalidation'
-import type { Channel, Message, User } from '../types'
+import type { AIIntent, Channel, Message, User } from '../types'
 import {
   Home,
   LogIn,
@@ -37,6 +37,7 @@ import {
   ChevronDown,
   Gamepad2,
   Mail,
+  ArrowUp,
 } from 'lucide-react'
 import { AIChannel } from '../components/AIChannel'
 import { GameChannel } from '../components/GameChannel'
@@ -287,11 +288,17 @@ function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const messageInputRef = useRef<HTMLInputElement | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement | null>(null)
+  const chatContainerRef = useRef<HTMLDivElement | null>(null)
+  const chatInputBarRef = useRef<HTMLDivElement | null>(null)
   const messagesLengthRef = useRef<number>(0)
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [channelModes, setChannelModes] = useState<
     Record<number, 'chat' | 'ai' | 'game' | 'localqa'>
   >({})
+  const [pendingAiIntent, setPendingAiIntent] = useState<AIIntent | null>(null)
+  const [gmailAssistantChannelId, setGmailAssistantChannelId] = useState<
+    number | null
+  >(null)
   const [showCreateChannel, setShowCreateChannel] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
   const [newChannelType, setNewChannelType] = useState<'public' | 'private'>(
@@ -326,6 +333,26 @@ function ChatPage() {
       setSelectedChannelId(search.channelId)
     }
   }, [search.channelId, selectedChannelId])
+
+  useEffect(() => {
+    if (!chatContainerRef.current || !chatInputBarRef.current) {
+      return
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const updatePadding = () => {
+      const height = chatInputBarRef.current?.offsetHeight ?? 0
+      chatContainerRef.current?.style.setProperty(
+        '--floating-input-height',
+        `${height}px`,
+      )
+    }
+    updatePadding()
+    const observer = new ResizeObserver(updatePadding)
+    observer.observe(chatInputBarRef.current)
+    return () => observer.disconnect()
+  }, [])
 
   // Get current user - hydrate from loader data
   const {
@@ -368,7 +395,7 @@ function ChatPage() {
   const selectedChannel =
     channels?.find((c) => c.id === selectedChannelId) || null
   const defaultMode =
-    selectedChannel?.name === '#ai'
+    selectedChannel?.name === '#ai' || selectedChannel?.name === '#gmail-assistant'
       ? 'ai'
       : selectedChannel?.name === '#game'
         ? 'game'
@@ -383,6 +410,65 @@ function ChatPage() {
     if (!selectedChannelId) return
     setChannelModes((prev) => ({ ...prev, [selectedChannelId]: mode }))
   }
+
+  const jumpToGmailAssistant = useCallback(async () => {
+    try {
+      const gmailChannels = await searchChannels('#gmail-assistant')
+      let gmailChannel = gmailChannels.find(
+        (channel) => channel.name === '#gmail-assistant',
+      )
+      if (!gmailChannel) {
+        try {
+          gmailChannel = await createChannel('#gmail-assistant')
+        } catch (error) {
+          console.error('Gmail assistant channel not found', error)
+          return
+        }
+      }
+      await joinChannel(gmailChannel.id)
+      await refetchChannels()
+      setChannelModes((prev) => ({
+        ...prev,
+        [gmailChannel.id]: 'ai',
+      }))
+      setActiveChannel(gmailChannel.id)
+      setPendingAiIntent('gmail')
+      setGmailAssistantChannelId(gmailChannel.id)
+    } catch (error) {
+      console.error('Failed to switch to Gmail assistant:', error)
+    }
+  }, [
+    refetchChannels,
+    searchChannels,
+    joinChannel,
+    setActiveChannel,
+    setChannelModes,
+    setPendingAiIntent,
+    setGmailAssistantChannelId,
+  ])
+
+  useEffect(() => {
+    if (!selectedChannelId) {
+      return
+    }
+    if (selectedChannel?.name === '#gmail-assistant') {
+      if (gmailAssistantChannelId !== selectedChannelId) {
+        setChannelModes((prev) => ({
+          ...prev,
+          [selectedChannelId]: 'ai',
+        }))
+        setPendingAiIntent('gmail')
+        setGmailAssistantChannelId(selectedChannelId)
+      }
+    } else if (gmailAssistantChannelId) {
+      setGmailAssistantChannelId(null)
+    }
+  }, [
+    gmailAssistantChannelId,
+    selectedChannel?.name,
+    selectedChannelId,
+    setChannelModes,
+  ])
 
   const dmUserIds = useMemo(() => {
     if (!directMessages || !user) return []
@@ -903,14 +989,17 @@ function ChatPage() {
           return
         case 'ai':
           setChannelMode('ai')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'chat':
           setChannelMode('chat')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'game':
           setChannelMode('game')
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'qa-local':
@@ -933,16 +1022,12 @@ function ChatPage() {
           } catch (error) {
             console.error('Failed to switch to Q&A local:', error)
           }
+          setPendingAiIntent(null)
           setMessageInput('')
           return
         case 'gmail-helper':
         case 'gmail-agent':
-          setChannelMode('ai')
-          // We need to trigger the gmail intent on the AI channel
-          // Since we can't pass props imperatively here easily without context ref,
-          // we'll rely on the user seeing the 'Summarize my Gmail' option or
-          // implementing a more robust command-to-intent bridge later.
-          // For now, let's just switch to AI mode.
+          await jumpToGmailAssistant()
           setMessageInput('')
           return
         default:
@@ -1020,7 +1105,7 @@ function ChatPage() {
 
   return (
     <div
-      className="min-h-screen flex chat-shell"
+      className="h-screen overflow-hidden flex chat-shell"
       onClick={handleContextMenuClose}
     >
       {isNavOpen && (
@@ -1200,7 +1285,7 @@ function ChatPage() {
       </aside>
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col w-full md:w-auto">
+      <div className="flex-1 flex flex-col w-full md:w-auto min-h-0">
         {/* Mobile menu button - shown only on mobile */}
         <div className="md:hidden p-2 border-b chat-header flex items-center gap-2">
           <button
@@ -1327,17 +1412,26 @@ function ChatPage() {
                 onCommand={(command) => {
                   if (command === 'chat') {
                     setChannelMode('chat')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'ai') {
                     setChannelMode('ai')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'game') {
                     setChannelMode('game')
+                    setPendingAiIntent(null)
                   }
                   if (command === 'localqa') {
                     setChannelMode('localqa')
+                    setPendingAiIntent(null)
+                  }
+                  if (command === 'gmail-helper' || command === 'gmail-agent') {
+                    void jumpToGmailAssistant()
                   }
                 }}
+                requestedIntent={pendingAiIntent}
+                onIntentHandled={() => setPendingAiIntent(null)}
               />
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel
@@ -1353,9 +1447,15 @@ function ChatPage() {
                 sendGameJoin={sendGameJoin}
               />
             ) : (
-              <>
+              <div ref={chatContainerRef} className="flex-1 flex flex-col relative min-h-0">
                 {/* Messages */}
-                <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-1.5 md:p-2 touch-pan-y">
+                <div
+                  ref={messagesContainerRef}
+                  className="flex-1 overflow-y-auto p-1.5 md:p-2 touch-pan-y"
+                  style={{
+                    paddingBottom: 'calc(var(--floating-input-height, 0px) + 24px)',
+                  }}
+                >
                   {messagesLoading ? (
                     <div className="text-center py-4 chat-meta text-sm">
                       Loading messages...
@@ -1415,68 +1515,80 @@ function ChatPage() {
                 </div>
 
                 {/* Message input */}
-                <div className="p-1.5 md:p-2 border-t chat-input-bar">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                  <form
-                    onSubmit={handleSubmit}
-                    className="flex flex-col sm:flex-row gap-2 relative"
-                  >
-                    <div className="flex gap-2 flex-1 min-w-0">
+                <div
+                  ref={chatInputBarRef}
+                  className="absolute bottom-4 left-0 right-0 z-20 px-4 pointer-events-none"
+                >
+                  <div className="max-w-4xl mx-auto w-full pointer-events-auto">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    <form
+                      onSubmit={handleSubmit}
+                      className="flex flex-col sm:flex-row gap-2 relative bg-white/80 p-2 rounded-2xl shadow-xl border border-stone-200/50 backdrop-blur-sm"
+                    >
+                      <div className="flex gap-2 flex-1 min-w-0 items-end">
+                        <button
+                          type="button"
+                          onClick={handleAttachmentClick}
+                          disabled={
+                            isInteractionDisabled ||
+                            !selectedChannelId ||
+                            isUploading
+                          }
+                          className="p-2 rounded-xl transition-colors chat-attach-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 hover:bg-stone-100"
+                          title="Attach file"
+                        >
+                          <Plus size={20} />
+                        </button>
+                        <div className="flex-1 relative min-w-0">
+                          <input
+                            ref={messageInputRef}
+                            type="text"
+                            value={messageInput}
+                            onChange={handleInputChange}
+                            placeholder="Type a message..."
+                            disabled={isInteractionDisabled}
+                            className="w-full px-3 py-3 bg-transparent border-0 focus:ring-0 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-stone-400"
+                            style={{ minHeight: '44px' }}
+                          />
+                          <div className="absolute bottom-full left-0 w-full mb-2">
+                            <MentionAutocomplete
+                              channelId={selectedChannelId}
+                              inputValue={messageInput}
+                              onInputChange={setMessageInput}
+                              inputRef={messageInputRef}
+                            />
+                          </div>
+                        </div>
+                      </div>
                       <button
-                        type="button"
-                        onClick={handleAttachmentClick}
+                        type="submit"
                         disabled={
                           isInteractionDisabled ||
-                          !selectedChannelId ||
-                          isUploading
+                          !messageInput.trim() ||
+                          !selectedChannelId
                         }
-                        className="px-3 py-2 rounded-lg transition-colors chat-attach-button disabled:opacity-60 min-h-[44px] text-sm md:text-base flex-shrink-0"
+                        className="p-2 rounded-xl transition-all chat-send-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 shadow-sm"
                       >
-                        Attach
+                        <ArrowUp size={20} />
                       </button>
-                      <div className="flex-1 relative min-w-0">
-                        <input
-                          ref={messageInputRef}
-                          type="text"
-                          value={messageInput}
-                          onChange={handleInputChange}
-                          placeholder="Type your message..."
-                          disabled={isInteractionDisabled}
-                          className="w-full px-3 md:px-4 py-2 rounded-lg transition-all chat-input min-h-[44px] text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed"
-                        />
-                        <MentionAutocomplete
-                          channelId={selectedChannelId}
-                          inputValue={messageInput}
-                          onInputChange={setMessageInput}
-                          inputRef={messageInputRef}
-                        />
+                    </form>
+                    {(isUploading || uploadError) && (
+                      <div className="mt-2 text-xs md:text-sm chat-meta text-center">
+                        {isUploading ? 'Uploading image...' : uploadError}
                       </div>
+                    )}
+                    <div className="text-[10px] text-center mt-2 text-stone-400">
+                      AI can make mistakes. Please check important info.
                     </div>
-                    <button
-                      type="submit"
-                      disabled={
-                        isInteractionDisabled ||
-                        !messageInput.trim() ||
-                        !selectedChannelId
-                      }
-                      className="px-4 py-2 font-semibold rounded-lg transition-colors chat-send-button disabled:opacity-60 min-h-[44px] text-sm md:text-base w-full sm:w-auto flex-shrink-0"
-                    >
-                      Send
-                    </button>
-                  </form>
-                  {(isUploading || uploadError) && (
-                    <div className="mt-2 text-xs md:text-sm chat-meta">
-                      {isUploading ? 'Uploading image...' : uploadError}
-                    </div>
-                  )}
+                  </div>
                 </div>
-              </>
+              </div>
             )}
           </>
         ) : (

@@ -30,6 +30,7 @@ from config import settings
 from orchestrator import orchestrator
 from rate_limiter import enforce_rate_limit, remaining_requests
 from gmail_agent import GmailAgent
+from calendar_agent import CalendarAgent
 from local_qa_orchestrator import local_qa_orchestrator
 
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,10 @@ MANDATORY_GUARDRAIL_QUESTION = "Do you have a 6-month emergency fund?"
 CLARIFICATION_MAX_ROUNDS = 4
 
 gmail_agent = GmailAgent(api_key=settings.ANTHROPIC_API_KEY)
+calendar_agent = CalendarAgent(
+    api_key=settings.ANTHROPIC_API_KEY,
+    backend_url=settings.BACKEND_URL,
+)
 
 
 def _debug_log(message: str, *args):
@@ -83,15 +88,26 @@ def _extract_fraction_ratio(text: str) -> Optional[float]:
     return min(ratios) if ratios else None
 
 
-def _build_smart_guardrail_question(original_query: str, answers: list[str]) -> tuple[str, str]:
+def _build_smart_guardrail_question(
+    original_query: str, answers: list[str]
+) -> tuple[str, str]:
     """Build a contextual 4th guardrail question for affordability intent."""
     combined = f"{original_query}\n" + "\n".join(answers)
     lower = combined.lower()
     runway_months = _extract_runway_months(lower)
     ratio = _extract_fraction_ratio(lower)
-    no_income = any(token in lower for token in ["no income", "career break", "unemployed", "between jobs"])
+    no_income = any(
+        token in lower
+        for token in ["no income", "career break", "unemployed", "between jobs"]
+    )
 
-    if no_income and runway_months is not None and runway_months >= 24 and ratio is not None and ratio <= 0.05:
+    if (
+        no_income
+        and runway_months is not None
+        and runway_months >= 24
+        and ratio is not None
+        and ratio <= 0.05
+    ):
         return (
             "You mentioned strong runway and low purchase impact; what minimum emergency buffer (in months) do you want to keep untouched after buying this?",
             "Soft guardrail: user appears resilient, so ask for explicit personal buffer target.",
@@ -118,6 +134,7 @@ def _build_smart_guardrail_question(original_query: str, answers: list[str]) -> 
 # ---------------------------------------------------------------------------
 # Pydantic Models
 # ---------------------------------------------------------------------------
+
 
 class ClarificationState(BaseModel):
     original_query: str
@@ -168,8 +185,10 @@ class GmailSummaryRequest(BaseModel):
 
 
 class GmailQuestionsRequest(BaseModel):
-    interest: str
+    emails: List[Dict[str, Any]]
+    interest: str = ""
     previous_answers: List[str] = []
+    question_count: int = 2
 
 
 class GmailSummaryResponse(BaseModel):
@@ -180,6 +199,35 @@ class GmailSummaryResponse(BaseModel):
 
 class GmailQuestionsResponse(BaseModel):
     questions: List[str]
+
+
+class CalendarEventPayload(BaseModel):
+    title: str
+    start_datetime: str
+    end_datetime: str
+    timezone: str = "UTC"
+    attendees: List[str] = []
+
+
+class CalendarQuestionRequest(BaseModel):
+    request: str
+    previous_answers: List[str] = []
+
+
+class CalendarQuestionResponse(BaseModel):
+    status: Literal["clarify", "confirm"]
+    question: str
+    event: CalendarEventPayload
+
+
+class CalendarCreateRequest(BaseModel):
+    event: CalendarEventPayload
+
+
+class CalendarCreateResponse(BaseModel):
+    event_id: Optional[str] = None
+    html_link: Optional[str] = None
+    summary: Optional[str] = None
 
 
 class LocalAIMessage(BaseModel):
@@ -203,6 +251,7 @@ class LocalAIQueryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Validation helper
 # ---------------------------------------------------------------------------
+
 
 def _validate_query(request: AIQueryRequest):
     if request.media_urls:
@@ -238,7 +287,10 @@ def _validate_query(request: AIQueryRequest):
                 status_code=400,
                 detail="clarification_state.questions cannot be empty.",
             )
-        if request.clarification_state.max_rounds < 1 or request.clarification_state.max_rounds > CLARIFICATION_MAX_ROUNDS:
+        if (
+            request.clarification_state.max_rounds < 1
+            or request.clarification_state.max_rounds > CLARIFICATION_MAX_ROUNDS
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=f"clarification_state.max_rounds must be between 1 and {CLARIFICATION_MAX_ROUNDS}.",
@@ -258,7 +310,9 @@ async def _select_next_clarification_question(
     original_query: str,
     asked_questions: list[str],
     answers: list[str],
-) -> tuple[Optional[str], bool, list[str], str, str, dict[str, list[str]], dict[str, str]]:
+) -> tuple[
+    Optional[str], bool, list[str], str, str, dict[str, list[str]], dict[str, str]
+]:
     asked_norm = {q.strip().lower() for q in asked_questions if q.strip()}
 
     # Smart guardrail for affordability: always ask a contextual 4th safety question.
@@ -267,7 +321,9 @@ async def _select_next_clarification_question(
         and len(answers) == CLARIFICATION_MAX_ROUNDS - 1
         and MANDATORY_GUARDRAIL_QUESTION.lower() not in asked_norm
     ):
-        guardrail_question, guardrail_reason = _build_smart_guardrail_question(original_query, answers)
+        guardrail_question, guardrail_reason = _build_smart_guardrail_question(
+            original_query, answers
+        )
         _debug_log("guardrail question selected: %s", guardrail_question)
         return (
             guardrail_question,
@@ -288,28 +344,43 @@ async def _select_next_clarification_question(
     )
 
     chosen_question_raw = panel.get("chosen_question")
-    chosen_question = chosen_question_raw if isinstance(chosen_question_raw, str) else ""
+    chosen_question = (
+        chosen_question_raw if isinstance(chosen_question_raw, str) else ""
+    )
     chosen_question = chosen_question.strip()
-    if len(answers) < CLARIFICATION_MAX_ROUNDS - 1 and chosen_question.lower() == MANDATORY_GUARDRAIL_QUESTION.lower():
+    if (
+        len(answers) < CLARIFICATION_MAX_ROUNDS - 1
+        and chosen_question.lower() == MANDATORY_GUARDRAIL_QUESTION.lower()
+    ):
         chosen_question = ""
     if chosen_question:
         panel_others_raw = panel.get("other_suggested_questions")
-        panel_others: list[str] = [
-            item
-            for item in panel_others_raw
-            if isinstance(item, str)
-            and item.strip().lower() != MANDATORY_GUARDRAIL_QUESTION.lower()
-        ] if isinstance(panel_others_raw, list) else []
+        panel_others: list[str] = (
+            [
+                item
+                for item in panel_others_raw
+                if isinstance(item, str)
+                and item.strip().lower() != MANDATORY_GUARDRAIL_QUESTION.lower()
+            ]
+            if isinstance(panel_others_raw, list)
+            else []
+        )
         panel_reasoning_raw = panel.get("judge_reasoning")
-        panel_reasoning = panel_reasoning_raw.strip() if isinstance(panel_reasoning_raw, str) else ""
+        panel_reasoning = (
+            panel_reasoning_raw.strip() if isinstance(panel_reasoning_raw, str) else ""
+        )
         panel_chosen_raw = panel.get("chosen_from_agent")
-        panel_chosen = panel_chosen_raw if isinstance(panel_chosen_raw, str) else "JudgeBot"
+        panel_chosen = (
+            panel_chosen_raw if isinstance(panel_chosen_raw, str) else "JudgeBot"
+        )
         panel_agents_raw = panel.get("agent_candidates")
         panel_agents: dict[str, list[str]] = {}
         if isinstance(panel_agents_raw, dict):
             for key, value in panel_agents_raw.items():
                 if isinstance(key, str) and isinstance(value, list):
-                    panel_agents[key] = [item for item in value if isinstance(item, str)]
+                    panel_agents[key] = [
+                        item for item in value if isinstance(item, str)
+                    ]
         panel_reasoning_raw_map = panel.get("agent_reasoning")
         panel_agent_reasoning: dict[str, str] = {}
         if isinstance(panel_reasoning_raw_map, dict):
@@ -344,7 +415,9 @@ async def _select_next_clarification_question(
             "Fallback question selected because judge panel did not return a valid candidate.",
             "Fallback",
             {"Fallback": [fallback, *fallback_candidates]},
-            {"Fallback": "Fallback path used because specialists/judge returned no valid next question."},
+            {
+                "Fallback": "Fallback path used because specialists/judge returned no valid next question."
+            },
         )
 
     return None, False, [], "", "JudgeBot", {}, {}
@@ -392,7 +465,9 @@ async def get_local_ai_status(username: str = Depends(require_local_ai_access)):
     if not settings.FEATURE_LOCAL_QA:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    max_requests = settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    max_requests = (
+        settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    )
     remaining = await remaining_requests(
         user_id=f"local:{username}",
         max_requests=max_requests,
@@ -418,7 +493,9 @@ async def query_local_ai(
     if not settings.FEATURE_LOCAL_QA:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    max_requests = settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    max_requests = (
+        settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    )
     await enforce_rate_limit(
         user_id=f"local:{username}",
         max_requests=max_requests,
@@ -427,8 +504,12 @@ async def query_local_ai(
 
     if request.mode == "greeting":
         message, agent = await local_qa_orchestrator.generate_greeting()
-        status = "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
-        return LocalAIQueryResponse(status=status, message=message, agent=agent, rejected=False)
+        status = (
+            "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
+        )
+        return LocalAIQueryResponse(
+            status=status, message=message, agent=agent, rejected=False
+        )
 
     query_text = request.query.strip()
     if not query_text:
@@ -450,9 +531,13 @@ async def query_local_ai(
         for item in request.history
         if item.content.strip()
     ]
-    message, agent = await local_qa_orchestrator.answer_query(query_text, history_payload)
+    message, agent = await local_qa_orchestrator.answer_query(
+        query_text, history_payload
+    )
     status = "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
-    return LocalAIQueryResponse(status=status, message=message, agent=agent, rejected=False)
+    return LocalAIQueryResponse(
+        status=status, message=message, agent=agent, rejected=False
+    )
 
 
 @app.post("/ai/local/query/stream")
@@ -475,7 +560,9 @@ async def query_local_ai_stream(
     if not query_text:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    max_requests = settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    max_requests = (
+        settings.LOCAL_QA_RATE_LIMIT_PER_HOUR or settings.AI_RATE_LIMIT_PER_HOUR
+    )
     await enforce_rate_limit(
         user_id=f"local:{username}",
         max_requests=max_requests,
@@ -546,7 +633,12 @@ async def query_local_ai_stream(
         except Exception:
             logger.exception("Local AI streaming failed for /ai/local/query/stream")
             if token_sent:
-                yield sse({"type": "error", "message": "Local AI stream interrupted. Please retry."})
+                yield sse(
+                    {
+                        "type": "error",
+                        "message": "Local AI stream interrupted. Please retry.",
+                    }
+                )
             else:
                 yield sse(
                     {
@@ -604,7 +696,9 @@ async def query_ai_agents(
 
         if not question:
             # Should not happen ideally, but if no question is generated, fallback or fail
-            raise HTTPException(status_code=500, detail="Failed to generate clarification question.")
+            raise HTTPException(
+                status_code=500, detail="Failed to generate clarification question."
+            )
 
         return AIQueryResponse(
             mode="clarify",
@@ -643,18 +737,18 @@ async def query_ai_agents(
         # The contract implies 'query' is the user's latest input.
         # But for 'clarification' stage, usually we expect the client to have updated the state?
         # Let's assume the client sends the *latest answer* as `query`, and we append it.)
-        
+
         # Actually, looking at the frontend, it sends `query` as the answer.
         # But `AIChannel.tsx` builds the `clarificationState` by appending answers locally?
         # Wait, `queryAI` just passes the state.
-        
+
         # Let's look at `_validate_query`. It expects `state` to be present.
         # If `answers` length < `questions` length, `query` is the answer to `questions[-1]`.
-        
+
         answers = list(state.answers)
         if len(answers) < len(state.questions):
             answers.append(request.query)
-        
+
         # If we have enough answers, generate final response OR next question
         if len(answers) >= state.max_rounds:
             # Generate final response
@@ -763,7 +857,7 @@ async def query_ai_agents_stream(
 
         if request.conversation_stage == "initial":
             yield f"data: {json.dumps({'type': 'progress', 'stage': 'collect_candidates', 'message': 'Consulting specialists...'})}\n\n"
-            
+
             (
                 question,
                 is_fallback,
@@ -803,7 +897,7 @@ async def query_ai_agents_stream(
                     "max_rounds": CLARIFICATION_MAX_ROUNDS,
                 },
                 "agent": "JudgeBot",
-                "disclaimer": "AI responses are for informational purposes only."
+                "disclaimer": "AI responses are for informational purposes only.",
             }
             yield f"data: {json.dumps(response_data)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'mode': 'clarify'})}\n\n"
@@ -826,9 +920,9 @@ async def query_ai_agents_stream(
                 # Stream delta (simulate)
                 chunk_size = 20
                 for i in range(0, len(final_response), chunk_size):
-                    chunk = final_response[i:i+chunk_size]
+                    chunk = final_response[i : i + chunk_size]
                     yield f"data: {json.dumps({'type': 'delta', 'text': chunk})}\n\n"
-                
+
                 yield f"data: {json.dumps({'type': 'done', 'mode': 'final'})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'progress', 'stage': 'collect_candidates', 'message': 'Consulting specialists...'})}\n\n"
@@ -848,7 +942,7 @@ async def query_ai_agents_stream(
                 )
 
                 if not question:
-                     # Fallback to final response if no question
+                    # Fallback to final response if no question
                     final_response = await orchestrator.generate_final_response(
                         intent=intent,
                         original_query=state.original_query,
@@ -856,7 +950,7 @@ async def query_ai_agents_stream(
                         answers=answers,
                     )
                     for i in range(0, len(final_response), 20):
-                        yield f"data: {json.dumps({'type': 'delta', 'text': final_response[i:i+20]})}\n\n"
+                        yield f"data: {json.dumps({'type': 'delta', 'text': final_response[i : i + 20]})}\n\n"
                     yield f"data: {json.dumps({'type': 'done', 'mode': 'final'})}\n\n"
                     return
 
@@ -888,7 +982,7 @@ async def query_ai_agents_stream(
                         "max_rounds": state.max_rounds,
                     },
                     "agent": "JudgeBot",
-                    "disclaimer": "AI responses are for informational purposes only."
+                    "disclaimer": "AI responses are for informational purposes only.",
                 }
                 yield f"data: {json.dumps(response_data)}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'mode': 'clarify'})}\n\n"
@@ -907,11 +1001,14 @@ async def generate_gmail_questions(
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
-    
+
     questions = await gmail_agent.generate_followup_questions(
+        emails=request.emails,
         interest=request.interest,
-        previous_answers=request.previous_answers
+        previous_answers=request.previous_answers,
+        question_count=request.question_count,
     )
+
     return GmailQuestionsResponse(questions=questions)
 
 
@@ -926,25 +1023,100 @@ async def generate_gmail_summary(
         max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
         window_seconds=3600,
     )
-    
+
     # 1. Generate dual summaries
     summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
         interest=request.interest,
-        answers=request.answers
+        answers=request.answers,
     )
-    
+
     # 2. Judge and rank
     result = await gmail_agent.judge_and_rank(
         emails=request.emails,
         summary_a=summaries.get("summary_a", ""),
         summary_b=summaries.get("summary_b", ""),
         interest=request.interest,
-        answers=request.answers
+        answers=request.answers,
     )
-    
+
     return GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),
         top_email_ids=result.get("top_email_ids", []),
-        reasoning=result.get("reasoning", "")
+        reasoning=result.get("reasoning", ""),
+    )
+
+
+@app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)
+async def generate_calendar_question(
+    request: CalendarQuestionRequest,
+    username: str = Depends(require_ai_access),
+):
+    """Generate calendar clarification or confirmation question."""
+    await enforce_rate_limit(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+
+    result = await calendar_agent.plan_event(
+        request_text=request.request,
+        previous_answers=request.previous_answers,
+    )
+    status = "clarify" if result.get("needs_clarification") else "confirm"
+    event_payload = result.get("event") or {
+        "title": "",
+        "start_datetime": "",
+        "end_datetime": "",
+        "timezone": "UTC",
+        "attendees": [],
+    }
+    return CalendarQuestionResponse(
+        status=status,
+        question=result.get("question", ""),
+        event=event_payload,
+    )
+
+
+@app.post("/ai/calendar/create", response_model=CalendarCreateResponse)
+async def create_calendar_event_endpoint(
+    request: CalendarCreateRequest,
+    http_request: Request,
+    username: str = Depends(require_ai_access),
+):
+    """Create a calendar event after confirmation."""
+    await enforce_rate_limit(
+        user_id=username,
+        max_requests=settings.AI_RATE_LIMIT_PER_HOUR,
+        window_seconds=3600,
+    )
+
+    auth_token = http_request.cookies.get("access_token")
+    if not auth_token:
+        raise HTTPException(status_code=400, detail="Missing session token")
+
+    result = await calendar_agent.create_event(
+        event=request.event.model_dump(),
+        auth_token=auth_token,
+    )
+    return CalendarCreateResponse(**result)
+
+    # 1. Generate dual summaries
+    summaries = await gmail_agent.generate_summaries(
+        emails=request.emails, interest=request.interest, answers=request.answers
+    )
+
+    # 2. Judge and rank
+    result = await gmail_agent.judge_and_rank(
+        emails=request.emails,
+        summary_a=summaries.get("summary_a", ""),
+        summary_b=summaries.get("summary_b", ""),
+        interest=request.interest,
+        answers=request.answers,
+    )
+
+    return GmailSummaryResponse(
+        final_summary=result.get("final_summary", ""),
+        top_email_ids=result.get("top_email_ids", []),
+        reasoning=result.get("reasoning", ""),
     )

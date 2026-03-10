@@ -12,6 +12,8 @@ from src.models.gmail_token import GmailToken
 
 logger = logging.getLogger(__name__)
 
+DISCOVERY_EMAIL_QUERY = "label:discovery is:unread"
+
 
 def _get_credentials(db_token: GmailToken) -> Credentials:
     """Create a Credentials object from the DB token."""
@@ -53,18 +55,56 @@ def _decode_body(data: str) -> str:
         return ""
 
 
-def _extract_body(payload: Dict[str, Any]) -> str:
-    """Recursively extract text/plain body from payload."""
-    body = ""
+def _extract_body_parts(payload: Dict[str, Any]) -> tuple[str, str]:
+    """Recursively extract text/html and text/plain bodies from payload."""
+    html_body = ""
+    text_body = ""
     if "parts" in payload:
         for part in payload["parts"]:
-            if part["mimeType"] == "text/plain":
-                body += _decode_body(part.get("body", {}).get("data", ""))
+            if part["mimeType"] == "text/html":
+                html_body += _decode_body(part.get("body", {}).get("data", ""))
+            elif part["mimeType"] == "text/plain":
+                text_body += _decode_body(part.get("body", {}).get("data", ""))
             elif "parts" in part:
-                body += _extract_body(part)
-    elif payload.get("mimeType") == "text/plain":
-        body = _decode_body(payload.get("body", {}).get("data", ""))
-    return body
+                nested_html, nested_text = _extract_body_parts(part)
+                html_body += nested_html
+                text_body += nested_text
+    else:
+        if payload.get("mimeType") == "text/html":
+            html_body = _decode_body(payload.get("body", {}).get("data", ""))
+        elif payload.get("mimeType") == "text/plain":
+            text_body = _decode_body(payload.get("body", {}).get("data", ""))
+    return html_body, text_body
+
+
+def _extract_body(payload: Dict[str, Any]) -> str:
+    """Return HTML body when available; fall back to text/plain."""
+    html_body, text_body = _extract_body_parts(payload)
+    return html_body or text_body
+
+
+def _refresh_credentials_if_needed(
+    creds: Credentials,
+    db_token: GmailToken,
+    db: Session,
+) -> None:
+    if creds.expired and creds.refresh_token:
+        from google.auth.exceptions import RefreshError
+        from google.auth.transport.requests import Request
+
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            raise ValueError("Gmail authorization expired. Please reconnect.") from exc
+
+        db_token.access_token = creds.token
+        if creds.expiry:
+            db_token.expires_at = (
+                creds.expiry.astimezone(timezone.utc).replace(tzinfo=None)
+                if creds.expiry.tzinfo is not None
+                else creds.expiry
+            )
+        db.commit()
 
 
 async def fetch_latest_emails(
@@ -78,23 +118,7 @@ async def fetch_latest_emails(
     creds = _get_credentials(db_token)
 
     try:
-        if creds.expired and creds.refresh_token:
-            from google.auth.exceptions import RefreshError
-            from google.auth.transport.requests import Request
-
-            try:
-                creds.refresh(Request())
-            except RefreshError as exc:
-                raise ValueError("Gmail authorization expired. Please reconnect.") from exc
-
-            db_token.access_token = creds.token
-            if creds.expiry:
-                db_token.expires_at = (
-                    creds.expiry.astimezone(timezone.utc).replace(tzinfo=None)
-                    if creds.expiry.tzinfo is not None
-                    else creds.expiry
-                )
-            db.commit()
+        _refresh_credentials_if_needed(creds, db_token, db)
 
         # Build the service
         service = build("gmail", "v1", credentials=creds)
@@ -103,7 +127,7 @@ async def fetch_latest_emails(
         results = (
             service.users()
             .messages()
-            .list(userId="me", maxResults=max_results)
+            .list(userId="me", maxResults=max_results, q=DISCOVERY_EMAIL_QUERY)
             .execute()
         )
         messages = results.get("messages", [])
@@ -134,13 +158,13 @@ async def fetch_latest_emails(
                 if label.startswith("CATEGORY_"):
                     category = label.replace("CATEGORY_", "").lower()
                     break
-            
+
             # Extract body
             body_text = _extract_body(payload)
             if not body_text:
                 # Fallback to snippet if body extraction fails
                 body_text = full_msg.get("snippet", "")
-            
+
             # Truncate body if excessively long (e.g., > 2000 chars) to save tokens
             if len(body_text) > 2000:
                 body_text = body_text[:2000] + "... [truncated]"

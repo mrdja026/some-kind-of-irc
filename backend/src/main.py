@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 
 logger = logging.getLogger("uvicorn.error")
 
+
 # Lifespan event handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,7 +36,9 @@ async def lifespan(app: FastAPI):
             result = connection.execute(text("PRAGMA table_info(messages)"))
             columns = {row[1] for row in result}
             if columns and "image_url" not in columns:
-                connection.execute(text("ALTER TABLE messages ADD COLUMN image_url TEXT"))
+                connection.execute(
+                    text("ALTER TABLE messages ADD COLUMN image_url TEXT")
+                )
                 connection.commit()
             if columns and "target_user_id" not in columns:
                 connection.execute(
@@ -52,7 +55,9 @@ async def lifespan(app: FastAPI):
                 )
                 connection.commit()
             if user_columns and "display_name" not in user_columns:
-                connection.execute(text("ALTER TABLE users ADD COLUMN display_name TEXT"))
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN display_name TEXT")
+                )
                 connection.execute(
                     text(
                         "UPDATE users SET display_name = username "
@@ -63,14 +68,15 @@ async def lifespan(app: FastAPI):
             if user_columns and "display_name_updated_at" not in user_columns:
                 connection.execute(
                     text(
-                        "ALTER TABLE users "
-                        "ADD COLUMN display_name_updated_at DATETIME"
+                        "ALTER TABLE users ADD COLUMN display_name_updated_at DATETIME"
                     )
                 )
                 connection.commit()
             if user_columns and "updated_at" not in user_columns:
                 # SQLite doesn't allow non-constant defaults in ALTER TABLE
-                connection.execute(text("ALTER TABLE users ADD COLUMN updated_at DATETIME"))
+                connection.execute(
+                    text("ALTER TABLE users ADD COLUMN updated_at DATETIME")
+                )
                 connection.execute(
                     text(
                         "UPDATE users SET updated_at = CURRENT_TIMESTAMP "
@@ -90,39 +96,44 @@ async def lifespan(app: FastAPI):
                     )
                 )
                 connection.commit()
-    
+
     # Create default channels on startup
     from src.core.database import SessionLocal
     from src.core.config import settings
+
     db = SessionLocal()
-    default_channels = ["#general", "#random", "#ai", "#game"]
-    
+    default_channels = ["#general", "#random", "#ai", "#gmail-assistant", "#game"]
+
     # Add data-processor channel if feature is enabled
     if settings.data_processor_enabled:
         default_channels.append("#data-processor")
     if settings.local_qa_enabled:
         default_channels.append(settings.LOCAL_QA_CHANNEL_NAME)
-    
+
     for channel_name in default_channels:
         db_channel = db.query(Channel).filter(Channel.name == channel_name).first()
         if not db_channel:
-            is_data_processor = (channel_name == "#data-processor")
-            new_channel = Channel(name=channel_name, type="public", is_data_processor=is_data_processor)
+            is_data_processor = channel_name == "#data-processor"
+            new_channel = Channel(
+                name=channel_name, type="public", is_data_processor=is_data_processor
+            )
             db.add(new_channel)
     db.commit()
 
     db.close()
-    
+
     # Start Redis event subscriber for auto-join functionality
     start_event_subscriber()
-    
+
     yield
-    
+
     # Shutdown: stop event subscriber
     stop_event_subscriber()
 
+
 # Initialize FastAPI app
 app = FastAPI(title="IRC Chat API", version="1.0.0", lifespan=lifespan)
+
 
 # CORS middleware
 def _origin_from_url(value: str) -> str | None:
@@ -171,6 +182,7 @@ app.include_router(media_router)
 app.include_router(game_router)
 app.include_router(data_processor_router)
 
+
 # Temporary root endpoint (backend should not serve frontend)
 @app.get("/")
 async def root():
@@ -179,10 +191,12 @@ async def root():
         "links": {"health": "/health", "docs": "/docs"},
     }
 
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     return {"message": "server is running"}
+
 
 # WebSocket endpoint
 @app.websocket("/ws/{client_id}")
@@ -257,7 +271,11 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
 
                 db = next(get_db())
                 try:
-                    channel = db.query(Channel).filter(Channel.id == resolved_channel_id).first()
+                    channel = (
+                        db.query(Channel)
+                        .filter(Channel.id == resolved_channel_id)
+                        .first()
+                    )
                     if channel is None:
                         await manager.send_personal_message(
                             {
@@ -295,7 +313,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                     # 1) Generate deterministic 10x10 staggered battlefield + obstacle clumps
                     # 2) Ensure joining participant session/state and role assignment
                     # 3) Seed baseline NPCs and normalize spawns with blocked-check + BFS
-                    game_service.bootstrap_small_arena_join(client_id, resolved_channel_id)
+                    game_service.bootstrap_small_arena_join(
+                        client_id, resolved_channel_id
+                    )
                     _ensure_npc_sessions(db, game_service, resolved_channel_id)
 
                     snapshot = game_service.get_game_snapshot(resolved_channel_id)
@@ -313,7 +333,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         },
                         client_id,
                     )
-                    await manager.send_game_state_to_client(snapshot, resolved_channel_id, client_id)
+                    await manager.send_game_state_to_client(
+                        snapshot, resolved_channel_id, client_id
+                    )
 
                     update = game_service.get_game_state_update(resolved_channel_id)
                     await manager.broadcast_game_state(update, resolved_channel_id)
@@ -377,11 +399,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                         snapshot=None,
                     )
                     if result.get("success"):
-                        state_update = game_service.get_game_state_update(resolved_channel_id)
-                        await manager.broadcast_game_state(state_update, resolved_channel_id)
+                        state_update = game_service.get_game_state_update(
+                            resolved_channel_id
+                        )
+                        await manager.broadcast_game_state(
+                            state_update, resolved_channel_id
+                        )
 
                         if game_service.is_npc_turn(resolved_channel_id):
-                            npc_steps = game_service.process_npc_turn_chain(resolved_channel_id)
+                            npc_steps = game_service.process_npc_turn_chain(
+                                resolved_channel_id
+                            )
                             for step in npc_steps:
                                 if not isinstance(step, dict):
                                     continue
@@ -401,7 +429,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
                                     snapshot=None,
                                     broadcast_failure_to_channel=True,
                                 )
-                                await manager.broadcast_game_state(npc_update, resolved_channel_id)
+                                await manager.broadcast_game_state(
+                                    npc_update, resolved_channel_id
+                                )
                 else:
                     await manager.send_personal_message(
                         {
@@ -451,9 +481,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
 if __name__ == "__main__":
     import uvicorn
     import argparse
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8002)
     args = parser.parse_args()
-    
+
     uvicorn.run(app, host="0.0.0.0", port=args.port)

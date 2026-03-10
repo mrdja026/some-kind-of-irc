@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, cast
+from typing import Optional, Dict, Any, List, cast
 import secrets
 import httpx
 
@@ -23,6 +23,7 @@ from src.models.channel import Channel
 from src.models.membership import Membership
 from src.models.gmail_token import GmailToken
 from src.services.gmail_service import fetch_latest_emails
+from src.services.calendar_service import create_calendar_event
 from src.services.irc_logger import log_nick_user
 from src.services.event_publisher import publish_user_registered
 from src.services.game_service import GameService
@@ -46,10 +47,12 @@ GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_STATE_COOKIE = "gmail_oauth_state"
 GMAIL_STATE_TTL_SECONDS = 15 * 60
 
+
 # Pydantic models
 class UserCreate(BaseModel):
     username: str
     password: str
+
 
 class UserResponse(BaseModel):
     id: int
@@ -59,13 +62,13 @@ class UserResponse(BaseModel):
     profile_picture_url: Optional[str] = None
     updated_at: Optional[datetime] = None
 
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     username: Optional[str] = None
@@ -79,6 +82,20 @@ class GmailCallbackResponse(BaseModel):
     status: str
 
 
+class CalendarEventRequest(BaseModel):
+    title: str
+    start_datetime: str
+    end_datetime: str
+    timezone: str = "UTC"
+    attendees: List[str] = []
+
+
+class CalendarEventResponse(BaseModel):
+    event_id: Optional[str] = None
+    html_link: Optional[str] = None
+    summary: Optional[str] = None
+
+
 class AuthGameResponse(BaseModel):
     access_token: str
     token_type: str
@@ -87,39 +104,44 @@ class AuthGameResponse(BaseModel):
     channel_id: int
     snapshot: Optional[Dict[str, Any]] = None
 
+
 # Helper functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password using bcrypt only. Returns False if hash is invalid."""
     try:
         # bcrypt hashes start with $2a$, $2b$, or $2y$
-        if not hashed_password.startswith('$2'):
+        if not hashed_password.startswith("$2"):
             return False
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
 
+
 def get_password_hash(password: str) -> str:
     """Hash password using bcrypt with cost factor 12."""
     return pwd_context.hash(password)
 
+
 def get_user(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
+
 
 def authenticate_user(db: Session, username: str, password: str):
     """Authenticate user. Rejects legacy users (hash_type is None) - they must reset password."""
     user = get_user(db, username)
-    
+
     if not user:
         return False
-    
+
     # Reject legacy users - force password reset
     if user.hash_type is None:
         return False
-    
+
     if not verify_password(password, str(user.password_hash)):
         return False
-        
+
     return user
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -128,12 +150,18 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.now() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
+    )
     return encoded_jwt
 
 
 def _ensure_gmail_oauth_config() -> None:
-    if not settings.GMAIL_OAUTH_CLIENT_ID or not settings.GMAIL_OAUTH_CLIENT_SECRET or not settings.GMAIL_OAUTH_REDIRECT_URL:
+    if (
+        not settings.GMAIL_OAUTH_CLIENT_ID
+        or not settings.GMAIL_OAUTH_CLIENT_SECRET
+        or not settings.GMAIL_OAUTH_REDIRECT_URL
+    ):
         raise HTTPException(status_code=500, detail="Gmail OAuth is not configured")
 
 
@@ -143,7 +171,9 @@ def _ensure_admin_user(user: User) -> None:
 
 
 def _build_gmail_auth_url(state: str) -> str:
-    scopes = settings.GMAIL_OAUTH_SCOPES or "https://www.googleapis.com/auth/gmail.readonly"
+    scopes = (
+        settings.GMAIL_OAUTH_SCOPES or "https://www.googleapis.com/auth/gmail.readonly"
+    )
     params = {
         "client_id": settings.GMAIL_OAUTH_CLIENT_ID,
         "redirect_uri": settings.GMAIL_OAUTH_REDIRECT_URL,
@@ -172,7 +202,9 @@ async def _exchange_gmail_code(code: str) -> dict:
     try:
         return response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Gmail token response") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid Gmail token response"
+        ) from exc
 
 
 def _generate_unique_username(db: Session, prefix: str) -> str:
@@ -201,7 +233,9 @@ def _get_or_create_fixed_user(db: Session, username: str) -> User:
         return user
     password = secrets.token_urlsafe(12)
     hashed_password = get_password_hash(password)
-    new_user = User(username=username, password_hash=hashed_password, hash_type="bcrypt")
+    new_user = User(
+        username=username, password_hash=hashed_password, hash_type="bcrypt"
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -221,17 +255,23 @@ def _get_or_create_game_channel(db: Session) -> Channel:
 
 
 def _ensure_membership(db: Session, user_id: int, channel_id: int) -> None:
-    membership = db.query(Membership).filter(
-        Membership.user_id == user_id,
-        Membership.channel_id == channel_id,
-    ).first()
+    membership = (
+        db.query(Membership)
+        .filter(
+            Membership.user_id == user_id,
+            Membership.channel_id == channel_id,
+        )
+        .first()
+    )
     if membership:
         return
     db.add(Membership(user_id=user_id, channel_id=channel_id))
     db.commit()
 
 
-def _ensure_npc_sessions(db: Session, game_service: GameService, channel_id: int) -> None:
+def _ensure_npc_sessions(
+    db: Session, game_service: GameService, channel_id: int
+) -> None:
     states = game_service.get_all_game_states_in_channel(channel_id)
     npc_count = 0
     for state in states:
@@ -244,10 +284,8 @@ def _ensure_npc_sessions(db: Session, game_service: GameService, channel_id: int
         _ensure_membership(db, npc_user_id, channel_id)
         game_service.bootstrap_small_arena_join(npc_user_id, channel_id)
 
-async def get_current_user(
-    request: Request,
-    db: Session = Depends(get_db)
-):
+
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -258,12 +296,14 @@ async def get_current_user(
         token = request.cookies.get("access_token")
         if not token:
             raise credentials_exception
-        
+
         # Remove "Bearer " prefix if present
         if token.startswith("Bearer "):
             token = token[7:]
-            
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         username_value = payload.get("sub")
         if not isinstance(username_value, str):
             raise credentials_exception
@@ -278,6 +318,7 @@ async def get_current_user(
         raise credentials_exception
     return user
 
+
 # API endpoints
 @router.post("/register")
 async def register(response: Response, user: UserCreate, db: Session = Depends(get_db)):
@@ -285,16 +326,18 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     hashed_password = get_password_hash(user.password)
-    new_user = User(username=user.username, password_hash=hashed_password, hash_type="bcrypt")
+    new_user = User(
+        username=user.username, password_hash=hashed_password, hash_type="bcrypt"
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
+
     # Publish event for Channel Service to auto-join to #general
     new_user_id = cast(int, new_user.id)
     new_user_username = cast(str, new_user.username)
     publish_user_registered(new_user_id, new_user_username)
-    
+
     # Create and set JWT cookie
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -311,17 +354,22 @@ async def register(response: Response, user: UserCreate, db: Session = Depends(g
     log_nick_user(new_user_id, new_user_username)
     return {"message": "Registration successful"}
 
+
 @router.post("/login")
-async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login(
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
     user = get_user(db, form_data.username)
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Check if legacy user (needs password reset)
     if user.hash_type is None:
         raise HTTPException(
@@ -329,7 +377,7 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
             detail="Password reset required. Please use password reset to continue.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Verify password
     if not verify_password(form_data.password, str(user.password_hash)):
         raise HTTPException(
@@ -337,7 +385,7 @@ async def login(response: Response, form_data: OAuth2PasswordRequestForm = Depen
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     user_username = cast(str, user.username)
     access_token = create_access_token(
@@ -463,6 +511,32 @@ async def get_gmail_messages(
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
+@router.post("/calendar/events", response_model=CalendarEventResponse)
+async def create_calendar_event_endpoint(
+    request: CalendarEventRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_admin_user(current_user)
+    try:
+        user_id = cast(int, current_user.id)
+        event = create_calendar_event(
+            db=db,
+            user_id=user_id,
+            title=request.title,
+            start_datetime=request.start_datetime,
+            end_datetime=request.end_datetime,
+            timezone=request.timezone,
+            attendees=request.attendees,
+        )
+        return CalendarEventResponse(**event)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Failed to create calendar event")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
 @router.post("/auth_game", response_model=AuthGameResponse)
 async def auth_game(response: Response, db: Session = Depends(get_db)):
     channel = _get_or_create_game_channel(db)
@@ -493,9 +567,11 @@ async def auth_game(response: Response, db: Session = Depends(get_db)):
         snapshot=None,
     )
 
+
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
 
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
@@ -504,16 +580,18 @@ async def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 class UserUpdate(BaseModel):
     display_name: Optional[str] = None
     profile_picture_url: Optional[str] = None
+
 
 @router.put("/me", response_model=UserResponse)
 async def update_user_profile(
     user_update: UserUpdate,
     response: Response,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     # Check if display_name is being changed
     display_name_value = cast(Optional[str], current_user.display_name)
@@ -522,18 +600,27 @@ async def update_user_profile(
         current_display_name = display_name_value
     else:
         current_display_name = username_value
-    if user_update.display_name is not None and user_update.display_name != current_display_name:
+    if (
+        user_update.display_name is not None
+        and user_update.display_name != current_display_name
+    ):
         # Validate display_name format
         if not user_update.display_name.strip():
             raise HTTPException(status_code=400, detail="Display name cannot be empty")
         if len(user_update.display_name) > 50:
-            raise HTTPException(status_code=400, detail="Display name must be 50 characters or less")
+            raise HTTPException(
+                status_code=400, detail="Display name must be 50 characters or less"
+            )
 
         # Check uniqueness (case-insensitive)
-        existing_user = db.query(User).filter(
-            User.display_name.ilike(user_update.display_name.strip()),
-            User.id != current_user.id
-        ).first()
+        existing_user = (
+            db.query(User)
+            .filter(
+                User.display_name.ilike(user_update.display_name.strip()),
+                User.id != current_user.id,
+            )
+            .first()
+        )
         if existing_user:
             raise HTTPException(status_code=400, detail="Display name already taken")
 
@@ -544,7 +631,9 @@ async def update_user_profile(
     # Update profile picture URL if provided
     if user_update.profile_picture_url is not None:
         current_user_any = cast(Any, current_user)
-        setattr(current_user_any, "profile_picture_url", user_update.profile_picture_url)
+        setattr(
+            current_user_any, "profile_picture_url", user_update.profile_picture_url
+        )
 
     # Update timestamp
     current_user_any = cast(Any, current_user)
@@ -561,40 +650,55 @@ async def update_user_profile(
         "display_name": cast(Optional[str], current_user.display_name),
         "status": cast(str, current_user.status),
         "profile_picture_url": cast(Optional[str], current_user.profile_picture_url),
-        "updated_at": updated_at_value.isoformat() if updated_at_value is not None else None,
+        "updated_at": updated_at_value.isoformat()
+        if updated_at_value is not None
+        else None,
     }
 
     return user_dict
+
 
 @router.get("/users/search")
 async def search_users(
     username: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    limit: int = 20
+    limit: int = 20,
 ):
     if not username or len(username.strip()) < 1:
         return []
-    
+
     # Search for users by username or display_name (case-insensitive, partial match)
     # Exclude current user
     search_term = username.strip()
     current_user_id = cast(Any, current_user).id
-    users = db.query(User).filter(
-        (User.username.ilike(f"%{search_term}%")) |
-        (User.display_name.isnot(None) & User.display_name.ilike(f"%{search_term}%")),
-        User.id != current_user_id
-    ).limit(limit).all()
-    
+    users = (
+        db.query(User)
+        .filter(
+            (User.username.ilike(f"%{search_term}%"))
+            | (
+                User.display_name.isnot(None)
+                & User.display_name.ilike(f"%{search_term}%")
+            ),
+            User.id != current_user_id,
+        )
+        .limit(limit)
+        .all()
+    )
+
     response_users = []
     for user in users:
         updated_at = cast(Optional[datetime], user.updated_at)
-        response_users.append({
-            "id": cast(Any, user).id,
-            "username": str(user.username),
-            "display_name": cast(Optional[str], user.display_name),
-            "status": str(user.status),
-            "profile_picture_url": cast(Optional[str], user.profile_picture_url),
-            "updated_at": updated_at.isoformat() if updated_at is not None else None,
-        })
+        response_users.append(
+            {
+                "id": cast(Any, user).id,
+                "username": str(user.username),
+                "display_name": cast(Optional[str], user.display_name),
+                "status": str(user.status),
+                "profile_picture_url": cast(Optional[str], user.profile_picture_url),
+                "updated_at": updated_at.isoformat()
+                if updated_at is not None
+                else None,
+            }
+        )
     return response_users

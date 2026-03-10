@@ -7,6 +7,7 @@ import type {
   AIQueryResponse,
   AIStatus,
   AIStreamEvent,
+  CalendarEventPayload,
   LocalAIMessage,
   LocalAIQueryResponse,
   LocalAIStreamEvent,
@@ -136,14 +137,21 @@ export const getUserById = async (userId: number): Promise<User> => {
 };
 
 export const generateGmailQuestions = async (
+  emails: any[],
   interest: string,
-  previousAnswers: string[] = []
+  previousAnswers: string[] = [],
+  questionCount = 2,
 ): Promise<{ questions: string[] }> => {
   const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ interest, previous_answers: previousAnswers }),
+    body: JSON.stringify({
+      emails,
+      interest,
+      previous_answers: previousAnswers,
+      question_count: questionCount,
+    }),
   });
   if (!response.ok) {
     throw new Error('Failed to generate questions');
@@ -164,6 +172,37 @@ export const generateGmailSummary = async (
   });
   if (!response.ok) {
     throw new Error('Failed to generate summary');
+  }
+  return response.json();
+};
+
+export const generateCalendarQuestion = async (
+  request: string,
+  previousAnswers: string[] = [],
+): Promise<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/calendar/questions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ request, previous_answers: previousAnswers }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to generate calendar question');
+  }
+  return response.json();
+};
+
+export const createCalendarEvent = async (
+  event: CalendarEventPayload,
+): Promise<{ event_id: string | null; html_link: string | null; summary: string | null }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/calendar/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ event }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create calendar event');
   }
   return response.json();
 };
