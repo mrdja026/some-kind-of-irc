@@ -35,12 +35,10 @@ import {
   Sparkles,
   Plus,
   ChevronDown,
-  Gamepad2,
   Mail,
   ArrowUp,
 } from 'lucide-react'
 import { AIChannel } from '../components/AIChannel'
-import { GameChannel } from '../components/GameChannel'
 import { DataProcessorChannel } from '../components/DataProcessorChannel'
 import { LocalQAChannel } from '../components/LocalQAChannel'
 import { MentionAutocomplete } from '../components/MentionAutocomplete'
@@ -293,12 +291,9 @@ function ChatPage() {
   const messagesLengthRef = useRef<number>(0)
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [channelModes, setChannelModes] = useState<
-    Record<number, 'chat' | 'ai' | 'game' | 'localqa'>
+    Record<number, 'chat' | 'ai' | 'localqa'>
   >({})
   const [pendingAiIntent, setPendingAiIntent] = useState<AIIntent | null>(null)
-  const [gmailAssistantChannelId, setGmailAssistantChannelId] = useState<
-    number | null
-  >(null)
   const [showCreateChannel, setShowCreateChannel] = useState(false)
   const [newChannelName, setNewChannelName] = useState('')
   const [newChannelType, setNewChannelType] = useState<'public' | 'private'>(
@@ -395,80 +390,44 @@ function ChatPage() {
   const selectedChannel =
     channels?.find((c) => c.id === selectedChannelId) || null
   const defaultMode =
-    selectedChannel?.name === '#ai' || selectedChannel?.name === '#gmail-assistant'
+    selectedChannel?.name === '#ai'
       ? 'ai'
-      : selectedChannel?.name === '#game'
-        ? 'game'
-        : selectedChannel?.name === '#qa-local'
-          ? 'localqa'
+      : selectedChannel?.name === '#qa-local'
+        ? 'localqa'
         : 'chat'
   const activeMode = selectedChannelId
     ? (channelModes[selectedChannelId] ?? defaultMode)
     : 'chat'
 
-  const setChannelMode = (mode: 'chat' | 'ai' | 'game' | 'localqa') => {
+  const setChannelMode = (mode: 'chat' | 'ai' | 'localqa') => {
     if (!selectedChannelId) return
     setChannelModes((prev) => ({ ...prev, [selectedChannelId]: mode }))
   }
 
-  const jumpToGmailAssistant = useCallback(async () => {
+  const jumpToAiChannel = useCallback(async () => {
     try {
-      const gmailChannels = await searchChannels('#gmail-assistant')
-      let gmailChannel = gmailChannels.find(
-        (channel) => channel.name === '#gmail-assistant',
-      )
-      if (!gmailChannel) {
+      const aiChannels = await searchChannels('#ai')
+      let aiChannel = aiChannels.find((channel) => channel.name === '#ai')
+      if (!aiChannel) {
         try {
-          gmailChannel = await createChannel('#gmail-assistant')
+          aiChannel = await createChannel('#ai')
         } catch (error) {
-          console.error('Gmail assistant channel not found', error)
+          console.error('#ai channel not found', error)
           return
         }
       }
-      await joinChannel(gmailChannel.id)
+      await joinChannel(aiChannel.id)
       await refetchChannels()
       setChannelModes((prev) => ({
         ...prev,
-        [gmailChannel.id]: 'ai',
+        [aiChannel.id]: 'ai',
       }))
-      setActiveChannel(gmailChannel.id)
-      setPendingAiIntent('gmail')
-      setGmailAssistantChannelId(gmailChannel.id)
+      setActiveChannel(aiChannel.id)
     } catch (error) {
-      console.error('Failed to switch to Gmail assistant:', error)
+      console.error('Failed to switch to AI channel:', error)
     }
-  }, [
-    refetchChannels,
-    searchChannels,
-    joinChannel,
-    setActiveChannel,
-    setChannelModes,
-    setPendingAiIntent,
-    setGmailAssistantChannelId,
-  ])
+  }, [refetchChannels, searchChannels, joinChannel, setActiveChannel, setChannelModes])
 
-  useEffect(() => {
-    if (!selectedChannelId) {
-      return
-    }
-    if (selectedChannel?.name === '#gmail-assistant') {
-      if (gmailAssistantChannelId !== selectedChannelId) {
-        setChannelModes((prev) => ({
-          ...prev,
-          [selectedChannelId]: 'ai',
-        }))
-        setPendingAiIntent('gmail')
-        setGmailAssistantChannelId(selectedChannelId)
-      }
-    } else if (gmailAssistantChannelId) {
-      setGmailAssistantChannelId(null)
-    }
-  }, [
-    gmailAssistantChannelId,
-    selectedChannel?.name,
-    selectedChannelId,
-    setChannelModes,
-  ])
 
   const dmUserIds = useMemo(() => {
     if (!directMessages || !user) return []
@@ -572,13 +531,7 @@ function ChatPage() {
   useUserProfileInvalidation()
 
   // WebSocket connection
-  const {
-    isConnected,
-    sendMessage: sendSocketMessage,
-    sendTyping,
-    sendGameCommand,
-    sendGameJoin,
-  } = useChatSocket(
+  const { isConnected, sendMessage: sendSocketMessage, sendTyping } = useChatSocket(
     user?.id || 0,
     handleTyping,
   )
@@ -997,11 +950,6 @@ function ChatPage() {
           setPendingAiIntent(null)
           setMessageInput('')
           return
-        case 'game':
-          setChannelMode('game')
-          setPendingAiIntent(null)
-          setMessageInput('')
-          return
         case 'qa-local':
           try {
             const localChannels = await searchChannels('#qa-local')
@@ -1027,7 +975,7 @@ function ChatPage() {
           return
         case 'gmail-helper':
         case 'gmail-agent':
-          await jumpToGmailAssistant()
+          await jumpToAiChannel()
           setMessageInput('')
           return
         default:
@@ -1380,19 +1328,6 @@ function ChatPage() {
                       Local Q&A
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setChannelMode('game')}
-                    disabled={isInteractionDisabled}
-                    className={`px-2 md:px-3 py-2 text-xs md:text-sm rounded transition-colors min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 ${
-                      activeMode === 'game'
-                        ? 'chat-send-button'
-                        : 'chat-attach-button'
-                    }`}
-                  >
-                    <Gamepad2 size={14} />
-                    Game
-                  </button>
                 </div>
               </div>
             </div>
@@ -1418,33 +1353,17 @@ function ChatPage() {
                     setChannelMode('ai')
                     setPendingAiIntent(null)
                   }
-                  if (command === 'game') {
-                    setChannelMode('game')
-                    setPendingAiIntent(null)
-                  }
                   if (command === 'localqa') {
                     setChannelMode('localqa')
                     setPendingAiIntent(null)
                   }
-                  if (command === 'gmail-helper' || command === 'gmail-agent') {
-                    void jumpToGmailAssistant()
-                  }
                 }}
-                requestedIntent={pendingAiIntent}
-                onIntentHandled={() => setPendingAiIntent(null)}
               />
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel
                 channelId={selectedChannelId}
                 channelName={selectedChannelLabel}
                 currentUserId={user?.id ?? null}
-              />
-            ) : activeMode === 'game' ? (
-              <GameChannel
-                channelId={selectedChannelId}
-                channelName={selectedChannel?.name || '#game'}
-                sendGameCommand={sendGameCommand}
-                sendGameJoin={sendGameJoin}
               />
             ) : (
               <div ref={chatContainerRef} className="flex-1 flex flex-col relative min-h-0">

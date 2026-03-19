@@ -17,7 +17,6 @@ from src.models.membership import Membership
 from src.api.endpoints.auth import get_current_user
 from src.services.websocket_manager import manager
 from src.services.irc_logger import log_join, log_part, log_privmsg
-from src.services.game_service import GameService
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -47,10 +46,6 @@ def _local_qa_channel_name() -> str:
     return configured if configured else "#qa-local"
 
 
-def _gmail_assistant_channel_name() -> str:
-    return "#gmail-assistant"
-
-
 @lru_cache(maxsize=1)
 def _ai_allowlist() -> set[str]:
     raw = settings.AI_ALLOWLIST or ""
@@ -72,25 +67,12 @@ def _is_local_qa_channel(channel: Channel) -> bool:
     return _as_str(channel.name) == _local_qa_channel_name()
 
 
-def _is_gmail_assistant_channel(channel: Channel) -> bool:
-    return _as_str(channel.name) == _gmail_assistant_channel_name()
-
-
 def _is_local_qa_channel_name(name: str) -> bool:
     return name == _local_qa_channel_name()
 
 
-def _is_gmail_assistant_channel_name(name: str) -> bool:
-    return name == _gmail_assistant_channel_name()
-
-
 def _enforce_local_qa_access(channel: Channel, current_user: User) -> None:
     if _is_local_qa_channel(channel) and not _user_has_local_qa_access(current_user):
-        raise HTTPException(status_code=404, detail="Channel not found")
-
-
-def _enforce_gmail_assistant_access(channel: Channel, current_user: User) -> None:
-    if _is_gmail_assistant_channel(channel) and not _user_has_ai_access(current_user):
         raise HTTPException(status_code=404, detail="Channel not found")
 
 
@@ -146,10 +128,6 @@ async def create_channel(
                 status_code=400, detail="Local Q&A channel is not enabled"
             )
         if not _user_has_local_qa_access(current_user):
-            raise HTTPException(status_code=404, detail="Channel not found")
-
-    if _is_gmail_assistant_channel_name(channel.name):
-        if not _user_has_ai_access(current_user):
             raise HTTPException(status_code=404, detail="Channel not found")
 
     # Check if data processor feature is enabled when creating data processor channel
@@ -255,10 +233,6 @@ async def get_channels(
     for channel in all_channels:
         if _is_local_qa_channel(channel) and not can_access_local_qa:
             continue
-        if _is_gmail_assistant_channel(channel) and not _user_has_ai_access(
-            current_user
-        ):
-            continue
         if channel.id not in seen_ids:
             seen_ids.add(channel.id)
             unique_channels.append(channel)
@@ -283,11 +257,7 @@ async def search_channels(
             is_data_processor=cast(bool, ch.is_data_processor),
         )
         for ch in channels
-        if (can_access_local_qa or cast(str, ch.name) != _local_qa_channel_name())
-        and (
-            _user_has_ai_access(current_user)
-            or cast(str, ch.name) != _gmail_assistant_channel_name()
-        )
+        if can_access_local_qa or cast(str, ch.name) != _local_qa_channel_name()
     ]
 
 
@@ -526,7 +496,6 @@ async def join_channel(
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
     _enforce_local_qa_access(channel, current_user)
-    _enforce_gmail_assistant_access(channel, current_user)
 
     current_user_id = _as_int(current_user.id)
     membership = (
@@ -544,14 +513,9 @@ async def join_channel(
     db.add(new_membership)
     db.commit()
     channel_name = _as_str(channel.name)
-    game_service = GameService(db)
 
     # Update WebSocket manager to include user in this channel
     manager.add_client_to_channel(current_user_id, channel_id)
-
-    if game_service.is_game_channel(channel_name):
-        # Game state/session initialization is WS-first via game_join handshake.
-        pass
 
     # Create welcome message for the joining user (system message with sender_id=None)
     welcome_message = Message(

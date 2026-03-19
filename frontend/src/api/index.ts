@@ -2,11 +2,7 @@ import type {
   User,
   Channel,
   Message,
-  AIIntent,
-  AIClarificationState,
-  AIQueryResponse,
   AIStatus,
-  AIStreamEvent,
   CalendarEventPayload,
   LocalAIMessage,
   LocalAIQueryResponse,
@@ -448,106 +444,6 @@ export const addUserToChannel = async (
 };
 
 // AI Agent APIs
-export const queryAI = async (
-  intent: AIIntent,
-  query: string,
-  options: {
-    conversationStage?: 'initial' | 'clarification';
-    clarificationState?: AIClarificationState | null;
-  } = {},
-): Promise<AIQueryResponse> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      intent,
-      query,
-      conversation_stage: options.conversationStage ?? 'initial',
-      clarification_state: options.clarificationState ?? null,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'AI query failed'));
-  }
-  return response.json();
-};
-
-export const queryAIStream = async (
-  intent: AIIntent,
-  query: string,
-  handlers: {
-    onEvent?: (event: AIStreamEvent) => void;
-    onError?: (message: string) => void;
-    signal?: AbortSignal;
-  } = {},
-  options: {
-    conversationStage?: 'initial' | 'clarification';
-    clarificationState?: AIClarificationState | null;
-  } = {},
-): Promise<void> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/query/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      intent,
-      query,
-      conversation_stage: options.conversationStage ?? 'initial',
-      clarification_state: options.clarificationState ?? null,
-    }),
-    signal: handlers.signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'AI stream failed'));
-  }
-
-  if (!response.body) {
-    throw new Error('Streaming not supported by the browser');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const emit = (event: AIStreamEvent) => {
-    handlers.onEvent?.(event);
-    if (event.type === 'error') {
-      handlers.onError?.(event.message);
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let separatorIndex = buffer.indexOf('\n\n');
-    while (separatorIndex !== -1) {
-      const chunk = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const event = JSON.parse(payload) as AIStreamEvent;
-          emit(event);
-        } catch {
-          // Ignore malformed chunks
-        }
-      }
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-  }
-};
-
 export const getAIStatus = async (): Promise<AIStatus> => {
   const response = await fetch(`${AI_API_BASE_URL}/ai/status`, {
     credentials: 'include',

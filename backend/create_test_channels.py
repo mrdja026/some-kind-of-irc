@@ -9,7 +9,6 @@ def create_test_channels():
     # Define channels to create
     channels_to_create = [
         {"name": "#ai", "type": "public"},
-        {"name": "#gmail-assistant", "type": "public"},
         {"name": "#lunch", "type": "public"},
         {"name": "#random", "type": "public"},
     ]

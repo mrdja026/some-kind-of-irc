@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List, cast
+from typing import Optional, Any, List, cast
 import secrets
 import httpx
 
@@ -26,8 +26,6 @@ from src.services.gmail_service import fetch_latest_emails
 from src.services.calendar_service import create_calendar_event
 from src.services.irc_logger import log_nick_user
 from src.services.event_publisher import publish_user_registered
-from src.services.game_service import GameService
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -37,10 +35,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 GUEST_PREFIX = "guest_"
-NPC_PREFIX = "npc_"
-NPC_SEED_COUNT = 2
-GAME_CHANNEL_NAME = "#game"
-GUEST_USERNAME = "guest2"
 
 GMAIL_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -94,15 +88,6 @@ class CalendarEventResponse(BaseModel):
     event_id: Optional[str] = None
     html_link: Optional[str] = None
     summary: Optional[str] = None
-
-
-class AuthGameResponse(BaseModel):
-    access_token: str
-    token_type: str
-    user_id: int
-    username: str
-    channel_id: int
-    snapshot: Optional[Dict[str, Any]] = None
 
 
 # Helper functions
@@ -227,33 +212,6 @@ def _create_guest_user(db: Session, prefix: str) -> User:
     return user
 
 
-def _get_or_create_fixed_user(db: Session, username: str) -> User:
-    user = get_user(db, username)
-    if user:
-        return user
-    password = secrets.token_urlsafe(12)
-    hashed_password = get_password_hash(password)
-    new_user = User(
-        username=username, password_hash=hashed_password, hash_type="bcrypt"
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    log_nick_user(new_user.id, new_user.username)
-    return new_user
-
-
-def _get_or_create_game_channel(db: Session) -> Channel:
-    channel = db.query(Channel).filter(Channel.name == GAME_CHANNEL_NAME).first()
-    if channel:
-        return channel
-    channel = Channel(name=GAME_CHANNEL_NAME, type="public", is_data_processor=False)
-    db.add(channel)
-    db.commit()
-    db.refresh(channel)
-    return channel
-
-
 def _ensure_membership(db: Session, user_id: int, channel_id: int) -> None:
     membership = (
         db.query(Membership)
@@ -267,22 +225,6 @@ def _ensure_membership(db: Session, user_id: int, channel_id: int) -> None:
         return
     db.add(Membership(user_id=user_id, channel_id=channel_id))
     db.commit()
-
-
-def _ensure_npc_sessions(
-    db: Session, game_service: GameService, channel_id: int
-) -> None:
-    states = game_service.get_all_game_states_in_channel(channel_id)
-    npc_count = 0
-    for state in states:
-        if bool(state.get("is_npc", False)):
-            npc_count += 1
-    to_create = max(0, NPC_SEED_COUNT - npc_count)
-    for _ in range(to_create):
-        npc_user = _create_guest_user(db, NPC_PREFIX)
-        npc_user_id = cast(int, npc_user.id)
-        _ensure_membership(db, npc_user_id, channel_id)
-        game_service.bootstrap_small_arena_join(npc_user_id, channel_id)
 
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)):
@@ -535,37 +477,6 @@ async def create_calendar_event_endpoint(
     except Exception as e:
         logger.exception("Failed to create calendar event")
         raise HTTPException(status_code=500, detail="Internal server error") from e
-
-
-@router.post("/auth_game", response_model=AuthGameResponse)
-async def auth_game(response: Response, db: Session = Depends(get_db)):
-    channel = _get_or_create_game_channel(db)
-    guest_user = _get_or_create_fixed_user(db, GUEST_USERNAME)
-    guest_user_id = cast(int, guest_user.id)
-    channel_id = cast(int, channel.id)
-    _ensure_membership(db, guest_user_id, channel_id)
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": guest_user.username}, expires_delta=access_token_expires
-    )
-    response.set_cookie(
-        key="access_token",
-        value=f"Bearer {access_token}",
-        httponly=True,
-        secure=False,
-        samesite="lax",
-        max_age=int(access_token_expires.total_seconds()),
-    )
-
-    return AuthGameResponse(
-        access_token=access_token,
-        token_type="bearer",
-        user_id=guest_user_id,
-        username=cast(str, guest_user.username),
-        channel_id=channel_id,
-        snapshot=None,
-    )
 
 
 @router.get("/me", response_model=UserResponse)
