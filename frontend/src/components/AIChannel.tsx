@@ -50,6 +50,8 @@ export function AIChannel({
   channelName = '#ai',
   showHeader = true,
   onCommand,
+  requestedIntent,
+  onIntentHandled,
 }: AIChannelProps) {
   const [query, setQuery] = useState('')
   const [responses, setResponses] = useState<ConversationEntry[]>([])
