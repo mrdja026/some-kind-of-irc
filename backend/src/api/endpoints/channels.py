@@ -48,10 +48,7 @@ def _local_qa_channel_name() -> str:
 
 @lru_cache(maxsize=1)
 def _ai_allowlist() -> set[str]:
-    raw = settings.AI_ALLOWLIST or ""
-    if not raw.strip():
-        raw = "admina;guest;guest2;guest3"
-    return {entry.strip().lower() for entry in raw.split(";") if entry.strip()}
+    return {entry.strip().lower() for entry in settings.AI_ALLOWLIST.split(";") if entry.strip()}
 
 
 def _user_has_ai_access(user: User) -> bool:

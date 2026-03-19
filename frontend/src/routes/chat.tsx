@@ -1343,7 +1343,6 @@ function ChatPage() {
                 channelId={selectedChannelId}
                 channelName={selectedChannel?.name || '#ai'}
                 showHeader={false}
-                currentUserId={user?.id ?? null}
                 onCommand={(command) => {
                   if (command === 'chat') {
                     setChannelMode('chat')

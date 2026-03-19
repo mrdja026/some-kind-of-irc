@@ -17,7 +17,6 @@ interface AIChannelProps {
   channelId: number
   channelName?: string
   showHeader?: boolean
-  currentUserId?: number | null
   onCommand?: (command: string) => void
 }
 
@@ -142,9 +141,7 @@ export function AIChannel({
 
   const isAffirmativeResponse = (value: string) => {
     const normalized = value.trim().toLowerCase()
-    return ['yes', 'y', 'yep', 'sure', 'ok', 'okay', 'confirm'].some((token) =>
-      normalized.startsWith(token),
-    )
+    return /^(yes|y|yep|sure|ok|okay|confirm)\b/.test(normalized)
   }
 
   const handleReset = useCallback(() => {
