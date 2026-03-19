@@ -38,94 +38,8 @@ export type AuthResponse = {
   token_type: string;
 };
 
-// Game types matching external_schemas
-export type Position = {
-  x: number;
-  y: number;
-};
-
-export type Player = {
-  user_id: number;
-  username: string;
-  display_name?: string;
-  position: Position;
-  health: number;
-  max_health: number;
-  is_active: boolean;
-  is_npc: boolean;
-};
-
-export type Obstacle = {
-  id: string;
-  type: string;
-  position: Position;
-};
-
-export type BattlefieldProp = {
-  id: string;
-  type: 'tree' | 'rock';
-  position: Position;
-  is_blocking: boolean;
-  zone: 'play' | 'buffer';
-};
-
-export type BufferZone = {
-  thickness: number;
-  tiles: Position[];
-};
-
-export type Battlefield = {
-  seed: number;
-  props: BattlefieldProp[];
-  buffer: BufferZone;
-};
-
-export type GameSnapshotPayload = {
-  map: { width: number; height: number };
-  players: Player[];
-  obstacles: Obstacle[];
-  battlefield: Battlefield;
-  active_turn_user_id: number | null;
-};
-
-export type GameStateUpdatePayload = {
-  active_turn_user_id: number | null;
-  players: Player[];
-};
-
-export type ActionResultPayload = {
-  success: boolean;
-  action_type: string;
-  executor_id: number;
-  target_id: number | null;
-  message: string;
-  error: { code: string; message: string; details: any } | null;
-};
-
-// WebSocket Events
-export type GameSnapshotEvent = {
-  type: 'game_snapshot';
-  timestamp: string;
-  payload: GameSnapshotPayload;
-  channel_id: number; // Injected by WS handler for routing
-};
-
-export type GameStateUpdateEvent = {
-  type: 'game_state_update';
-  timestamp: string;
-  payload: GameStateUpdatePayload;
-  channel_id: number;
-};
-
-export type ActionResultEvent = {
-  type: 'action_result';
-  timestamp: string;
-  payload: ActionResultPayload;
-  channel_id: number;
-};
-
 export type WebSocketMessage = {
-  type: 'message' | 'join' | 'leave' | 'typing' | 'game_snapshot' | 'game_state_update' | 'action_result' | 'error';
+  type: 'message' | 'join' | 'leave' | 'typing' | 'error';
   id?: number;
   content?: string;
   image_url?: string | null;
@@ -137,118 +51,19 @@ export type WebSocketMessage = {
   display_name?: string | null;
   channel_name?: string;
   target_user_id?: number | null;
-  payload?: any; // For game events
+  payload?: unknown;
 };
-
 
 // AI Agent types
-export type AIIntent = 'afford' | 'learn' | 'gmail';
+export type AIIntent = 'gmail';
 
-export type AIQueryRequest = {
-  intent: AIIntent;
-  query: string;
-  conversation_stage?: 'initial' | 'clarification';
-  clarification_state?: AIClarificationState | null;
+export type CalendarEventPayload = {
+  title: string;
+  start_datetime: string;
+  end_datetime: string;
+  timezone: string;
+  attendees: string[];
 };
-
-export type AIClarificationState = {
-  original_query: string;
-  questions: string[];
-  answers: string[];
-  fallback_flags?: boolean[];
-  max_rounds?: number;
-};
-
-export type AIAgentCandidates = {
-  [agentName: string]: string[];
-};
-
-export type AIAgentReasoning = {
-  [agentName: string]: string;
-};
-
-export type AIQueryResponse =
-  | {
-      mode: 'clarify';
-      intent: string;
-      query: string;
-      question: string;
-      questions: string[];
-      candidate_questions?: string[];
-      other_suggested_questions?: string[];
-      agent_candidates?: AIAgentCandidates;
-      agent_reasoning?: AIAgentReasoning;
-      judge_reasoning?: string;
-      chosen_from_agent?: string;
-      current_round?: number;
-      total_rounds?: number;
-      is_fallback_question?: boolean;
-      clarification_state?: AIClarificationState;
-      agent: string;
-      disclaimer: string;
-    }
-  | {
-      mode: 'final';
-      intent: string;
-      query: string;
-      response: string;
-      agent: string;
-      disclaimer: string;
-    }
-  | {
-      mode: 'agent_message';
-      intent: string;
-      query: string;
-      response: string;
-      agent: string;
-      emails?: any[];
-      pdfUrl?: string;
-    };
-
-export type AIStreamEvent =
-  | {
-      type: 'meta';
-      intent: string;
-      query: string;
-      agent: string;
-      disclaimer: string;
-    }
-  | {
-      type: 'progress';
-      stage: 'collect_candidates' | 'rank_questions' | 'prepare_final';
-      message: string;
-    }
-  | {
-      type: 'clarify_question';
-      intent: string;
-      query: string;
-      question: string;
-      questions: string[];
-      candidate_questions?: string[];
-      other_suggested_questions?: string[];
-      agent_candidates?: AIAgentCandidates;
-      agent_reasoning?: AIAgentReasoning;
-      judge_reasoning?: string;
-      chosen_from_agent?: string;
-      current_round?: number;
-      total_rounds?: number;
-      is_fallback_question?: boolean;
-      clarification_state?: AIClarificationState;
-      agent: string;
-      disclaimer: string;
-    }
-  | {
-      type: 'delta';
-      text: string;
-    }
-  | {
-      type: 'done';
-      mode?: 'clarify' | 'final';
-    }
-  | {
-      type: 'error';
-      message: string;
-    };
 
 export type AIStatus = {
   available: boolean;
@@ -311,53 +126,6 @@ export type LocalAIStreamEvent =
       type: 'done';
       mode?: 'chat';
     };
-
-// Game types
-export type GameState = {
-  user_id: number;
-  username?: string;
-  display_name?: string;
-  position_x: number;
-  position_y: number;
-  health: number;
-  max_health: number;
-  is_active: boolean;
-  is_npc: boolean;
-};
-
-export type GameCommandRequest = {
-  command: string;
-  target_username?: string;
-  channel_id?: number;
-};
-
-export type GameCommandResponse = {
-  success: boolean;
-  command?: string;
-  message?: string;
-  error?: string;
-  game_state?: GameState;
-};
-
-export type GameAction = {
-  type: 'game_action';
-  channel_id: number;
-  executor_id: number;
-  action: {
-    success: boolean;
-    command: string;
-    message: string;
-    game_state?: GameState;
-  };
-};
-
-export type GameStateUpdate = {
-  type: 'game_state_update';
-  channel_id: number;
-  game_state: GameState;
-};
-
-export type GameCommands = string[];
 
 // Data Processor types
 export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom';

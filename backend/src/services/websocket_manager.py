@@ -1,6 +1,5 @@
 from fastapi.websockets import WebSocket
 from typing import Dict, List, Set, Optional, Any, cast
-from datetime import datetime
 import time
 from src.core.database import get_db
 from src.models.membership import Membership
@@ -54,70 +53,6 @@ class ConnectionManager:
         for client_id, connection in self.active_connections.items():
             if client_id in self.client_channels and channel_id in self.client_channels[client_id]:
                 await connection.send_json(message)
-
-    async def broadcast_game_state(self, snapshot: dict, channel_id: int | Any):
-        """Broadcast game state update to all members of a game channel."""
-        message = dict(snapshot)
-        message["channel_id"] = int(channel_id)
-        if "timestamp" in message:
-            message["timestamp"] = datetime.utcnow().isoformat()
-        await self.broadcast(message, channel_id)
-
-    async def send_game_state_to_client(
-        self,
-        snapshot: dict,
-        channel_id: int | Any,
-        client_id: int | Any,
-    ) -> None:
-        """Send a full game state snapshot to a single client."""
-        message = dict(snapshot)
-        message["channel_id"] = int(channel_id)
-        if "timestamp" in message:
-            message["timestamp"] = datetime.utcnow().isoformat()
-        await self.send_personal_message(message, client_id)
-
-    async def broadcast_game_action(
-        self,
-        action_result: dict,
-        channel_id: int | Any,
-        executor_id: int | Any,
-        snapshot: Optional[dict] = None,
-        broadcast_failure_to_channel: bool = False,
-    ):
-        """Broadcast action result and push state update to channel."""
-        message = {
-            "type": "action_result",
-            "channel_id": int(channel_id),
-            "timestamp": datetime.utcnow().isoformat(),
-            "payload": {
-                "success": action_result.get("success", False),
-                "action_type": action_result.get("command", "unknown"),
-                "executor_id": executor_id,
-                "active_turn_user_id": action_result.get("active_turn_user_id"),
-                "target_id": action_result.get("target_id"),
-                "executor_username": action_result.get("executor_username"),
-                "target_username": action_result.get("target_username"),
-                "position": action_result.get("position"),
-                "target_health": action_result.get("target_health"),
-                "target_max_health": action_result.get("target_max_health"),
-                "actor_health": action_result.get("actor_health"),
-                "actor_max_health": action_result.get("actor_max_health"),
-                "message": action_result.get("message", ""),
-                "error": {"code": "game_error", "message": action_result.get("error")} if action_result.get("error") else None
-            }
-        }
-        if bool(action_result.get("success", False)) or broadcast_failure_to_channel:
-            await self.broadcast(message, channel_id)
-        else:
-            await self.send_personal_message(message, executor_id)
-        
-        # If there's a snapshot/update, broadcast that too
-        if snapshot:
-            update_message = dict(snapshot)
-            update_message["channel_id"] = int(channel_id)
-            if "timestamp" in update_message:
-                update_message["timestamp"] = datetime.utcnow().isoformat()
-            await self.broadcast(update_message, channel_id)
 
     def add_client_to_channel(self, client_id: int | Any, channel_id: int | Any):
         if client_id in self.client_channels:

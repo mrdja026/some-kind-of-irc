@@ -2,11 +2,8 @@ import type {
   User,
   Channel,
   Message,
-  AIIntent,
-  AIClarificationState,
-  AIQueryResponse,
   AIStatus,
-  AIStreamEvent,
+  CalendarEventPayload,
   LocalAIMessage,
   LocalAIQueryResponse,
   LocalAIStreamEvent,
@@ -136,14 +133,21 @@ export const getUserById = async (userId: number): Promise<User> => {
 };
 
 export const generateGmailQuestions = async (
+  emails: any[],
   interest: string,
-  previousAnswers: string[] = []
+  previousAnswers: string[] = [],
+  questionCount = 2,
 ): Promise<{ questions: string[] }> => {
   const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ interest, previous_answers: previousAnswers }),
+    body: JSON.stringify({
+      emails,
+      interest,
+      previous_answers: previousAnswers,
+      question_count: questionCount,
+    }),
   });
   if (!response.ok) {
     throw new Error('Failed to generate questions');
@@ -164,6 +168,37 @@ export const generateGmailSummary = async (
   });
   if (!response.ok) {
     throw new Error('Failed to generate summary');
+  }
+  return response.json();
+};
+
+export const generateCalendarQuestion = async (
+  request: string,
+  previousAnswers: string[] = [],
+): Promise<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/calendar/questions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ request, previous_answers: previousAnswers }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to generate calendar question');
+  }
+  return response.json();
+};
+
+export const createCalendarEvent = async (
+  event: CalendarEventPayload,
+): Promise<{ event_id: string | null; html_link: string | null; summary: string | null }> => {
+  const response = await fetch(`${AI_API_BASE_URL}/ai/calendar/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ event }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create calendar event');
   }
   return response.json();
 };
@@ -409,106 +444,6 @@ export const addUserToChannel = async (
 };
 
 // AI Agent APIs
-export const queryAI = async (
-  intent: AIIntent,
-  query: string,
-  options: {
-    conversationStage?: 'initial' | 'clarification';
-    clarificationState?: AIClarificationState | null;
-  } = {},
-): Promise<AIQueryResponse> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      intent,
-      query,
-      conversation_stage: options.conversationStage ?? 'initial',
-      clarification_state: options.clarificationState ?? null,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'AI query failed'));
-  }
-  return response.json();
-};
-
-export const queryAIStream = async (
-  intent: AIIntent,
-  query: string,
-  handlers: {
-    onEvent?: (event: AIStreamEvent) => void;
-    onError?: (message: string) => void;
-    signal?: AbortSignal;
-  } = {},
-  options: {
-    conversationStage?: 'initial' | 'clarification';
-    clarificationState?: AIClarificationState | null;
-  } = {},
-): Promise<void> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/query/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      intent,
-      query,
-      conversation_stage: options.conversationStage ?? 'initial',
-      clarification_state: options.clarificationState ?? null,
-    }),
-    signal: handlers.signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'AI stream failed'));
-  }
-
-  if (!response.body) {
-    throw new Error('Streaming not supported by the browser');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const emit = (event: AIStreamEvent) => {
-    handlers.onEvent?.(event);
-    if (event.type === 'error') {
-      handlers.onError?.(event.message);
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let separatorIndex = buffer.indexOf('\n\n');
-    while (separatorIndex !== -1) {
-      const chunk = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const event = JSON.parse(payload) as AIStreamEvent;
-          emit(event);
-        } catch {
-          // Ignore malformed chunks
-        }
-      }
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-  }
-};
-
 export const getAIStatus = async (): Promise<AIStatus> => {
   const response = await fetch(`${AI_API_BASE_URL}/ai/status`, {
     credentials: 'include',

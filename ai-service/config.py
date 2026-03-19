@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # AI allowlist (semicolon-separated, case-insensitive)
     # This is intentionally separate from monolith ADMIN_ALLOWLIST.
-    AI_ALLOWLIST: str = "admina;guest2;guest3"
+    AI_ALLOWLIST: str = "admina;guest;guest2;guest3"
     ADMIN_ALLOWLIST: str = "admina"
 
     # Browser origins allowed to call ai-service directly.
@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
+
+    # Backend integration (calendar tool calls)
+    BACKEND_URL: str = "http://backend:8002"
 
     # Local Q&A configuration (CrewAI + local vLLM)
     FEATURE_LOCAL_QA: bool = True

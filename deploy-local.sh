@@ -99,12 +99,16 @@ ensure_backend_running() {
   return 1
 }
 
+ORIGINAL_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 if [ -f "$ROOT_DIR/.env.local" ]; then
   echo "Loading overrides from .env.local"
   set -a
   # shellcheck disable=SC1090
   source "$ROOT_DIR/.env.local"
   set +a
+fi
+if [ -n "$ORIGINAL_ANTHROPIC_API_KEY" ]; then
+  export ANTHROPIC_API_KEY="$ORIGINAL_ANTHROPIC_API_KEY"
 fi
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-some-kind-of-irc}"
@@ -125,23 +129,17 @@ export FEATURE_LOCAL_QA="${FEATURE_LOCAL_QA:-true}"
 export LOCAL_QA_CHANNEL_NAME="${LOCAL_QA_CHANNEL_NAME:-#qa-local}"
 export AI_RATE_LIMIT_PER_HOUR="${AI_RATE_LIMIT_PER_HOUR:-100}"
 export LOCAL_QA_RATE_LIMIT_PER_HOUR="${LOCAL_QA_RATE_LIMIT_PER_HOUR:-100}"
-export AI_SERVICE_API_KEY="${AI_SERVICE_API_KEY:-}"
-export AI_API_SERVICE_KEY="${AI_API_SERVICE_KEY:-}"
 export DB_HOST="${DB_HOST:-postgres}"
 export DB_PORT="${DB_PORT:-5432}"
 export DB_NAME="${DB_NAME:-app_db}"
 export DB_USER="${DB_USER:-app_user}"
 
-export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest2;guest3}"
+export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest;guest2;guest3}"
 export LOCAL_QA_VLLM_BASE_URL="${LOCAL_QA_VLLM_BASE_URL:-http://host.docker.internal:8066/v1}"
 export LOCAL_QA_MODEL_NAME="${LOCAL_QA_MODEL_NAME:-phi3-mini}"
 export LOCAL_QA_API_KEY="${LOCAL_QA_API_KEY:-NA}"
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  if [ -n "$AI_API_SERVICE_KEY" ]; then
-    export ANTHROPIC_API_KEY="$AI_API_SERVICE_KEY"
-  elif [ -n "$AI_SERVICE_API_KEY" ]; then
-    export ANTHROPIC_API_KEY="$AI_SERVICE_API_KEY"
-  fi
+  echo "Warning: ANTHROPIC_API_KEY is not set. Gmail summaries will be unavailable."
 fi
 
 ensure_db_secret
@@ -339,6 +337,7 @@ Deploy summary
 - Frontend (caddy):    http://localhost:8080
 - Backend API:         http://localhost:8002
 - AI Service:          http://localhost:8080/ai/
+- Anthropic API key:   ANTHROPIC_API_KEY (required for Gmail summaries)
 - Q&A local channel:   #qa-local (shown as Q&A local)
 - Local vLLM endpoint: http://host.docker.internal:8066/v1
 - Data Processor:      http://localhost:8080/data-processor/

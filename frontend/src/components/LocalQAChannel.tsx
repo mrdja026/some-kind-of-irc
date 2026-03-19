@@ -1,3 +1,4 @@
+import { ArrowUp } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getLocalAIStatus, queryLocalAI, queryLocalAIStream } from '../api'
@@ -242,21 +243,32 @@ export function LocalQAChannel({
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="p-2 border-t chat-header flex gap-2">
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Ask about art or photography..."
-          className="flex-1 px-3 py-2 rounded text-sm chat-input min-h-[44px]"
-          disabled={isSubmitting}
-        />
-        <button
-          type="submit"
-          className="px-3 py-2 text-sm font-semibold rounded chat-send-button min-h-[44px] disabled:opacity-60"
-          disabled={isSubmitting || !input.trim()}
-        >
-          {isSubmitting ? '...' : 'Send'}
-        </button>
+      <form onSubmit={handleSubmit} className="p-4 border-t chat-header bg-transparent border-t-0">
+        <div className="max-w-4xl mx-auto w-full">
+          <div className="flex flex-col sm:flex-row gap-2 relative bg-white/80 p-2 rounded-2xl shadow-xl border border-stone-200/50 backdrop-blur-sm">
+            <div className="flex-1 relative min-w-0">
+              <input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder="Ask about art or photography..."
+                className="w-full px-3 py-3 bg-transparent border-0 focus:ring-0 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-stone-400"
+                style={{ minHeight: '44px' }}
+                disabled={isSubmitting}
+              />
+            </div>
+            <button
+              type="submit"
+              className="p-2 rounded-xl transition-all chat-send-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 shadow-sm"
+              disabled={isSubmitting || !input.trim()}
+            >
+              {isSubmitting ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <ArrowUp size={20} />
+              )}
+            </button>
+          </div>
+        </div>
       </form>
       {error && <div className="px-3 pb-2 text-xs text-red-600">{error}</div>}
     </div>

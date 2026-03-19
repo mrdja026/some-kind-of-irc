@@ -1,28 +1,52 @@
 import json
+import json
 import logging
-from typing import List, Dict, Any, Optional
-import os
+from typing import Any, Dict, List, Optional
 
-from anthropic import AsyncAnthropic
+from config import settings
+
+try:
+    from crewai import Agent, Crew, LLM, Process, Task
+except Exception:
+    Agent = Crew = LLM = Process = Task = None
 
 logger = logging.getLogger(__name__)
 
+MODEL_NAME = "claude-3-haiku-20240307"
+
+
 class GmailAgent:
     def __init__(self, api_key: str):
-        self.client = AsyncAnthropic(api_key=api_key)
-        self.model = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
+        self.api_key = api_key
+        self.model = MODEL_NAME
+        self._llm: Optional[Any] = None
+
+    def _ensure_llm(self) -> Any:
+        if self._llm is not None:
+            return self._llm
+        if (
+            LLM is None
+            or Agent is None
+            or Crew is None
+            or Task is None
+            or Process is None
+        ):
+            raise RuntimeError("CrewAI is not installed.")
+        if not self.api_key:
+            raise RuntimeError("Anthropic API key is missing.")
+        self._llm = LLM(
+            model=f"anthropic/{self.model}",
+            api_key=self.api_key,
+            base_url=settings.ANTHROPIC_API_BASE,
+        )
+        return self._llm
 
     def _clean_and_parse_json(self, text: str) -> Any:
-        """
-        Robustly extract and parse JSON from LLM output.
-        Handles Markdown fences and potential extra text.
-        """
-        # Remove Markdown code blocks
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
         elif "```" in text:
             text = text.split("```")[1].split("```")[0]
-        
+
         text = text.strip()
 
         def _try_parse(candidate: str) -> Any:
@@ -45,119 +69,241 @@ class GmailAgent:
 
         raise last_error
 
-    async def generate_followup_questions(self, interest: str, previous_answers: Optional[List[str]] = None) -> List[str]:
-        """
-        Generate 2 follow-up questions based on the user's interest and previous answers.
-        """
+    def _format_email_context(self, emails: List[Dict[str, Any]]) -> str:
+        lines = []
+        for email in emails:
+            body = email.get("body") or email.get("snippet") or ""
+            lines.append(
+                "\n".join(
+                    [
+                        f"- Message ID: {email.get('message_id')}",
+                        f"  From: {email.get('from')}",
+                        f"  Subject: {email.get('subject')}",
+                        f"  Body: {body}",
+                    ]
+                )
+            )
+        return "\n".join(lines)
+
+    def _email_selection_payload(self, emails: List[Dict[str, Any]]) -> str:
+        trimmed = [
+            {
+                "message_id": email.get("message_id"),
+                "subject": email.get("subject"),
+                "from": email.get("from"),
+                "received_at": email.get("received_at"),
+            }
+            for email in emails
+        ]
+        return json.dumps(trimmed)
+
+    def _run_task(self, agent: Any, description: str, expected_output: str) -> str:
+        task = Task(
+            description=description,
+            expected_output=expected_output,
+            agent=agent,
+        )
+        crew = Crew(
+            agents=[agent],
+            tasks=[task],
+            process=Process.sequential,
+            verbose=False,
+        )
+        return str(crew.kickoff())
+
+    async def generate_followup_questions(
+        self,
+        emails: List[Dict[str, Any]],
+        interest: str = "",
+        previous_answers: Optional[List[str]] = None,
+        question_count: int = 2,
+    ) -> List[str]:
         previous_answers = previous_answers or []
-        prompt = f"""You are an intelligent assistant helping a user filter their Gmail inbox.
-        The user's primary interest is: "{interest}".
-        
-        previous answers (if any): {previous_answers}
-
-        Your goal is to understand what specific type of emails they want to prioritize within this interest.
-        Generate exactly 2 short, distinct follow-up questions to ask the user.
-        Return ONLY a JSON array of strings, e.g., ["Question 1?", "Question 2?"].
-        Do not include any other text.
-        """
+        question_count = max(question_count, 1)
+        email_context = self._format_email_context(emails)
+        prompt = (
+            "You are helping a user filter their Gmail inbox based on the emails below.\n"
+            f"User interest (if provided): {interest}\n"
+            f"Previous answers: {json.dumps(previous_answers)}\n\n"
+            f"Emails (raw HTML allowed):\n{email_context}\n\n"
+            f"Generate exactly {question_count} short, distinct question(s) to clarify what matters most.\n"
+            "Return ONLY a JSON array of strings."
+        )
 
         try:
-            message = await self.client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                temperature=0.5,
-                system="You are a helpful AI assistant. Output only valid JSON. No markdown fences.",
-                messages=[{"role": "user", "content": prompt}]
+            llm = self._ensure_llm()
+            interviewer = Agent(
+                role="Gmail Follow-up Interviewer",
+                goal="Ask concise follow-up questions to refine Gmail summaries.",
+                backstory=(
+                    "You are an expert inbox assistant who asks precise questions."
+                ),
+                llm=llm,
+                allow_delegation=False,
+                verbose=False,
             )
-            content = message.content[0].text
-            return self._clean_and_parse_json(content)
-        except Exception as e:
-            logger.error(f"Failed to generate questions: {e}")
-            return [
-                f"What specific topics within {interest} matter most?",
-                "Are you looking for newsletters, personal updates, or transactional emails?"
+            output = self._run_task(
+                interviewer,
+                prompt,
+                "JSON array with exactly 2 questions.",
+            )
+            return self._clean_and_parse_json(output)
+        except Exception as exc:
+            logger.error(f"Failed to generate questions: {exc}")
+            fallback = [
+                f"What specific topics within {interest or 'these emails'} matter most?",
+                "Are you looking for newsletters, personal updates, or transactional emails?",
             ]
+            return fallback[: max(question_count, 1)]
 
-    async def generate_summaries(self, emails: List[Dict[str, Any]], interest: str, answers: List[str]) -> Dict[str, str]:
-        """
-        Generate two distinct summaries (Action-focused vs. Insight-focused).
-        """
-        email_text = "\n".join([
-            f"- From: {e.get('from')}\n  Subject: {e.get('subject')}\n  Body: {e.get('body', e.get('snippet'))[:500]}"
-            for e in emails[:20] # Limit to 20 emails for deep analysis to save tokens
-        ])
-
-        prompt = f"""You are an expert email analyst.
-        User Interest: {interest}
-        User Context/Answers: {answers}
-
-        Here are the user's recent emails (truncated content):
-        {email_text}
-
-        Task:
-        1. Generate 'Summary A': Focus strictly on ACTIONABLE items, deadlines, and urgent tasks.
-        2. Generate 'Summary B': Focus on INSIGHTS, trends, and key information (newsletters, updates).
-
-        Return ONLY a JSON object with keys "summary_a" and "summary_b".
-        Example: {{"summary_a": "Action items...", "summary_b": "Insights..."}}
-        """
-
-        try:
-            message = await self.client.messages.create(
-                model=self.model,
-                max_tokens=1500,
-                temperature=0.5,
-                system="You are a helpful AI assistant. Output only valid JSON. No markdown fences.",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return self._clean_and_parse_json(message.content[0].text)
-        except Exception as e:
-            logger.error(f"Failed to generate summaries: {e}")
+    async def generate_summaries(
+        self,
+        emails: List[Dict[str, Any]],
+        interest: str,
+        answers: List[str],
+    ) -> Dict[str, str]:
+        if not emails:
             return {
-                "summary_a": "Error generating action summary.",
-                "summary_b": "Error generating insight summary."
+                "summary_a": "No unread discovery emails found.",
+                "summary_b": "No unread discovery emails found.",
             }
 
-    async def judge_and_rank(self, emails: List[Dict[str, Any]], summary_a: str, summary_b: str, interest: str, answers: List[str]) -> Dict[str, Any]:
-        """
-        Judge the two summaries and the emails to produce a final report.
-        """
-        prompt = f"""You are a 'Judge' AI.
-        User Interest: {interest}
-        User Context: {answers}
-
-        Summary A (Action): {summary_a}
-        Summary B (Insight): {summary_b}
-
-        Task:
-        1. Decide which summary style is more relevant to the user's interest/context, or merge them if both are vital.
-        2. Select the top 5 most relevant emails from the list provided below.
-        3. Explain your reasoning.
-
-        Email List (for selection context):
-        {json.dumps([{k: v for k, v in e.items() if k in ['message_id', 'subject', 'from', 'received_at']} for e in emails[:20]])}
-
-        Return a JSON object with this exact structure:
-        {{
-            "final_summary": "The combined or selected best summary text...",
-            "top_email_ids": ["id1", "id2", ...],
-            "reasoning": "Why you chose this focus..."
-        }}
-        """
+        email_text = self._format_email_context(emails)
+        context = (
+            f"User interest: {interest}\n"
+            f"User context: {json.dumps(answers)}\n\n"
+            f"Emails:\n{email_text}"
+        )
 
         try:
-            message = await self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                temperature=0.3,
-                system="You are a judge AI. Output only valid JSON. No markdown fences.",
-                messages=[{"role": "user", "content": prompt}]
+            llm = self._ensure_llm()
+            action_agent = Agent(
+                role="Action Summary Analyst",
+                goal="Extract actionable items, deadlines, and required responses.",
+                backstory="You prioritize tasks and obligations in email.",
+                llm=llm,
+                allow_delegation=False,
+                verbose=False,
             )
-            return self._clean_and_parse_json(message.content[0].text)
-        except Exception as e:
-            logger.error(f"Failed to judge summaries: {e}")
+            insight_agent = Agent(
+                role="Insight Summary Analyst",
+                goal="Summarize key updates, trends, and information.",
+                backstory="You extract meaningful insights from updates and newsletters.",
+                llm=llm,
+                allow_delegation=False,
+                verbose=False,
+            )
+
+            action_prompt = (
+                f"{context}\n\n"
+                "Create Summary A focused strictly on ACTIONABLE items.\n"
+                'Return ONLY JSON: {"summary_a": '
+                '"..."}'
+            )
+            insight_prompt = (
+                f"{context}\n\n"
+                "Create Summary B focused strictly on INSIGHTS and key updates.\n"
+                'Return ONLY JSON: {"summary_b": '
+                '"..."}'
+            )
+
+            action_output = self._run_task(
+                action_agent,
+                action_prompt,
+                "JSON object with summary_a string.",
+            )
+            insight_output = self._run_task(
+                insight_agent,
+                insight_prompt,
+                "JSON object with summary_b string.",
+            )
+
+            summary_a = self._clean_and_parse_json(action_output).get("summary_a")
+            summary_b = self._clean_and_parse_json(insight_output).get("summary_b")
+
             return {
-                "final_summary": summary_a + "\n\n" + summary_b,
+                "summary_a": summary_a or "Error generating action summary.",
+                "summary_b": summary_b or "Error generating insight summary.",
+            }
+        except Exception as exc:
+            logger.error(f"Failed to generate summaries: {exc}")
+            return {
+                "summary_a": "Error generating action summary.",
+                "summary_b": "Error generating insight summary.",
+            }
+
+    async def judge_and_rank(
+        self,
+        emails: List[Dict[str, Any]],
+        summary_a: str,
+        summary_b: str,
+        interest: str,
+        answers: List[str],
+    ) -> Dict[str, Any]:
+        if not emails:
+            return {
+                "final_summary": "No unread discovery emails found.",
                 "top_email_ids": [],
-                "reasoning": "Fallback due to error."
+                "reasoning": "There were no unread discovery emails to summarize.",
+            }
+
+        try:
+            llm = self._ensure_llm()
+            triage_agent = Agent(
+                role="Inbox Triage Specialist",
+                goal="Classify emails by relevance and urgency for the user.",
+                backstory="You quickly triage inboxes to highlight what matters.",
+                llm=llm,
+                allow_delegation=False,
+                verbose=False,
+            )
+            judge_agent = Agent(
+                role="Gmail Summary Judge",
+                goal="Select the best summary and rank the most relevant emails.",
+                backstory="You combine summaries and classifications into a final report.",
+                llm=llm,
+                allow_delegation=False,
+                verbose=False,
+            )
+
+            triage_prompt = (
+                f"User interest: {interest}\n"
+                f"User context: {json.dumps(answers)}\n\n"
+                f"Emails:\n{self._format_email_context(emails)}\n\n"
+                "Classify each email with relevance (high/medium/low) and urgency "
+                "(urgent/soon/whenever).\n"
+                'Return ONLY JSON: {"classified_emails": [{"message_id": '
+                '"...", "relevance": "...", '
+                '"urgency": "...", "reason": "..."}]}'
+            )
+            classification_output = self._run_task(
+                triage_agent,
+                triage_prompt,
+                "JSON object with classified_emails list.",
+            )
+            classification = self._clean_and_parse_json(classification_output)
+
+            judge_prompt = (
+                f"User interest: {interest}\n"
+                f"User context: {json.dumps(answers)}\n\n"
+                f"Summary A (Action): {summary_a}\n"
+                f"Summary B (Insight): {summary_b}\n\n"
+                f"Classified emails: {json.dumps(classification)}\n\n"
+                f"Email list: {self._email_selection_payload(emails)}\n\n"
+                "Choose the best summary style or merge them.\n"
+                "Select the top 5 message_ids.\n"
+                "Return ONLY JSON with keys final_summary, top_email_ids, reasoning."
+            )
+            judge_output = self._run_task(
+                judge_agent,
+                judge_prompt,
+                "JSON object with final_summary, top_email_ids, reasoning.",
+            )
+            return self._clean_and_parse_json(judge_output)
+        except Exception as exc:
+            logger.error(f"Failed to judge summaries: {exc}")
+            return {
+                "final_summary": f"{summary_a}\n\n{summary_b}",
+                "top_email_ids": [],
+                "reasoning": "Fallback due to error.",
             }

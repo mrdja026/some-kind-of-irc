@@ -27,7 +27,7 @@ A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Red
 ### Run
 
 ```bash
-AI_API_SERVICE_KEY=your_key ./deploy-local.sh --build
+ANTHROPIC_API_KEY=your_key ./deploy-local.sh --build
 ```
 
 `deploy-local.sh` now runs this flow:
