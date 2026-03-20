@@ -110,6 +110,25 @@ const ADK_API_BASE_URL =
 
 export type AIBackendType = 'crewAI' | 'googleADK';
 
+// Storage key for AI backend preference (matches context)
+const AI_BACKEND_STORAGE_KEY = 'ai-backend-preference';
+
+// Helper to get the current AI backend preference from localStorage
+export const getStoredAIBackend = (): AIBackendType => {
+  if (typeof window === 'undefined') {
+    return 'crewAI';
+  }
+  const stored = localStorage.getItem(AI_BACKEND_STORAGE_KEY);
+  // Map context values to API values
+  if (stored === 'googleAdk') {
+    return 'googleADK';
+  }
+  if (stored === 'crewai') {
+    return 'crewAI';
+  }
+  return 'crewAI'; // Default to CrewAI
+};
+
 // Helper to get the correct base URL based on backend type
 const getAIBaseUrl = (backend: AIBackendType = 'crewAI'): string => {
   if (backend === 'googleADK') {
@@ -196,8 +215,12 @@ export const generateGmailQuestions = async (
   interest: string,
   previousAnswers: string[] = [],
   questionCount = 2,
+  backend?: AIBackendType,
 ): Promise<{ questions: string[] }> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/questions`, {
+  const resolvedBackend = backend ?? getStoredAIBackend();
+  const baseUrl = getAIBaseUrl(resolvedBackend);
+  const path = getAIEndpointPath('/ai/gmail/questions', resolvedBackend);
+  const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -217,9 +240,13 @@ export const generateGmailQuestions = async (
 export const generateGmailSummary = async (
   emails: any[],
   interest: string,
-  answers: string[]
+  answers: string[],
+  backend?: AIBackendType,
 ): Promise<{ final_summary: string; top_email_ids: string[]; reasoning: string }> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/gmail/summary`, {
+  const resolvedBackend = backend ?? getStoredAIBackend();
+  const baseUrl = getAIBaseUrl(resolvedBackend);
+  const path = getAIEndpointPath('/ai/gmail/summary', resolvedBackend);
+  const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -234,10 +261,11 @@ export const generateGmailSummary = async (
 export const generateCalendarQuestion = async (
   request: string,
   previousAnswers: string[] = [],
-  backend: AIBackendType = 'crewAI',
+  backend?: AIBackendType,
 ): Promise<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }> => {
-  const baseUrl = getAIBaseUrl(backend);
-  const path = getAIEndpointPath('/ai/calendar/questions', backend);
+  const resolvedBackend = backend ?? getStoredAIBackend();
+  const baseUrl = getAIBaseUrl(resolvedBackend);
+  const path = getAIEndpointPath('/ai/calendar/questions', resolvedBackend);
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -252,10 +280,11 @@ export const generateCalendarQuestion = async (
 
 export const createCalendarEvent = async (
   event: CalendarEventPayload,
-  backend: AIBackendType = 'crewAI',
+  backend?: AIBackendType,
 ): Promise<{ event_id: string | null; html_link: string | null; summary: string | null }> => {
-  const baseUrl = getAIBaseUrl(backend);
-  const path = getAIEndpointPath('/ai/calendar/create', backend);
+  const resolvedBackend = backend ?? getStoredAIBackend();
+  const baseUrl = getAIBaseUrl(resolvedBackend);
+  const path = getAIEndpointPath('/ai/calendar/create', resolvedBackend);
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

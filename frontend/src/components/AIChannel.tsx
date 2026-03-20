@@ -9,9 +9,10 @@ import {
   generatePdf,
   getAIHealth,
   getAIStatus,
+  type AIBackendType,
 } from '../api'
-import type { AIBackendType } from '../api'
 import type { CalendarEventPayload } from '../types'
+import { useAIBackend } from '../context/AIBackendContext'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox } from 'lucide-react'
 
 interface AIChannelProps {
@@ -21,36 +22,6 @@ interface AIChannelProps {
   onCommand?: (command: string) => void
   requestedIntent?: 'gmail' | null
   onIntentHandled?: () => void
-}
-
-interface ABTestOption {
-  type: string
-  label: string
-  description: string
-  model: string
-}
-
-interface ABTestConfig {
-  testing: boolean
-  options: ABTestOption[]
-}
-
-const AI_CHANNEL_AB: ABTestConfig = {
-  testing: true,
-  options: [
-    {
-      type: 'crewAI',
-      label: 'CrewAI',
-      description: 'Gmail summarisation and meetings',
-      model: 'claude-3-haiku-20240307',
-    },
-    {
-      type: 'googleADK',
-      label: 'Google ADK',
-      description: 'Gmail summarisation and meetings - ADK',
-      model: 'claude-3-haiku-20240307',
-    },
-  ],
 }
 
 type ConversationEntry = {
@@ -116,8 +87,11 @@ export function AIChannel({
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
   
-  // A/B Testing State
-  const [selectedABOption, setSelectedABOption] = useState<ABTestOption | null>(null)
+  // Use global AI backend context
+  const { backend, needsSelection, setBackend } = useAIBackend()
+  
+  // Get display label for current backend
+  const backendLabel = backend === 'googleAdk' ? 'Google ADK' : 'CrewAI'
 
   const {
     data: aiHealth,
@@ -291,7 +265,7 @@ export function AIChannel({
     try {
       if (gmailStage === 'calendar-intake' || gmailStage === 'calendar-clarify') {
         setStreamProgress('Reviewing meeting details...')
-        const backendType: AIBackendType = selectedABOption?.type === 'googleADK' ? 'googleADK' : 'crewAI'
+        const backendType: AIBackendType = backend === 'googleAdk' ? 'googleADK' : 'crewAI'
         const { status, question, event } = await generateCalendarQuestion(
           trimmedAnswer,
           calendarAnswers,
@@ -364,7 +338,7 @@ export function AIChannel({
         if (isAffirmativeResponse(trimmedAnswer)) {
           setStreamProgress('Creating calendar event...')
           try {
-            const backendType: AIBackendType = selectedABOption?.type === 'googleADK' ? 'googleADK' : 'crewAI'
+            const backendType: AIBackendType = backend === 'googleAdk' ? 'googleADK' : 'crewAI'
             const result = await createCalendarEvent(calendarEventDraft, backendType)
             if (!result.event_id && !result.html_link) {
               throw new Error('Calendar event creation failed')
@@ -547,7 +521,7 @@ export function AIChannel({
   }
 
   const isFlowComplete = gmailStage === 'summary' || gmailStage === 'calendar-done'
-  const abSelectionRequired = AI_CHANNEL_AB.testing && !selectedABOption
+  const abSelectionRequired = needsSelection
   const showOptionCards = gmailStage === 'choice' && responses.length === 0 && !isSubmitting && !abSelectionRequired
 
   return (
@@ -562,9 +536,9 @@ export function AIChannel({
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
                 Gmail Assistant
               </span>
-              {selectedABOption && (
+              {backend && (
                 <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 flex-shrink-0">
-                  Testing: {selectedABOption.label}
+                  Using: {backend === 'googleAdk' ? 'Google ADK' : 'CrewAI'}
                 </span>
               )}
             </div>
@@ -598,28 +572,39 @@ export function AIChannel({
             </div>
             <h2 className="text-lg md:text-xl font-semibold mb-2">Select AI Backend</h2>
             <p className="chat-meta mb-6 md:mb-8 max-w-md mx-auto text-sm md:text-base">
-              Choose which AI backend to test:
+              Choose which AI backend to use:
             </p>
 
-            {/* A/B Test option cards - side by side */}
+            {/* Backend option cards - side by side */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 max-w-2xl mx-auto">
-              {AI_CHANNEL_AB.options.map((option) => (
-                <button
-                  key={option.type}
-                  onClick={() => setSelectedABOption(option)}
-                  className="flex flex-col p-4 md:p-5 rounded-xl border-2 border-stone-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-left group"
-                >
-                  <div className="font-semibold text-sm md:text-base mb-1 text-stone-800 group-hover:text-purple-700">
-                    {option.label}
-                  </div>
-                  <div className="text-xs md:text-sm text-stone-500 mb-2">
-                    {option.description}
-                  </div>
-                  <div className="text-[10px] md:text-xs text-stone-400 mt-auto">
-                    Model: {option.model}
-                  </div>
-                </button>
-              ))}
+              <button
+                onClick={() => setBackend('crewai')}
+                className="flex flex-col p-4 md:p-5 rounded-xl border-2 border-stone-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-left group"
+              >
+                <div className="font-semibold text-sm md:text-base mb-1 text-stone-800 group-hover:text-purple-700">
+                  CrewAI
+                </div>
+                <div className="text-xs md:text-sm text-stone-500 mb-2">
+                  Gmail summarisation and meetings
+                </div>
+                <div className="text-[10px] md:text-xs text-stone-400 mt-auto">
+                  Model: claude-3-haiku-20240307
+                </div>
+              </button>
+              <button
+                onClick={() => setBackend('googleAdk')}
+                className="flex flex-col p-4 md:p-5 rounded-xl border-2 border-stone-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-left group"
+              >
+                <div className="font-semibold text-sm md:text-base mb-1 text-stone-800 group-hover:text-purple-700">
+                  Google ADK
+                </div>
+                <div className="text-xs md:text-sm text-stone-500 mb-2">
+                  Gmail summarisation and meetings - ADK
+                </div>
+                <div className="text-[10px] md:text-xs text-stone-400 mt-auto">
+                  Model: claude-3-haiku-20240307
+                </div>
+              </button>
             </div>
           </div>
         )}

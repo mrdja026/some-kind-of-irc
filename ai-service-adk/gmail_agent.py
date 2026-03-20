@@ -1,46 +1,53 @@
+"""Google ADK Gmail Agent implementation.
+
+Mirrors the CrewAI GmailAgent interface for A/B testing.
+Uses Google ADK with LiteLLM for Claude support.
+All prompts, roles, goals, and backstories are IDENTICAL to CrewAI.
+"""
+
 import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from config import settings
 
+# Import Google ADK components
 try:
-    from crewai import Agent, Crew, LLM, Process, Task
-except Exception:
-    Agent = Crew = LLM = Process = Task = None
+    from google.adk.agents import Agent
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.adk.models.lite_llm import LiteLlm
+    from google.genai import types
+except ImportError:
+    Agent = Runner = InMemorySessionService = LiteLlm = types = None
 
 logger = logging.getLogger(__name__)
 
+# Model hardcoded to match CrewAI implementation
 MODEL_NAME = "claude-3-haiku-20240307"
 
 
-class GmailAgent:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.model = MODEL_NAME
-        self._llm: Optional[Any] = None
+class GmailAgentADK:
+    """Google ADK-based Gmail agent mirroring CrewAI GmailAgent interface."""
 
-    def _ensure_llm(self) -> Any:
-        if self._llm is not None:
-            return self._llm
-        if (
-            LLM is None
-            or Agent is None
-            or Crew is None
-            or Task is None
-            or Process is None
-        ):
-            raise RuntimeError("CrewAI is not installed.")
-        if not self.api_key:
-            raise RuntimeError("Anthropic API key is missing.")
-        self._llm = LLM(
-            model=f"anthropic/{self.model}",
-            api_key=self.api_key,
-            base_url=settings.ANTHROPIC_API_BASE,
-        )
-        return self._llm
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+        self.model = f"anthropic/{MODEL_NAME}"
+        self._session_service = None
+
+    def _ensure_session_service(self):
+        """Initialize session service if needed."""
+        if self._session_service is None:
+            if InMemorySessionService is None:
+                raise RuntimeError("Google ADK is not installed.")
+            self._session_service = InMemorySessionService()
+        return self._session_service
 
     def _clean_and_parse_json(self, text: str) -> Any:
+        """Parse JSON from LLM response, handling markdown code blocks.
+
+        Identical to CrewAI gmail_agent.py lines 43-69.
+        """
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
         elif "```" in text:
@@ -69,6 +76,10 @@ class GmailAgent:
         raise last_error
 
     def _format_email_context(self, emails: List[Dict[str, Any]]) -> str:
+        """Format emails for prompt context.
+
+        Identical to CrewAI gmail_agent.py lines 71-85.
+        """
         lines = []
         for email in emails:
             body = email.get("body") or email.get("snippet") or ""
@@ -85,6 +96,10 @@ class GmailAgent:
         return "\n".join(lines)
 
     def _email_selection_payload(self, emails: List[Dict[str, Any]]) -> str:
+        """Create trimmed email payload for selection.
+
+        Identical to CrewAI gmail_agent.py lines 87-97.
+        """
         trimmed = [
             {
                 "message_id": email.get("message_id"),
@@ -96,19 +111,82 @@ class GmailAgent:
         ]
         return json.dumps(trimmed)
 
-    def _run_task(self, agent: Any, description: str, expected_output: str) -> str:
-        task = Task(
-            description=description,
-            expected_output=expected_output,
+    async def _run_agent(
+        self,
+        agent_name: str,
+        role: str,
+        goal: str,
+        backstory: str,
+        user_message: str,
+    ) -> str:
+        """Run an ADK agent and return the text response.
+
+        Similar to calendar_agent.py:215-277 but adapted for Gmail.
+        """
+        if Agent is None or Runner is None or LiteLlm is None:
+            raise RuntimeError("Google ADK is not installed.")
+
+        session_service = self._ensure_session_service()
+
+        # Create LiteLLM model wrapper for Claude
+        model = LiteLlm(model=self.model)
+
+        # Create instruction from role, goal, and backstory (matching CrewAI agent structure)
+        instruction = f"""You are a {role}.
+
+Goal: {goal}
+
+Backstory: {backstory}
+
+Follow the user's instructions precisely and return ONLY the requested JSON format."""
+
+        # Create agent with instruction
+        agent = Agent(
+            model=model,
+            name=agent_name,
+            instruction=instruction,
+            tools=[],
+        )
+
+        # Create runner
+        runner = Runner(
             agent=agent,
+            app_name="gmail_adk",
+            session_service=session_service,
         )
-        crew = Crew(
-            agents=[agent],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=False,
+
+        # Generate unique session/user IDs for this request
+        import uuid
+
+        user_id = f"user_{uuid.uuid4().hex[:8]}"
+        session_id = f"session_{uuid.uuid4().hex[:8]}"
+
+        # Create session
+        session = await session_service.create_session(
+            app_name="gmail_adk",
+            user_id=user_id,
+            session_id=session_id,
         )
-        return str(crew.kickoff())
+
+        # Create user message content
+        content = types.Content(
+            role="user",
+            parts=[types.Part(text=user_message)],
+        )
+
+        # Run agent and collect response
+        response_text = ""
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=session_id,
+            new_message=content,
+        ):
+            if hasattr(event, "content") and event.content:
+                for part in event.content.parts:
+                    if hasattr(part, "text") and part.text:
+                        response_text += part.text
+
+        return response_text
 
     async def generate_followup_questions(
         self,
@@ -117,9 +195,17 @@ class GmailAgent:
         previous_answers: Optional[List[str]] = None,
         question_count: int = 2,
     ) -> List[str]:
+        """Generate follow-up questions for Gmail summarization.
+
+        Prompts identical to CrewAI gmail_agent.py lines 123-129.
+        Agent role/goal/backstory identical to lines 134-139.
+        Fallback identical to lines 152-156.
+        """
         previous_answers = previous_answers or []
         question_count = max(question_count, 1)
         email_context = self._format_email_context(emails)
+
+        # Prompt identical to CrewAI lines 123-129
         prompt = (
             "You are helping a user filter their Gmail inbox based on the emails below.\n"
             f"User interest (if provided): {interest}\n"
@@ -130,25 +216,18 @@ class GmailAgent:
         )
 
         try:
-            llm = self._ensure_llm()
-            interviewer = Agent(
+            output = await self._run_agent(
+                agent_name="gmail_follow_up_interviewer",
+                # Role, goal, backstory identical to CrewAI lines 135-138
                 role="Gmail Follow-up Interviewer",
                 goal="Ask concise follow-up questions to refine Gmail summaries.",
-                backstory=(
-                    "You are an expert inbox assistant who asks precise questions."
-                ),
-                llm=llm,
-                allow_delegation=False,
-                verbose=False,
-            )
-            output = self._run_task(
-                interviewer,
-                prompt,
-                "JSON array with exactly 2 questions.",
+                backstory="You are an expert inbox assistant who asks precise questions.",
+                user_message=prompt,
             )
             return self._clean_and_parse_json(output)
         except Exception as exc:
             logger.error(f"Failed to generate questions: {exc}")
+            # Fallback identical to CrewAI lines 152-156
             fallback = [
                 f"What specific topics within {interest or 'these emails'} matter most?",
                 "Are you looking for newsletters, personal updates, or transactional emails?",
@@ -161,6 +240,11 @@ class GmailAgent:
         interest: str,
         answers: List[str],
     ) -> Dict[str, str]:
+        """Generate dual summaries (action + insight).
+
+        Prompts identical to CrewAI gmail_agent.py lines 196-207.
+        Agent roles/goals/backstories identical to lines 179-194.
+        """
         if not emails:
             return {
                 "summary_a": "No unread discovery emails found.",
@@ -175,30 +259,15 @@ class GmailAgent:
         )
 
         try:
-            llm = self._ensure_llm()
-            action_agent = Agent(
-                role="Action Summary Analyst",
-                goal="Extract actionable items, deadlines, and required responses.",
-                backstory="You prioritize tasks and obligations in email.",
-                llm=llm,
-                allow_delegation=False,
-                verbose=False,
-            )
-            insight_agent = Agent(
-                role="Insight Summary Analyst",
-                goal="Summarize key updates, trends, and information.",
-                backstory="You extract meaningful insights from updates and newsletters.",
-                llm=llm,
-                allow_delegation=False,
-                verbose=False,
-            )
-
+            # Action prompt identical to CrewAI lines 196-201
             action_prompt = (
                 f"{context}\n\n"
                 "Create Summary A focused strictly on ACTIONABLE items.\n"
                 'Return ONLY JSON: {"summary_a": '
                 '"..."}'
             )
+
+            # Insight prompt identical to CrewAI lines 202-207
             insight_prompt = (
                 f"{context}\n\n"
                 "Create Summary B focused strictly on INSIGHTS and key updates.\n"
@@ -206,15 +275,22 @@ class GmailAgent:
                 '"..."}'
             )
 
-            action_output = self._run_task(
-                action_agent,
-                action_prompt,
-                "JSON object with summary_a string.",
+            # Action agent - role/goal/backstory identical to CrewAI lines 179-186
+            action_output = await self._run_agent(
+                agent_name="action_summary_analyst",
+                role="Action Summary Analyst",
+                goal="Extract actionable items, deadlines, and required responses.",
+                backstory="You prioritize tasks and obligations in email.",
+                user_message=action_prompt,
             )
-            insight_output = self._run_task(
-                insight_agent,
-                insight_prompt,
-                "JSON object with summary_b string.",
+
+            # Insight agent - role/goal/backstory identical to CrewAI lines 187-194
+            insight_output = await self._run_agent(
+                agent_name="insight_summary_analyst",
+                role="Insight Summary Analyst",
+                goal="Summarize key updates, trends, and information.",
+                backstory="You extract meaningful insights from updates and newsletters.",
+                user_message=insight_prompt,
             )
 
             summary_a = self._clean_and_parse_json(action_output).get("summary_a")
@@ -239,6 +315,11 @@ class GmailAgent:
         interest: str,
         answers: List[str],
     ) -> Dict[str, Any]:
+        """Judge summaries and rank emails.
+
+        Prompts identical to CrewAI gmail_agent.py lines 268-294.
+        Agent roles/goals/backstories identical to lines 251-266.
+        """
         if not emails:
             return {
                 "final_summary": "No unread discovery emails found.",
@@ -247,24 +328,7 @@ class GmailAgent:
             }
 
         try:
-            llm = self._ensure_llm()
-            triage_agent = Agent(
-                role="Inbox Triage Specialist",
-                goal="Classify emails by relevance and urgency for the user.",
-                backstory="You quickly triage inboxes to highlight what matters.",
-                llm=llm,
-                allow_delegation=False,
-                verbose=False,
-            )
-            judge_agent = Agent(
-                role="Gmail Summary Judge",
-                goal="Select the best summary and rank the most relevant emails.",
-                backstory="You combine summaries and classifications into a final report.",
-                llm=llm,
-                allow_delegation=False,
-                verbose=False,
-            )
-
+            # Triage prompt identical to CrewAI lines 268-277
             triage_prompt = (
                 f"User interest: {interest}\n"
                 f"User context: {json.dumps(answers)}\n\n"
@@ -275,13 +339,18 @@ class GmailAgent:
                 '"...", "relevance": "...", '
                 '"urgency": "...", "reason": "..."}]}'
             )
-            classification_output = self._run_task(
-                triage_agent,
-                triage_prompt,
-                "JSON object with classified_emails list.",
+
+            # Triage agent - role/goal/backstory identical to CrewAI lines 251-258
+            classification_output = await self._run_agent(
+                agent_name="inbox_triage_specialist",
+                role="Inbox Triage Specialist",
+                goal="Classify emails by relevance and urgency for the user.",
+                backstory="You quickly triage inboxes to highlight what matters.",
+                user_message=triage_prompt,
             )
             classification = self._clean_and_parse_json(classification_output)
 
+            # Judge prompt identical to CrewAI lines 285-294
             judge_prompt = (
                 f"User interest: {interest}\n"
                 f"User context: {json.dumps(answers)}\n\n"
@@ -293,26 +362,16 @@ class GmailAgent:
                 "Select the top 5 message_ids.\n"
                 "Return ONLY JSON with keys final_summary, top_email_ids, reasoning."
             )
-            judge_output = self._run_task(
-                judge_agent,
-                judge_prompt,
-                "JSON object with final_summary, top_email_ids, reasoning.",
+
+            # Judge agent - role/goal/backstory identical to CrewAI lines 259-266
+            judge_output = await self._run_agent(
+                agent_name="gmail_summary_judge",
+                role="Gmail Summary Judge",
+                goal="Select the best summary and rank the most relevant emails.",
+                backstory="You combine summaries and classifications into a final report.",
+                user_message=judge_prompt,
             )
-            parsed = self._clean_and_parse_json(judge_output)
-            # Ensure we always return a valid dict with required keys
-            if not isinstance(parsed, dict):
-                return {
-                    "final_summary": f"{summary_a}\n\n{summary_b}",
-                    "top_email_ids": [],
-                    "reasoning": "Fallback: LLM returned unexpected format.",
-                }
-            return {
-                "final_summary": parsed.get(
-                    "final_summary", f"{summary_a}\n\n{summary_b}"
-                ),
-                "top_email_ids": parsed.get("top_email_ids", []),
-                "reasoning": parsed.get("reasoning", ""),
-            }
+            return self._clean_and_parse_json(judge_output)
         except Exception as exc:
             logger.error(f"Failed to judge summaries: {exc}")
             return {

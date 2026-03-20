@@ -2,29 +2,35 @@ import { Link } from '@tanstack/react-router'
 
 import { useState } from 'react'
 import { Home, Menu, LogIn, MessageSquare, X } from 'lucide-react'
+import { AIBackendToggle } from './AIBackendToggle'
 
 export default function Header() {
   const [isOpen, setIsOpen] = useState(false)
 
   return (
     <>
-      <header className="p-3 sm:p-4 flex items-center bg-gray-800 text-white shadow-lg">
-        <button
-          onClick={() => setIsOpen(true)}
-          className="p-2 hover:bg-gray-700 rounded-lg transition-colors min-w-[44px] min-h-[44px]"
-          aria-label="Open menu"
-        >
-          <Menu size={24} />
-        </button>
-        <h1 className="ml-2 sm:ml-4 text-lg sm:text-xl font-semibold">
-          <Link to="/">
-            <img
-              src="/tanstack-word-logo-white.svg"
-              alt="TanStack Logo"
-              className="h-8 sm:h-10"
-            />
-          </Link>
-        </h1>
+      <header className="p-3 sm:p-4 flex items-center justify-between bg-gray-800 text-white shadow-lg">
+        <div className="flex items-center">
+          <button
+            onClick={() => setIsOpen(true)}
+            className="p-2 hover:bg-gray-700 rounded-lg transition-colors min-w-[44px] min-h-[44px]"
+            aria-label="Open menu"
+          >
+            <Menu size={24} />
+          </button>
+          <h1 className="ml-2 sm:ml-4 text-lg sm:text-xl font-semibold">
+            <Link to="/">
+              <img
+                src="/tanstack-word-logo-white.svg"
+                alt="TanStack Logo"
+                className="h-8 sm:h-10"
+              />
+            </Link>
+          </h1>
+        </div>
+        
+        {/* AI Backend Toggle */}
+        <AIBackendToggle />
       </header>
 
       <aside
