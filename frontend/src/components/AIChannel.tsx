@@ -10,6 +10,7 @@ import {
   getAIHealth,
   getAIStatus,
 } from '../api'
+import type { AIBackendType } from '../api'
 import type { CalendarEventPayload } from '../types'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox } from 'lucide-react'
 
@@ -18,6 +19,38 @@ interface AIChannelProps {
   channelName?: string
   showHeader?: boolean
   onCommand?: (command: string) => void
+  requestedIntent?: 'gmail' | null
+  onIntentHandled?: () => void
+}
+
+interface ABTestOption {
+  type: string
+  label: string
+  description: string
+  model: string
+}
+
+interface ABTestConfig {
+  testing: boolean
+  options: ABTestOption[]
+}
+
+const AI_CHANNEL_AB: ABTestConfig = {
+  testing: true,
+  options: [
+    {
+      type: 'crewAI',
+      label: 'CrewAI',
+      description: 'Gmail summarisation and meetings',
+      model: 'claude-3-haiku-20240307',
+    },
+    {
+      type: 'googleADK',
+      label: 'Google ADK',
+      description: 'Gmail summarisation and meetings - ADK',
+      model: 'claude-3-haiku-20240307',
+    },
+  ],
 }
 
 type ConversationEntry = {
@@ -82,6 +115,9 @@ export function AIChannel({
   const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
+  
+  // A/B Testing State
+  const [selectedABOption, setSelectedABOption] = useState<ABTestOption | null>(null)
 
   const {
     data: aiHealth,
@@ -255,9 +291,11 @@ export function AIChannel({
     try {
       if (gmailStage === 'calendar-intake' || gmailStage === 'calendar-clarify') {
         setStreamProgress('Reviewing meeting details...')
+        const backendType: AIBackendType = selectedABOption?.type === 'googleADK' ? 'googleADK' : 'crewAI'
         const { status, question, event } = await generateCalendarQuestion(
           trimmedAnswer,
           calendarAnswers,
+          backendType,
         )
         const updatedAnswers = [...calendarAnswers, trimmedAnswer]
         setCalendarAnswers(updatedAnswers)
@@ -326,7 +364,8 @@ export function AIChannel({
         if (isAffirmativeResponse(trimmedAnswer)) {
           setStreamProgress('Creating calendar event...')
           try {
-            const result = await createCalendarEvent(calendarEventDraft)
+            const backendType: AIBackendType = selectedABOption?.type === 'googleADK' ? 'googleADK' : 'crewAI'
+            const result = await createCalendarEvent(calendarEventDraft, backendType)
             if (!result.event_id && !result.html_link) {
               throw new Error('Calendar event creation failed')
             }
@@ -508,7 +547,8 @@ export function AIChannel({
   }
 
   const isFlowComplete = gmailStage === 'summary' || gmailStage === 'calendar-done'
-  const showOptionCards = gmailStage === 'choice' && responses.length === 0 && !isSubmitting
+  const abSelectionRequired = AI_CHANNEL_AB.testing && !selectedABOption
+  const showOptionCards = gmailStage === 'choice' && responses.length === 0 && !isSubmitting && !abSelectionRequired
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
@@ -522,6 +562,11 @@ export function AIChannel({
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
                 Gmail Assistant
               </span>
+              {selectedABOption && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 flex-shrink-0">
+                  Testing: {selectedABOption.label}
+                </span>
+              )}
             </div>
             {aiStatus && (
               <div className="text-xs chat-meta flex-shrink-0">
@@ -545,6 +590,40 @@ export function AIChannel({
           paddingBottom: 'calc(var(--floating-input-height, 0px) + 24px)',
         }}
       >
+        {/* A/B Test Selection - shown when testing mode is enabled and no option selected */}
+        {abSelectionRequired && (
+          <div className="text-center py-6 md:py-8 px-4">
+            <div className="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-purple-100 mb-3 md:mb-4">
+              <Sparkles size={24} className="md:w-8 md:h-8 text-purple-600" />
+            </div>
+            <h2 className="text-lg md:text-xl font-semibold mb-2">Select AI Backend</h2>
+            <p className="chat-meta mb-6 md:mb-8 max-w-md mx-auto text-sm md:text-base">
+              Choose which AI backend to test:
+            </p>
+
+            {/* A/B Test option cards - side by side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 max-w-2xl mx-auto">
+              {AI_CHANNEL_AB.options.map((option) => (
+                <button
+                  key={option.type}
+                  onClick={() => setSelectedABOption(option)}
+                  className="flex flex-col p-4 md:p-5 rounded-xl border-2 border-stone-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-left group"
+                >
+                  <div className="font-semibold text-sm md:text-base mb-1 text-stone-800 group-hover:text-purple-700">
+                    {option.label}
+                  </div>
+                  <div className="text-xs md:text-sm text-stone-500 mb-2">
+                    {option.description}
+                  </div>
+                  <div className="text-[10px] md:text-xs text-stone-400 mt-auto">
+                    Model: {option.model}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Welcome message with option cards */}
         {showOptionCards && (
           <div className="text-center py-6 md:py-8 px-4">

@@ -26,6 +26,13 @@
   @ai path /ai/*
   reverse_proxy @ai ai-service:8001
 
+  # Google ADK AI service for A/B testing
+  @adk path /adk/*
+  handle @adk {
+    uri strip_prefix /adk
+    reverse_proxy ai-service-adk:8004
+  }
+
   @ai_health path /healthz
   reverse_proxy @ai_health ai-service:8001
 
