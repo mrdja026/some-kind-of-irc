@@ -19,7 +19,6 @@ from src.core.config import settings
 from src.core.database import get_db
 from src.core.admin import is_user_admin
 from src.models.user import User
-from src.models.channel import Channel
 from src.models.membership import Membership
 from src.models.gmail_token import GmailToken
 from src.services.gmail_service import fetch_latest_emails

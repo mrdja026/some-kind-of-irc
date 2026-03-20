@@ -1,4 +1,3 @@
-from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
 from pydantic_settings import BaseSettings

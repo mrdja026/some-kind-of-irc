@@ -1,7 +1,7 @@
 import base64
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build

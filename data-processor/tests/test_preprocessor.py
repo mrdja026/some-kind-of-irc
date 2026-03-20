@@ -6,9 +6,7 @@ Tests noise reduction, binarization, deskew correction, and full preprocessing p
 
 import pytest
 import numpy as np
-from unittest.mock import patch, MagicMock
-from io import BytesIO
-from PIL import Image as PILImage
+from unittest.mock import patch
 
 # Import test subjects - these will fail gracefully if OpenCV not available
 try:

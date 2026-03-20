@@ -6,7 +6,6 @@ from sqlalchemy import pool
 
 from src.core.config import settings
 from src.core.database import Base
-from src.models import channel, gmail_token, membership, message, user
 
 config = context.config
 if config.config_file_name is not None:

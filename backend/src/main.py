@@ -5,8 +5,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from src.core.database import Base, engine, get_db
-from src.core.config import settings as app_settings
+from src.core.database import Base, engine
 from src.api.endpoints.auth import router as auth_router
 from src.api.endpoints.channels import router as channels_router
 from src.api.endpoints.media import router as media_router

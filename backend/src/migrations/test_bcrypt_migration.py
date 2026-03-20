@@ -6,7 +6,6 @@ Test script to verify bcrypt-only password hashing migration.
 import requests
 import sqlite3
 import sys
-import os
 
 BASE_URL = "http://localhost:8000"
 
@@ -36,7 +35,7 @@ def test_new_user_registration():
         conn.close()
         
         if result and result[0] == 'bcrypt':
-            print(f"✓ hash_type correctly set to 'bcrypt' in database")
+            print("✓ hash_type correctly set to 'bcrypt' in database")
             return username, password
         else:
             print(f"✗ hash_type not set correctly: {result}")
