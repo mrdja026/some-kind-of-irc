@@ -174,19 +174,29 @@ Follow the user's instructions precisely and return ONLY the requested JSON form
             parts=[types.Part(text=user_message)],
         )
 
-        # Run agent and collect response
-        response_text = ""
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=content,
-        ):
-            if hasattr(event, "content") and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, "text") and part.text:
-                        response_text += part.text
+        try:
+            # Run agent and collect response
+            response_text = ""
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=content,
+            ):
+                if hasattr(event, "content") and event.content:
+                    for part in event.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            response_text += part.text
 
-        return response_text
+            return response_text
+        finally:
+            try:
+                await session_service.delete_session(
+                    app_name="gmail_adk",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to delete gmail ADK session: %s", exc)
 
     async def generate_followup_questions(
         self,
@@ -254,7 +264,8 @@ Follow the user's instructions precisely and return ONLY the requested JSON form
         email_text = self._format_email_context(emails)
         context = (
             f"User interest: {interest}\n"
-            f"User context: {json.dumps(answers)}\n\n"
+            f"User context: {json.dumps(answers)}\n"
+            "Emails below are already scoped to discovery emails relevant to the user's interest.\n\n"
             f"Emails:\n{email_text}"
         )
 
@@ -354,13 +365,15 @@ Follow the user's instructions precisely and return ONLY the requested JSON form
             judge_prompt = (
                 f"User interest: {interest}\n"
                 f"User context: {json.dumps(answers)}\n\n"
+                "Emails provided are already scoped to discovery emails relevant to the user's interest.\n\n"
                 f"Summary A (Action): {summary_a}\n"
                 f"Summary B (Insight): {summary_b}\n\n"
                 f"Classified emails: {json.dumps(classification)}\n\n"
                 f"Email list: {self._email_selection_payload(emails)}\n\n"
                 "Choose the best summary style or merge them.\n"
                 "Select the top 5 message_ids.\n"
-                "Return ONLY JSON with keys final_summary, top_email_ids, reasoning."
+                "Return ONLY JSON with keys final_summary, top_email_ids, reasoning. "
+                "Reasoning must be a single string (not an object)."
             )
 
             # Judge agent - role/goal/backstory identical to CrewAI lines 259-266
@@ -371,7 +384,55 @@ Follow the user's instructions precisely and return ONLY the requested JSON form
                 backstory="You combine summaries and classifications into a final report.",
                 user_message=judge_prompt,
             )
-            return self._clean_and_parse_json(judge_output)
+            parsed = self._clean_and_parse_json(judge_output)
+            if not isinstance(parsed, dict):
+                return {
+                    "final_summary": f"{summary_a}\n\n{summary_b}",
+                    "top_email_ids": [],
+                    "reasoning": "Fallback: LLM returned unexpected format.",
+                }
+
+            final_summary = parsed.get("final_summary", f"{summary_a}\n\n{summary_b}")
+            if isinstance(final_summary, dict):
+                for key in ("summary", "text", "content", "final_summary"):
+                    value = final_summary.get(key)
+                    if isinstance(value, str):
+                        final_summary = value
+                        break
+                else:
+                    final_summary = json.dumps(final_summary)
+            elif not isinstance(final_summary, str):
+                final_summary = str(final_summary)
+
+            top_email_ids = parsed.get("top_email_ids", [])
+            if isinstance(top_email_ids, dict):
+                top_email_ids = list(top_email_ids.keys())
+            elif isinstance(top_email_ids, str):
+                top_email_ids = [top_email_ids]
+            elif not isinstance(top_email_ids, list):
+                top_email_ids = []
+            top_email_ids = [str(item) for item in top_email_ids if item is not None]
+
+            reasoning = parsed.get("reasoning", "")
+            if isinstance(reasoning, dict):
+                if reasoning:
+                    lines = []
+                    for key, value in reasoning.items():
+                        if isinstance(value, str):
+                            lines.append(f"{key}: {value}")
+                        else:
+                            lines.append(f"{key}: {json.dumps(value)}")
+                    reasoning = "\n".join(lines)
+                else:
+                    reasoning = ""
+            elif not isinstance(reasoning, str):
+                reasoning = str(reasoning)
+
+            return {
+                "final_summary": final_summary,
+                "top_email_ids": top_email_ids,
+                "reasoning": reasoning,
+            }
         except Exception as exc:
             logger.error(f"Failed to judge summaries: {exc}")
             return {

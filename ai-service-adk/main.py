@@ -181,7 +181,11 @@ async def create_calendar_event_endpoint(
         event=request.event.model_dump(),
         auth_token=auth_token,
     )
-    return CalendarCreateResponse(**result)
+    return CalendarCreateResponse(
+        event_id=result.get("event_id"),
+        html_link=result.get("html_link"),
+        summary=result.get("summary"),
+    )
 
 
 @app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)

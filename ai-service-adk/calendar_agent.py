@@ -262,19 +262,29 @@ class CalendarAgentADK:
             parts=[types.Part(text=user_message)],
         )
 
-        # Run agent and collect response
-        response_text = ""
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=content,
-        ):
-            if hasattr(event, "content") and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, "text") and part.text:
-                        response_text += part.text
+        try:
+            # Run agent and collect response
+            response_text = ""
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=content,
+            ):
+                if hasattr(event, "content") and event.content:
+                    for part in event.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            response_text += part.text
 
-        return response_text
+            return response_text
+        finally:
+            try:
+                await session_service.delete_session(
+                    app_name="calendar_adk",
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to delete calendar ADK session: %s", exc)
 
     async def plan_event(
         self,
