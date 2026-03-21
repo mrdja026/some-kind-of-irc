@@ -4,3 +4,6 @@ dist
 .git
 .gitignore
 README.md
+public/datasets/
+public/datasets/*.json
+*-data-session.json

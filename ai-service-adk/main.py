@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from auth import require_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
+from ai_session_events import append_ai_session_event, new_request_id
 from calendar_agent import CalendarAgentADK
 from gmail_agent import GmailAgentADK
 
@@ -135,6 +136,7 @@ async def get_ai_status(username: str = Depends(require_ai_access)):
 @app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)
 async def generate_calendar_question(
     request: CalendarQuestionRequest,
+    http_request: Request,
     username: str = Depends(require_ai_access),
 ):
     """Generate calendar clarification or confirmation question."""
@@ -156,11 +158,26 @@ async def generate_calendar_question(
         "timezone": "UTC",
         "attendees": [],
     }
-    return CalendarQuestionResponse(
+    resp = CalendarQuestionResponse(
         status=status,
         question=result.get("question", ""),
         event=event_payload,
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_question",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/questions",
+            "request": {
+                "previous_answers": request.previous_answers,
+            },
+            "response": {"status": resp.status},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/calendar/create", response_model=CalendarCreateResponse)
@@ -184,15 +201,36 @@ async def create_calendar_event_endpoint(
         event=request.event.model_dump(),
         auth_token=auth_token,
     )
-    return CalendarCreateResponse(
+    resp = CalendarCreateResponse(
         event_id=result.get("event_id"),
         html_link=result.get("html_link"),
         summary=result.get("summary"),
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_create",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/create",
+            "request": {
+                "event_title": request.event.title,
+                "start_datetime": request.event.start_datetime,
+                "timezone": request.event.timezone,
+            },
+            "response": {
+                "event_id": resp.event_id,
+                "html_link": resp.html_link,
+            },
+        },
+    )
+    return resp
 
 
 @app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)
 async def generate_gmail_questions(
+    http_request: Request,
     request: GmailQuestionsRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -210,11 +248,34 @@ async def generate_gmail_questions(
         question_count=request.question_count,
     )
 
-    return GmailQuestionsResponse(questions=questions)
+    resp = GmailQuestionsResponse(questions=questions)
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="gmail_questions",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/questions",
+            "request": {
+                "interest": request.interest,
+                "question_count": request.question_count,
+                "previous_answers": request.previous_answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {"questions": resp.questions},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/gmail/summary", response_model=GmailSummaryResponse)
 async def generate_gmail_summary(
+    http_request: Request,
     request: GmailSummaryRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -239,11 +300,36 @@ async def generate_gmail_summary(
         answers=request.answers,
     )
 
-    return GmailSummaryResponse(
+    resp = GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),
         top_email_ids=result.get("top_email_ids", []),
         reasoning=result.get("reasoning", ""),
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="gmail_summary",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/summary",
+            "request": {
+                "interest": request.interest,
+                "answers": request.answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {
+                "final_summary": resp.final_summary,
+                "top_email_ids": resp.top_email_ids,
+                "reasoning": resp.reasoning,
+            },
+        },
+    )
+    return resp
 
 
 # ---------------------------------------------------------------------------

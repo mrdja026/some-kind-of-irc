@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+
+**Always** refere Agents.md at project level
+OpenSpec is at project leve /openspec
+**Allways** use /openspec/Agents.md with parent level Agents.md

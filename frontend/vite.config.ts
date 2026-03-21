@@ -15,6 +15,20 @@ const config = defineConfig({
     },
   },
   plugins: [
+    {
+      name: 'block-datasets-public',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const url = req.url ?? ''
+          if (url === '/datasets' || url.startsWith('/datasets/')) {
+            res.statusCode = 403
+            res.end('Forbidden')
+            return
+          }
+          next()
+        })
+      },
+    },
     devtools(),
     nitro(),
     // this is the plugin that enables path aliases

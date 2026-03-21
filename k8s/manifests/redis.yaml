@@ -151,12 +151,22 @@ spec:
               value: redis://redis-log:6379/0
             - name: REDIS_LOG_STREAM_KEY
               value: caddy:warn_error_logs
+            - name: AI_SESSION_STREAM_KEY
+              value: ai:session_events
             - name: REDIS_LOG_MAXLEN
               value: "200"
             - name: LOG_SINK_PORT
               value: "6001"
+            - name: SESSION_DUMP_DIR
+              value: /datasets-out
           ports:
             - containerPort: 6001
+          volumeMounts:
+            - name: session-dumps
+              mountPath: /datasets-out
+      volumes:
+        - name: session-dumps
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

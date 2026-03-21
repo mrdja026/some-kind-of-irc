@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field
 from auth import require_ai_access, require_local_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
-from gmail_agent import GmailAgent
+from ai_session_events import append_ai_session_event, new_request_id
+from gmail_agent import GmailAgent, LogContext
 from calendar_agent import CalendarAgent
 from local_qa_orchestrator import local_qa_orchestrator
 
@@ -176,6 +177,7 @@ async def get_local_ai_status(username: str = Depends(require_local_ai_access)):
 @app.post("/ai/local/query", response_model=LocalAIQueryResponse)
 async def query_local_ai(
     request: LocalAIQueryRequest,
+    http_request: Request,
     username: str = Depends(require_local_ai_access),
 ):
     """Run local non-streaming CrewAI query for art/photography assistant."""
@@ -196,16 +198,31 @@ async def query_local_ai(
         status = (
             "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
         )
-        return LocalAIQueryResponse(
+        resp = LocalAIQueryResponse(
             status=status, message=message, agent=agent, rejected=False
         )
+        rid = http_request.headers.get("x-request-id") or new_request_id()
+        await append_ai_session_event(
+            kind="local_qa_greeting",
+            username=username,
+            source="ai_service",
+            backend="local_vllm",
+            correlation_id=http_request.headers.get("x-correlation-id"),
+            request_id=rid,
+            payload={
+                "route": "/ai/local/query",
+                "request": {"mode": request.mode},
+                "response": {"status": resp.status, "agent": resp.agent},
+            },
+        )
+        return resp
 
     query_text = request.query.strip()
     if not query_text:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
     if not local_qa_orchestrator.is_supported_topic(query_text):
-        return LocalAIQueryResponse(
+        resp = LocalAIQueryResponse(
             status="rejected",
             message=(
                 "I can only help with art and photography topics in Q&A local. "
@@ -214,6 +231,21 @@ async def query_local_ai(
             agent="Scope Guard",
             rejected=True,
         )
+        rid = http_request.headers.get("x-request-id") or new_request_id()
+        await append_ai_session_event(
+            kind="local_qa_rejected",
+            username=username,
+            source="ai_service",
+            backend="local_vllm",
+            correlation_id=http_request.headers.get("x-correlation-id"),
+            request_id=rid,
+            payload={
+                "route": "/ai/local/query",
+                "request": {"mode": request.mode},
+                "response": {"status": "rejected", "agent": "Scope Guard"},
+            },
+        )
+        return resp
 
     history_payload = [
         {"role": item.role, "content": item.content}
@@ -224,9 +256,24 @@ async def query_local_ai(
         query_text, history_payload
     )
     status = "fallback" if message == local_qa_orchestrator.fallback_message() else "ok"
-    return LocalAIQueryResponse(
+    resp = LocalAIQueryResponse(
         status=status, message=message, agent=agent, rejected=False
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="local_qa_answer",
+        username=username,
+        source="ai_service",
+        backend="local_vllm",
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/local/query",
+            "request": {"mode": request.mode},
+            "response": {"status": resp.status, "agent": resp.agent},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/local/query/stream")
@@ -356,6 +403,7 @@ async def query_local_ai_stream(
 
 @app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)
 async def generate_gmail_questions(
+    http_request: Request,
     request: GmailQuestionsRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -366,18 +414,50 @@ async def generate_gmail_questions(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    log_ctx = LogContext(
+        username=username,
+        request_id=rid,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+    )
+
     questions = await gmail_agent.generate_followup_questions(
         emails=request.emails,
         interest=request.interest,
         previous_answers=request.previous_answers,
         question_count=request.question_count,
+        log_ctx=log_ctx,
     )
 
-    return GmailQuestionsResponse(questions=questions)
+    resp = GmailQuestionsResponse(questions=questions)
+    await append_ai_session_event(
+        kind="gmail_questions",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=log_ctx.correlation_id,
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/questions",
+            "request": {
+                "interest": request.interest,
+                "question_count": request.question_count,
+                "previous_answers": request.previous_answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {"questions": resp.questions},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/gmail/summary", response_model=GmailSummaryResponse)
 async def generate_gmail_summary(
+    http_request: Request,
     request: GmailSummaryRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -388,10 +468,18 @@ async def generate_gmail_summary(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    log_ctx = LogContext(
+        username=username,
+        request_id=rid,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+    )
+
     summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
         interest=request.interest,
         answers=request.answers,
+        log_ctx=log_ctx,
     )
 
     result = await gmail_agent.judge_and_rank(
@@ -400,9 +488,9 @@ async def generate_gmail_summary(
         summary_b=summaries.get("summary_b", ""),
         interest=request.interest,
         answers=request.answers,
+        log_ctx=log_ctx,
     )
 
-    # Defensive check: ensure result is a dict
     if not isinstance(result, dict):
         result = {
             "final_summary": summaries.get("summary_a", "")
@@ -412,16 +500,43 @@ async def generate_gmail_summary(
             "reasoning": "Fallback due to unexpected response format.",
         }
 
-    return GmailSummaryResponse(
+    resp = GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),
         top_email_ids=result.get("top_email_ids", []),
         reasoning=result.get("reasoning", ""),
     )
+    await append_ai_session_event(
+        kind="gmail_summary",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=log_ctx.correlation_id,
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/summary",
+            "request": {
+                "interest": request.interest,
+                "answers": request.answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {
+                "final_summary": resp.final_summary,
+                "top_email_ids": resp.top_email_ids,
+                "reasoning": resp.reasoning,
+            },
+        },
+    )
+    return resp
 
 
 @app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)
 async def generate_calendar_question(
     request: CalendarQuestionRequest,
+    http_request: Request,
     username: str = Depends(require_ai_access),
 ):
     """Generate calendar clarification or confirmation question."""
@@ -443,11 +558,28 @@ async def generate_calendar_question(
         "timezone": "UTC",
         "attendees": [],
     }
-    return CalendarQuestionResponse(
+    resp = CalendarQuestionResponse(
         status=status,
         question=result.get("question", ""),
         event=event_payload,
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_question",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/questions",
+            "request": {
+                "previous_answers": request.previous_answers,
+            },
+            "response": {"status": resp.status},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/calendar/create", response_model=CalendarCreateResponse)
@@ -471,4 +603,26 @@ async def create_calendar_event_endpoint(
         event=request.event.model_dump(),
         auth_token=auth_token,
     )
-    return CalendarCreateResponse(**result)
+    resp = CalendarCreateResponse(**result)
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_create",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/create",
+            "request": {
+                "event_title": request.event.title,
+                "start_datetime": request.event.start_datetime,
+                "timezone": request.event.timezone,
+            },
+            "response": {
+                "event_id": resp.event_id,
+                "html_link": resp.html_link,
+            },
+        },
+    )
+    return resp

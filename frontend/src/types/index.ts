@@ -264,3 +264,51 @@ export type DataProcessorEvent =
   | OcrProgressEvent
   | OcrCompleteEvent
   | TemplateAppliedEvent;
+
+// Inference Timeline types
+export type GmailStepStage =
+  | 'questions'
+  | 'summary_action'
+  | 'summary_insight'
+  | 'classification'
+  | 'judge';
+
+export type GmailStepPayload = {
+  stage: GmailStepStage;
+  input_preview: string;
+  output: Record<string, unknown>;
+  model: string;
+};
+
+export type InferenceLogEvent = {
+  event_id: string;
+  recorded_at: string;
+  source: 'ai_service' | 'ai_service_adk' | 'caddy';
+  kind: string;
+  backend: 'crewai' | 'google_adk' | 'local_vllm' | 'n/a';
+  username?: string;
+  request_id?: string;
+  correlation_id?: string;
+  payload: GmailStepPayload | Record<string, unknown>;
+};
+
+export type SessionDump = {
+  schema_version: string;
+  exported_at: string;
+  sources: string[];
+  session_id?: string;
+  annotations?: {
+    git_sha?: string;
+    image_tag?: string;
+  };
+  events: InferenceLogEvent[];
+};
+
+export type StageColorMap = {
+  [key in GmailStepStage]: {
+    bg: string;
+    border: string;
+    text: string;
+    label: string;
+  };
+};

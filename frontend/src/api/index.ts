@@ -8,6 +8,7 @@ import type {
   LocalAIQueryResponse,
   LocalAIStreamEvent,
   LocalAIStatus,
+  InferenceLogEvent,
 } from '../types';
 
 const API_BASE_URL =
@@ -671,6 +672,19 @@ export const getGmailAuthUrl = async (): Promise<{ authorization_url: string }> 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to get Gmail auth URL' }));
     throw new Error(error.detail || 'Failed to get Gmail auth URL');
+  }
+  return response.json();
+};
+
+export const getInferenceLogs = async (
+  limit: number = 100,
+): Promise<{ events: InferenceLogEvent[]; total: number }> => {
+  const response = await fetch(`${API_BASE_URL}/api/inference/logs?limit=${limit}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to get inference logs' }));
+    throw new Error(error.detail || 'Failed to get inference logs');
   }
   return response.json();
 };

@@ -27,6 +27,23 @@ Default venv name is be if not present ask for permission to create it. When run
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
 or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path 
 
+# Coding self loop
+
+**Your code will be evaluated by three agents Claude Opus 4.6, and Codex 5.3**
+
+After the coding agent does it job check the changes with the git diff short and do a static linting provivded by pixi.toml python pixi run python-lint 
+
+**YOU MUST** Ask for review of git diff if prompted do a self review, and document the tradeofs in openspec/**/tech_debt.md 
+
+**MUST** Every coding task must be completed with @deploy_local.sh --build working
+
+
+# Building loop
+
+**Allways** ask questions when building for ambiguities and tradofs
+**Allwas** ground research in search provided by the agent google/bing/fetch
+**Allways** describe tradeofs and propose them for simplicity
+
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
 or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 <!-- OPENSPEC:END -->

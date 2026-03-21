@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/openspec/ai-data-session.schema.json",
+  "title": "AI data session dump",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "exported_at", "sources", "events"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Format version of this document (e.g. 1.0.0)."
+    },
+    "exported_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC time when the dump was produced."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Optional opaque id correlating this file with a logical session."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["caddy", "ai_service", "ai_service_adk"]
+      },
+      "uniqueItems": true
+    },
+    "annotations": {
+      "type": "object",
+      "description": "Optional deployment metadata (image tags, git sha, etc.).",
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sessionEvent" }
+    }
+  },
+  "$defs": {
+    "sessionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "recorded_at",
+        "source",
+        "kind",
+        "backend",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "description": "Redis stream id or synthetic stable id."
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["caddy", "ai_service", "ai_service_adk"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "http_warn_error",
+            "gmail_summary",
+            "gmail_questions",
+            "generic_ai"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["crewai", "google_adk", "n/a"]
+        },
+        "username": {
+          "type": "string",
+          "description": "Authenticated principal when available."
+        },
+        "correlation_id": { "type": "string" },
+        "request_id": { "type": "string" },
+        "payload": {
+          "type": "object",
+          "description": "Raw or structured request/response data; may include full email content in internal deployments.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

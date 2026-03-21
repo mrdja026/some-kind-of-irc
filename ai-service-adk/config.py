@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Redis (shared with monolith for rate limiting)
     REDIS_URL: str = "redis://redis:6379/0"
 
+    # Ephemeral redis-log: AI session events (XADD). Empty REDIS_LOG_URL disables emission.
+    REDIS_LOG_URL: str = ""
+    AI_SESSION_STREAM_KEY: str = "ai:session_events"
+    AI_SESSION_STREAM_MAXLEN: int = 500
+
     # AI rate limiting
     AI_RATE_LIMIT_PER_HOUR: int = 10
 
