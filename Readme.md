@@ -16,15 +16,22 @@ A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Red
 - DB password source: **docker secret file `infra_resource/postgres_app_password.txt`**
 - App Redis: `redis://redis:6379/0`
 - Caddy warn/error log sink: Redis stream `caddy:warn_error_logs` on `redis-log` (maxlen 200, no persistence)
+- AI session events: Redis stream `ai:session_events` on `redis-log` (maxlen 500, no persistence) — emitted by `ai-service` and `ai-service-adk` for all AI endpoints (Gmail, calendar, local Q&A)
 
-- Redis cli needed for live looking at the logs
-- Inference based data is in redis-log-sink annotated ?
+# How to inspect live session data
 
-# How to check live data 
-
+```bash
+# AI session events (Gmail, calendar, local Q&A)
 docker compose exec redis-log redis-cli XRANGE ai:session_events - + COUNT 10
+
+# Caddy warn/error logs
 docker compose exec redis-log redis-cli XRANGE caddy:warn_error_logs - + COUNT 10
+
+# All stream keys
 docker compose exec redis-log redis-cli KEYS '*'
+```
+
+Session event fields: `recorded_at`, `source`, `kind`, `backend`, `username`, `payload`, and optional `correlation_id` / `request_id`.
 
 ## Local Development (Linux)
 
