@@ -33,7 +33,9 @@ echo "Building data-processor image..."
 docker build -t data-processor:latest "${PROJECT_ROOT}/data-processor"
 
 echo "Building redis-log-sink image..."
-docker build -t redis-log-sink:latest "${PROJECT_ROOT}/redis-log-sink"
+docker build -t redis-log-sink:latest \
+  -f "${PROJECT_ROOT}/redis-log-sink/Dockerfile" \
+  "${PROJECT_ROOT}"
 
 echo "Building frontend image (SSR)..."
 docker build -t irc-frontend:latest \

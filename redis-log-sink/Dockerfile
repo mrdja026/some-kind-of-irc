@@ -5,10 +5,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+COPY redis-log-sink/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY main.py /app/main.py
+COPY redis-log-sink/main.py /app/main.py
+COPY scripts/ai_session_dump_lib.py /app/session_dump_lib.py
 
 # Create non-root user and set ownership
 RUN groupadd --gid 1000 appgroup && \

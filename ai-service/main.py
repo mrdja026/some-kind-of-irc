@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from auth import require_ai_access, require_local_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
+from ai_session_events import append_ai_session_event, new_request_id
 from gmail_agent import GmailAgent
 from calendar_agent import CalendarAgent
 from local_qa_orchestrator import local_qa_orchestrator
@@ -356,6 +357,7 @@ async def query_local_ai_stream(
 
 @app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)
 async def generate_gmail_questions(
+    http_request: Request,
     request: GmailQuestionsRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -373,11 +375,36 @@ async def generate_gmail_questions(
         question_count=request.question_count,
     )
 
-    return GmailQuestionsResponse(questions=questions)
+    resp = GmailQuestionsResponse(questions=questions)
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="gmail_questions",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/questions",
+            "request": {
+                "interest": request.interest,
+                "question_count": request.question_count,
+                "previous_answers": request.previous_answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {"questions": resp.questions},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/gmail/summary", response_model=GmailSummaryResponse)
 async def generate_gmail_summary(
+    http_request: Request,
     request: GmailSummaryRequest,
     username: str = Depends(require_ai_access),
 ):
@@ -412,11 +439,38 @@ async def generate_gmail_summary(
             "reasoning": "Fallback due to unexpected response format.",
         }
 
-    return GmailSummaryResponse(
+    resp = GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),
         top_email_ids=result.get("top_email_ids", []),
         reasoning=result.get("reasoning", ""),
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="gmail_summary",
+        username=username,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/gmail/summary",
+            "request": {
+                "interest": request.interest,
+                "answers": request.answers,
+                "email_count": len(request.emails),
+                "emails": [
+                    {"id": e.get("id"), "subject": e.get("subject")}
+                    for e in request.emails[:100]
+                ],
+            },
+            "response": {
+                "final_summary": resp.final_summary,
+                "top_email_ids": resp.top_email_ids,
+                "reasoning": resp.reasoning,
+            },
+        },
+    )
+    return resp
 
 
 @app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)

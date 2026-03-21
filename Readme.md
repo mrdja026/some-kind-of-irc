@@ -17,6 +17,15 @@ A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Red
 - App Redis: `redis://redis:6379/0`
 - Caddy warn/error log sink: Redis stream `caddy:warn_error_logs` on `redis-log` (maxlen 200, no persistence)
 
+- Redis cli needed for live looking at the logs
+- Inference based data is in redis-log-sink annotated ?
+
+# How to check live data 
+
+docker compose exec redis-log redis-cli XRANGE ai:session_events - + COUNT 10
+docker compose exec redis-log redis-cli XRANGE caddy:warn_error_logs - + COUNT 10
+docker compose exec redis-log redis-cli KEYS '*'
+
 ## Local Development (Linux)
 
 ### Prerequisites

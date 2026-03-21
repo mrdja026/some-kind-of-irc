@@ -161,6 +161,23 @@ The ingress is configured with a split routing strategy:
 Both `ai-service` and `data-processor` enforce admin allowlist via JWT cookie
 validation. Non-admin users receive HTTP 404 (security through obscurity).
 
+## AI session dataset dumps (`/datasets/`)
+
+Merged **Caddy warn/error** and **AI session** Redis streams can be exported as
+`*-data-session.json` (see `openspec/changes/add-ai-session-dataset-redis-sync/`).
+
+- **Docker Compose**: `redis-log-sink` mounts `frontend/public/datasets` and writes
+  dumps on **SIGTERM/SIGINT** when `SESSION_DUMP_DIR` is set (default `/datasets-out`
+  in compose).
+- **Kubernetes**: the sink uses an `emptyDir` at `/datasets-out` unless you replace
+  it with a PVC; copy files out with `kubectl cp` if needed.
+- **HTTP exposure**: JSON under `frontend/public/datasets/` must **not** be world-readable
+  in production without extra controls. Local compose uses **Caddy** to return **403**
+  for `/datasets` and `/datasets/*`; the Vite dev server uses the same rule. Prefer
+  moving dumps outside the web root for hardened deployments.
+- **Manual export**: `scripts/dump-ai-data-session.py` with `REDIS_LOG_URL` and optional
+  `SESSION_DUMP_DIR` / `DUMP_TO_STDOUT=1`.
+
 ## Restarting Deployments
 
 To rebuild and redeploy all services with fresh images:

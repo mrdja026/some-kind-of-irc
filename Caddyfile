@@ -60,5 +60,11 @@
     reverse_proxy data-processor:8003
   }
 
+  # Session dumps may contain sensitive data; deny public HTTP access (see k8s/README.md).
+  @datasets path /datasets /datasets/*
+  handle @datasets {
+    respond "Forbidden" 403
+  }
+
   reverse_proxy frontend:80
 }

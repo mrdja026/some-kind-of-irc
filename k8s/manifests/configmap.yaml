@@ -9,6 +9,9 @@ metadata:
 data:
   ALGORITHM: "HS256"
   REDIS_URL: "redis://redis:6379/0"
+  REDIS_LOG_URL: "redis://redis-log:6379/0"
+  AI_SESSION_STREAM_KEY: "ai:session_events"
+  AI_SESSION_STREAM_MAXLEN: "500"
   DB_HOST: "postgresql"
   DB_PORT: "5432"
   DB_NAME: "app_db"
