@@ -4,8 +4,10 @@ Mirrors the CrewAI CalendarAgent interface for A/B testing.
 Uses Google ADK with LiteLLM for Claude support.
 """
 
+import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -244,8 +246,6 @@ class CalendarAgentADK:
         )
 
         # Generate unique session/user IDs for this request
-        import uuid
-
         user_id = f"user_{uuid.uuid4().hex[:8]}"
         session_id = f"session_{uuid.uuid4().hex[:8]}"
 
@@ -365,9 +365,12 @@ class CalendarAgentADK:
         """
         normalized = self._normalize_event(event)
 
-        # Call backend directly - no LLM needed for creation
+        # Call backend directly - no LLM needed for creation.
+        # create_calendar_event is sync (required as an ADK tool), so run it
+        # in a thread to avoid blocking the async event loop.
         try:
-            result_json = create_calendar_event(
+            result_json = await asyncio.to_thread(
+                create_calendar_event,
                 title=normalized.get("title", ""),
                 start_datetime=normalized.get("start_datetime", ""),
                 end_datetime=normalized.get("end_datetime", ""),
