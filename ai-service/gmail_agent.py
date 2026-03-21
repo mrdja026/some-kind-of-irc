@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from config import settings
@@ -12,6 +13,15 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = "claude-3-haiku-20240307"
+
+
+@dataclass
+class LogContext:
+    """Context for step-level event logging."""
+
+    username: str
+    request_id: str
+    correlation_id: Optional[str] = None
 
 
 class GmailAgent:
@@ -110,12 +120,38 @@ class GmailAgent:
         )
         return str(crew.kickoff())
 
+    async def _emit_step_event(
+        self,
+        stage: str,
+        input_preview: str,
+        output: Dict[str, Any],
+        log_ctx: Optional[LogContext],
+    ) -> None:
+        """Emit a step-level event if logging context is provided."""
+        if log_ctx is None:
+            return
+        try:
+            from ai_session_events import append_gmail_step_event
+
+            await append_gmail_step_event(
+                stage=stage,
+                username=log_ctx.username,
+                input_preview=input_preview,
+                output=output,
+                model=self.model,
+                request_id=log_ctx.request_id,
+                correlation_id=log_ctx.correlation_id,
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit gmail step event: %s", exc)
+
     async def generate_followup_questions(
         self,
         emails: List[Dict[str, Any]],
         interest: str = "",
         previous_answers: Optional[List[str]] = None,
         question_count: int = 2,
+        log_ctx: Optional[LogContext] = None,
     ) -> List[str]:
         previous_answers = previous_answers or []
         question_count = max(question_count, 1)
@@ -146,7 +182,16 @@ class GmailAgent:
                 prompt,
                 "JSON array with exactly 2 questions.",
             )
-            return self._clean_and_parse_json(output)
+            questions = self._clean_and_parse_json(output)
+
+            await self._emit_step_event(
+                stage="questions",
+                input_preview=f"interest={interest}, emails={len(emails)}, prev_answers={len(previous_answers)}",
+                output={"questions": questions, "raw_output": output[:500]},
+                log_ctx=log_ctx,
+            )
+
+            return questions
         except Exception as exc:
             logger.error(f"Failed to generate questions: {exc}")
             fallback = [
@@ -160,6 +205,7 @@ class GmailAgent:
         emails: List[Dict[str, Any]],
         interest: str,
         answers: List[str],
+        log_ctx: Optional[LogContext] = None,
     ) -> Dict[str, str]:
         if not emails:
             return {
@@ -211,14 +257,28 @@ class GmailAgent:
                 action_prompt,
                 "JSON object with summary_a string.",
             )
+            summary_a = self._clean_and_parse_json(action_output).get("summary_a")
+
+            await self._emit_step_event(
+                stage="summary_action",
+                input_preview=f"interest={interest}, emails={len(emails)}",
+                output={"summary_a": summary_a, "raw_output": action_output[:500]},
+                log_ctx=log_ctx,
+            )
+
             insight_output = self._run_task(
                 insight_agent,
                 insight_prompt,
                 "JSON object with summary_b string.",
             )
-
-            summary_a = self._clean_and_parse_json(action_output).get("summary_a")
             summary_b = self._clean_and_parse_json(insight_output).get("summary_b")
+
+            await self._emit_step_event(
+                stage="summary_insight",
+                input_preview=f"interest={interest}, emails={len(emails)}",
+                output={"summary_b": summary_b, "raw_output": insight_output[:500]},
+                log_ctx=log_ctx,
+            )
 
             return {
                 "summary_a": summary_a or "Error generating action summary.",
@@ -238,6 +298,7 @@ class GmailAgent:
         summary_b: str,
         interest: str,
         answers: List[str],
+        log_ctx: Optional[LogContext] = None,
     ) -> Dict[str, Any]:
         if not emails:
             return {
@@ -282,6 +343,16 @@ class GmailAgent:
             )
             classification = self._clean_and_parse_json(classification_output)
 
+            await self._emit_step_event(
+                stage="classification",
+                input_preview=f"interest={interest}, emails={len(emails)}",
+                output={
+                    "classification": classification,
+                    "raw_output": classification_output[:500],
+                },
+                log_ctx=log_ctx,
+            )
+
             judge_prompt = (
                 f"User interest: {interest}\n"
                 f"User context: {json.dumps(answers)}\n\n"
@@ -299,20 +370,35 @@ class GmailAgent:
                 "JSON object with final_summary, top_email_ids, reasoning.",
             )
             parsed = self._clean_and_parse_json(judge_output)
-            # Ensure we always return a valid dict with required keys
+
             if not isinstance(parsed, dict):
-                return {
+                result = {
                     "final_summary": f"{summary_a}\n\n{summary_b}",
                     "top_email_ids": [],
                     "reasoning": "Fallback: LLM returned unexpected format.",
                 }
-            return {
-                "final_summary": parsed.get(
-                    "final_summary", f"{summary_a}\n\n{summary_b}"
-                ),
-                "top_email_ids": parsed.get("top_email_ids", []),
-                "reasoning": parsed.get("reasoning", ""),
-            }
+            else:
+                result = {
+                    "final_summary": parsed.get(
+                        "final_summary", f"{summary_a}\n\n{summary_b}"
+                    ),
+                    "top_email_ids": parsed.get("top_email_ids", []),
+                    "reasoning": parsed.get("reasoning", ""),
+                }
+
+            await self._emit_step_event(
+                stage="judge",
+                input_preview=f"summary_a={summary_a[:100]}..., summary_b={summary_b[:100]}...",
+                output={
+                    "final_summary": result["final_summary"],
+                    "top_email_ids": result["top_email_ids"],
+                    "reasoning": result["reasoning"],
+                    "raw_output": judge_output[:500],
+                },
+                log_ctx=log_ctx,
+            )
+
+            return result
         except Exception as exc:
             logger.error(f"Failed to judge summaries: {exc}")
             return {

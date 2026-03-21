@@ -28,7 +28,7 @@ from auth import require_ai_access, require_local_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
 from ai_session_events import append_ai_session_event, new_request_id
-from gmail_agent import GmailAgent
+from gmail_agent import GmailAgent, LogContext
 from calendar_agent import CalendarAgent
 from local_qa_orchestrator import local_qa_orchestrator
 
@@ -414,21 +414,28 @@ async def generate_gmail_questions(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    log_ctx = LogContext(
+        username=username,
+        request_id=rid,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+    )
+
     questions = await gmail_agent.generate_followup_questions(
         emails=request.emails,
         interest=request.interest,
         previous_answers=request.previous_answers,
         question_count=request.question_count,
+        log_ctx=log_ctx,
     )
 
     resp = GmailQuestionsResponse(questions=questions)
-    rid = http_request.headers.get("x-request-id") or new_request_id()
     await append_ai_session_event(
         kind="gmail_questions",
         username=username,
         source="ai_service",
         backend="crewai",
-        correlation_id=http_request.headers.get("x-correlation-id"),
+        correlation_id=log_ctx.correlation_id,
         request_id=rid,
         payload={
             "route": "/ai/gmail/questions",
@@ -461,10 +468,18 @@ async def generate_gmail_summary(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    log_ctx = LogContext(
+        username=username,
+        request_id=rid,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+    )
+
     summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
         interest=request.interest,
         answers=request.answers,
+        log_ctx=log_ctx,
     )
 
     result = await gmail_agent.judge_and_rank(
@@ -473,9 +488,9 @@ async def generate_gmail_summary(
         summary_b=summaries.get("summary_b", ""),
         interest=request.interest,
         answers=request.answers,
+        log_ctx=log_ctx,
     )
 
-    # Defensive check: ensure result is a dict
     if not isinstance(result, dict):
         result = {
             "final_summary": summaries.get("summary_a", "")
@@ -490,13 +505,12 @@ async def generate_gmail_summary(
         top_email_ids=result.get("top_email_ids", []),
         reasoning=result.get("reasoning", ""),
     )
-    rid = http_request.headers.get("x-request-id") or new_request_id()
     await append_ai_session_event(
         kind="gmail_summary",
         username=username,
         source="ai_service",
         backend="crewai",
-        correlation_id=http_request.headers.get("x-correlation-id"),
+        correlation_id=log_ctx.correlation_id,
         request_id=rid,
         payload={
             "route": "/ai/gmail/summary",

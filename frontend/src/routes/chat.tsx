@@ -37,6 +37,7 @@ import {
   ChevronDown,
   Mail,
   ArrowUp,
+  Clock,
 } from 'lucide-react'
 import { AIChannel } from '../components/AIChannel'
 import { DataProcessorChannel } from '../components/DataProcessorChannel'
@@ -46,6 +47,7 @@ import { UserProfileModal } from '../components/UserProfileModal'
 import { UserContextMenu } from '../components/UserContextMenu'
 import { ChannelsSidebar } from '../components/ChannelsSidebar'
 import { ImagePopup } from '../components/ImagePopup'
+import { InferenceTimeline } from '../components/InferenceTimeline'
 
 export const Route = createFileRoute('/chat')({
   ssr: true, // Full SSR - render components on server
@@ -311,6 +313,7 @@ function ChatPage() {
   const [profileUser, setProfileUser] = useState<User | null>(null)
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState(false)
   const [selectedImageMessage, setSelectedImageMessage] = useState<Message | null>(null)
+  const [showInferenceTimeline, setShowInferenceTimeline] = useState(false)
 
   const setActiveChannel = useCallback(
     (channelId: number) => {
@@ -1328,6 +1331,20 @@ function ChatPage() {
                       Local Q&A
                     </button>
                   )}
+                  {activeMode === 'ai' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowInferenceTimeline(!showInferenceTimeline)}
+                      className={`p-2 rounded-lg transition-colors min-h-[44px] ${
+                        showInferenceTimeline
+                          ? 'bg-purple-100 text-purple-700'
+                          : 'chat-attach-button hover:bg-stone-100'
+                      }`}
+                      title="View Inference Timeline"
+                    >
+                      <Clock size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1339,27 +1356,34 @@ function ChatPage() {
                 channelName={selectedChannel?.name || '#data-processor'}
               />
             ) : activeMode === 'ai' ? (
-              <AIChannel
-                channelId={selectedChannelId}
-                channelName={selectedChannel?.name || '#ai'}
-                showHeader={false}
-                onCommand={(command) => {
-                  if (command === 'chat') {
-                    setChannelMode('chat')
-                    setPendingAiIntent(null)
-                  }
-                  if (command === 'ai') {
-                    setChannelMode('ai')
-                    setPendingAiIntent(null)
-                  }
-                  if (command === 'localqa') {
-                    setChannelMode('localqa')
-                    setPendingAiIntent(null)
-                  }
-                }}
-                requestedIntent={pendingAiIntent}
-                onIntentHandled={() => setPendingAiIntent(null)}
-              />
+              <div className="flex-1 flex flex-col relative min-h-0">
+                <AIChannel
+                  channelId={selectedChannelId}
+                  channelName={selectedChannel?.name || '#ai'}
+                  showHeader={false}
+                  onCommand={(command) => {
+                    if (command === 'chat') {
+                      setChannelMode('chat')
+                      setPendingAiIntent(null)
+                    }
+                    if (command === 'ai') {
+                      setChannelMode('ai')
+                      setPendingAiIntent(null)
+                    }
+                    if (command === 'localqa') {
+                      setChannelMode('localqa')
+                      setPendingAiIntent(null)
+                    }
+                  }}
+                  requestedIntent={pendingAiIntent}
+                  onIntentHandled={() => setPendingAiIntent(null)}
+                />
+                {showInferenceTimeline && (
+                  <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-sm">
+                    <InferenceTimeline onClose={() => setShowInferenceTimeline(false)} />
+                  </div>
+                )}
+              </div>
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel
                 channelId={selectedChannelId}

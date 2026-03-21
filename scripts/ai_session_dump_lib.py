@@ -56,10 +56,23 @@ def normalize_caddy_entry(event_id: str, fields: Mapping[str, str]) -> dict[str,
 
 
 _VALID_SOURCES = frozenset({"caddy", "ai_service", "ai_service_adk"})
-_VALID_KINDS = frozenset(
-    {"http_warn_error", "gmail_summary", "gmail_questions", "generic_ai"}
-)
-_VALID_BACKENDS = frozenset({"crewai", "google_adk", "n/a"})
+_VALID_KINDS = frozenset({
+    "http_warn_error",
+    "gmail_summary",
+    "gmail_questions",
+    "generic_ai",
+    "gmail_step_questions",
+    "gmail_step_summary_action",
+    "gmail_step_summary_insight",
+    "gmail_step_classification",
+    "gmail_step_judge",
+    "local_qa_greeting",
+    "local_qa_rejected",
+    "local_qa_answer",
+    "calendar_question",
+    "calendar_create",
+})
+_VALID_BACKENDS = frozenset({"crewai", "google_adk", "n/a", "local_vllm"})
 
 
 def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, Any] | None:

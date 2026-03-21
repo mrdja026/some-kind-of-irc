@@ -33,6 +33,8 @@ or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 
 After the coding agent does it job check the changes with the git diff short and do a static linting provivded by pixi.toml python pixi run python-lint 
 
+**YOU MUST** Ask for review of git diff if prompted do a self review, and document the tradeofs in openspec/**/tech_debt.md 
+
 **MUST** Every coding task must be completed with @deploy_local.sh --build working
 
 

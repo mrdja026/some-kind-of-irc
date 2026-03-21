@@ -56,6 +56,8 @@ services:
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL-}"
       VITE_PUBLIC_API_URL: "${VITE_PUBLIC_API_URL-}"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      REDIS_LOG_URL: "${REDIS_LOG_URL:-redis://redis-log:6379/0}"
+      AI_SESSION_STREAM_KEY: "${AI_SESSION_STREAM_KEY:-ai:session_events}"
       DATA_PROCESSOR_URL: "${DATA_PROCESSOR_URL:-http://data-processor:8003}"
       FEATURE_DATA_PROCESSOR: "${FEATURE_DATA_PROCESSOR:-true}"
       FEATURE_LOCAL_QA: "${FEATURE_LOCAL_QA:-true}"
@@ -78,6 +80,7 @@ services:
     depends_on:
       - postgres
       - redis
+      - redis-log
       - audit-logger
 
   ai-service:

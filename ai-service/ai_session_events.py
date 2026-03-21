@@ -68,3 +68,56 @@ async def append_ai_session_event(
 
 def new_request_id() -> str:
     return uuid.uuid4().hex
+
+
+GMAIL_STEP_KINDS = frozenset({
+    "gmail_step_questions",
+    "gmail_step_summary_action",
+    "gmail_step_summary_insight",
+    "gmail_step_classification",
+    "gmail_step_judge",
+})
+
+
+async def append_gmail_step_event(
+    *,
+    stage: str,
+    username: str,
+    input_preview: str,
+    output: dict[str, Any],
+    model: str,
+    request_id: str,
+    correlation_id: Optional[str] = None,
+) -> None:
+    """Emit a granular Gmail inference step event for timeline visualization.
+
+    Args:
+        stage: Step name (questions, summary_action, summary_insight, classification, judge)
+        username: User who triggered the request
+        input_preview: Truncated input context (max 500 chars)
+        output: Structured result from this step
+        model: LLM model name used
+        request_id: Unique request identifier
+        correlation_id: Optional correlation ID for request tracing
+    """
+    kind = f"gmail_step_{stage}"
+    if kind not in GMAIL_STEP_KINDS:
+        LOG.warning("Unknown gmail step stage: %s", stage)
+        return
+
+    payload = {
+        "stage": stage,
+        "input_preview": input_preview[:500] if input_preview else "",
+        "output": output,
+        "model": model,
+    }
+
+    await append_ai_session_event(
+        kind=kind,
+        username=username,
+        payload=payload,
+        source="ai_service",
+        backend="crewai",
+        correlation_id=correlation_id,
+        request_id=request_id,
+    )

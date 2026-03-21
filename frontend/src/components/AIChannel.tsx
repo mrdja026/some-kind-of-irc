@@ -13,7 +13,8 @@ import {
 } from '../api'
 import type { CalendarEventPayload } from '../types'
 import { useAIBackend } from '../context/AIBackendContext'
-import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox } from 'lucide-react'
+import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock } from 'lucide-react'
+import { InferenceTimeline } from './InferenceTimeline'
 
 interface AIChannelProps {
   channelId: number
@@ -86,6 +87,7 @@ export function AIChannel({
   const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
+  const [showTimeline, setShowTimeline] = useState(false)
   
   // Use global AI backend context
   const { backend, needsSelection, setBackend } = useAIBackend()
@@ -542,12 +544,25 @@ export function AIChannel({
                 </span>
               )}
             </div>
-            {aiStatus && (
-              <div className="text-xs chat-meta flex-shrink-0">
-                {aiStatus.remaining_requests}/{aiStatus.max_requests_per_hour}{' '}
-                requests left
-              </div>
-            )}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {aiStatus && (
+                <div className="text-xs chat-meta">
+                  {aiStatus.remaining_requests}/{aiStatus.max_requests_per_hour}{' '}
+                  requests left
+                </div>
+              )}
+              <button
+                onClick={() => setShowTimeline(!showTimeline)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showTimeline
+                    ? 'bg-purple-100 text-purple-700'
+                    : 'hover:bg-gray-100 text-gray-500'
+                }`}
+                title="View Inference Timeline"
+              >
+                <Clock size={18} />
+              </button>
+            </div>
           </div>
           {(healthMessage || aiAccessMessage) && (
             <div className="mt-2 text-xs text-red-700">
@@ -881,6 +896,13 @@ export function AIChannel({
 
       {/* Invisible ref for padding calculation when cards are shown */}
       {showOptionCards && <div ref={inputBarRef} />}
+
+      {/* Inference Timeline Panel */}
+      {showTimeline && (
+        <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-sm">
+          <InferenceTimeline onClose={() => setShowTimeline(false)} />
+        </div>
+      )}
     </div>
   )
 }

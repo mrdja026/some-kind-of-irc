@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Redis Configuration (for pub/sub events)
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Redis Log Configuration (for AI session events)
+    REDIS_LOG_URL: str = "redis://localhost:6379/0"
+    AI_SESSION_STREAM_KEY: str = "ai:session_events"
+
     # Admin Allowlist Configuration (semicolon-separated usernames)
     # Example: ADMIN_ALLOWLIST=alice;bob;charlie
     ADMIN_ALLOWLIST: str = ""

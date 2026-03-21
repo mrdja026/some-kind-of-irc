@@ -10,6 +10,7 @@ from src.api.endpoints.auth import router as auth_router
 from src.api.endpoints.channels import router as channels_router
 from src.api.endpoints.media import router as media_router
 from src.api.endpoints.data_processor import router as data_processor_router
+from src.api.endpoints.inference_logs import router as inference_logs_router
 from src.services.websocket_manager import manager
 from src.services.irc_logger import log_privmsg
 from src.services.event_subscriber import start_event_subscriber, stop_event_subscriber
@@ -176,6 +177,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(channels_router)
 app.include_router(media_router)
 app.include_router(data_processor_router)
+app.include_router(inference_logs_router, prefix="/api")
 
 
 # Temporary root endpoint (backend should not serve frontend)
