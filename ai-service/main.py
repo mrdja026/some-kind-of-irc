@@ -116,8 +116,6 @@ class LocalAIQueryResponse(BaseModel):
     rejected: bool = False
 
 
-
-
 app = FastAPI(title="AI Service", version="1.0.0")
 
 app.add_middleware(
@@ -403,6 +401,16 @@ async def generate_gmail_summary(
         interest=request.interest,
         answers=request.answers,
     )
+
+    # Defensive check: ensure result is a dict
+    if not isinstance(result, dict):
+        result = {
+            "final_summary": summaries.get("summary_a", "")
+            + "\n\n"
+            + summaries.get("summary_b", ""),
+            "top_email_ids": [],
+            "reasoning": "Fallback due to unexpected response format.",
+        }
 
     return GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),

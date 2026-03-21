@@ -17,7 +17,7 @@ from typing import List, Optional
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 MODEL_ID = os.getenv("VLLM_MODEL_ID", "katanemo/Arch-Function-3B")
 SERVED_MODEL_NAME = os.getenv("VLLM_SERVED_MODEL_NAME", MODEL_ID)

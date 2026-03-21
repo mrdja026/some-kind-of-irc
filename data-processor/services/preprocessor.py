@@ -8,11 +8,9 @@ to improve OCR accuracy on scanned documents.
 import logging
 from dataclasses import dataclass
 from typing import Tuple, Optional, List
-import io
 
 import cv2
 import numpy as np
-from PIL import Image
 from django.conf import settings
 
 logger = logging.getLogger(__name__)

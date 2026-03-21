@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 from src.main import app
-from src.core.database import Base, get_db
+from src.core.database import Base
 from src.core.database import engine
 
 # Create all tables

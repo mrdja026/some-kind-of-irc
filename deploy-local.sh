@@ -107,8 +107,10 @@ if [ -f "$ROOT_DIR/.env.local" ]; then
   source "$ROOT_DIR/.env.local"
   set +a
 fi
+# Restore command-line ANTHROPIC_API_KEY (takes precedence over .env.local)
 if [ -n "$ORIGINAL_ANTHROPIC_API_KEY" ]; then
   export ANTHROPIC_API_KEY="$ORIGINAL_ANTHROPIC_API_KEY"
+  echo "Using ANTHROPIC_API_KEY from command line (${#ORIGINAL_ANTHROPIC_API_KEY} chars)"
 fi
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-some-kind-of-irc}"
@@ -169,6 +171,7 @@ if [ "$BUILD_IMAGES" -eq 1 ]; then
   "${COMPOSE_CMD[@]}" build \
     backend \
     ai-service \
+    ai-service-adk \
     audit-logger \
     frontend \
     media-storage \
@@ -203,7 +206,7 @@ echo "Running data-processor Django migrations..."
 "${COMPOSE_CMD[@]}" run --rm data-processor python manage.py migrate --noinput
 
 echo "Starting application services..."
-"${COMPOSE_CMD[@]}" up -d backend ai-service audit-logger media-storage data-processor frontend caddy
+"${COMPOSE_CMD[@]}" up -d backend ai-service ai-service-adk audit-logger media-storage data-processor frontend caddy
 
 echo "Waiting for backend to become healthy..."
 if ensure_backend_running; then
@@ -214,6 +217,15 @@ echo "Waiting for ai-service to become healthy..."
 for _ in {1..30}; do
   if curl -fsS http://localhost:8001/healthz >/dev/null 2>&1; then
     echo "AI service is up."
+    break
+  fi
+  sleep 2
+done
+
+echo "Waiting for ai-service-adk to become healthy..."
+for _ in {1..30}; do
+  if curl -fsS http://localhost:8004/healthz >/dev/null 2>&1; then
+    echo "AI service (ADK) is up."
     break
   fi
   sleep 2
@@ -336,7 +348,8 @@ Deploy summary
 - Frontend (direct):   http://localhost:4269
 - Frontend (caddy):    http://localhost:8080
 - Backend API:         http://localhost:8002
-- AI Service:          http://localhost:8080/ai/
+- AI Service (CrewAI): http://localhost:8080/ai/
+- AI Service (ADK):    http://localhost:8080/adk/
 - Anthropic API key:   ANTHROPIC_API_KEY (required for Gmail summaries)
 - Q&A local channel:   #qa-local (shown as Q&A local)
 - Local vLLM endpoint: http://host.docker.internal:8066/v1

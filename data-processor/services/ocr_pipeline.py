@@ -12,7 +12,6 @@ Provides text extraction from preprocessed images with:
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
-import re
 
 import cv2
 import numpy as np
@@ -24,9 +23,8 @@ from .preprocessor import (
     PreprocessingConfig,
     preprocess_image,
     load_image_from_bytes,
-    convert_to_grayscale,
 )
-from storage.in_memory import BoundingBox, Annotation, LabelType
+from storage.in_memory import BoundingBox, Annotation
 
 logger = logging.getLogger(__name__)
 
@@ -573,7 +571,6 @@ def process_document(
     Returns:
         Tuple of (OcrResult, metadata_dict)
     """
-    from .preprocessor import PreprocessingConfig
     
     # Preprocess
     preprocess_config = PreprocessingConfig.from_dict(preprocessing_options or {})

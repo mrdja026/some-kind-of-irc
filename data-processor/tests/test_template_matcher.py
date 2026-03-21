@@ -7,7 +7,6 @@ bounding box transformation, and validation.
 
 import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
 
 # Import test subjects - these will fail gracefully if OpenCV not available
 try:
@@ -31,7 +30,6 @@ from services.template_matcher import (
     transform_point,
     validate_transformed_box,
     calculate_match_confidence,
-    match_template_to_document,
     TemplateMatcher,
 )
 from storage.in_memory import Template, TemplateLabel, BoundingBox, LabelType

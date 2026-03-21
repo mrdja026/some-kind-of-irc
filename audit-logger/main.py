@@ -1,8 +1,6 @@
 """Throwaway audit logger microservice for TD-5 testing."""
-import asyncio
 import logging
 import sqlite3
-from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 

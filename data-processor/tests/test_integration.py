@@ -4,20 +4,16 @@ Integration tests for data-processor API endpoints.
 Tests document upload, processing, annotation, template application, and export workflows.
 """
 
-import pytest
-import json
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
-from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 from rest_framework import status
 
 # Import test subjects
-from storage.in_memory import store, Document, Annotation, Template, OcrStatus, LabelType, BoundingBox
-from api.serializers import DocumentSerializer, AnnotationSerializer, TemplateSerializer
+from storage.in_memory import store, Document, Annotation, Template, LabelType, BoundingBox
 from middleware.jwt_auth import TESTING_HEADER_KEY, TESTING_HEADER_VALUE
 
 # Mock OCR services for testing

@@ -4,16 +4,13 @@ End-to-end tests for annotation workflows.
 Tests complete document processing pipelines from upload to export.
 """
 
-import pytest
 from io import BytesIO
 from unittest.mock import patch, MagicMock
-from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
 
 # Import test subjects
-from storage.in_memory import store, Document, Annotation, Template, OcrStatus, LabelType, BoundingBox
 
 # Mock OCR services for testing
 try:

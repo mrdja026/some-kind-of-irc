@@ -30,8 +30,14 @@ scikit-image = "*"
 pillow = "*"
 httpx = "*"
 python-dotenv = "*"
+ruff = "*"
 
 [tasks]
+# Python linting - shows only errors, exit code 0 to not break builds
+python-lint = { cmd = "ruff check . --output-format=concise || true" }
+# Auto-fix fixable Python lint errors
+fix-fixable-python = { cmd = "ruff check . --fix --output-format=concise || true" }
+
 # Create virtual environment
 create-venv = { cmd = "python -m venv backend/be" }
 

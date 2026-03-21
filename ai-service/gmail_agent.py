@@ -1,5 +1,4 @@
 import json
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -299,7 +298,21 @@ class GmailAgent:
                 judge_prompt,
                 "JSON object with final_summary, top_email_ids, reasoning.",
             )
-            return self._clean_and_parse_json(judge_output)
+            parsed = self._clean_and_parse_json(judge_output)
+            # Ensure we always return a valid dict with required keys
+            if not isinstance(parsed, dict):
+                return {
+                    "final_summary": f"{summary_a}\n\n{summary_b}",
+                    "top_email_ids": [],
+                    "reasoning": "Fallback: LLM returned unexpected format.",
+                }
+            return {
+                "final_summary": parsed.get(
+                    "final_summary", f"{summary_a}\n\n{summary_b}"
+                ),
+                "top_email_ids": parsed.get("top_email_ids", []),
+                "reasoning": parsed.get("reasoning", ""),
+            }
         except Exception as exc:
             logger.error(f"Failed to judge summaries: {exc}")
             return {
