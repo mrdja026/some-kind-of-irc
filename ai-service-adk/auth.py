@@ -33,9 +33,7 @@ def get_ai_allowlist() -> Set[str]:
         raw = "admina;guest2;guest3"
 
     allowlist = {
-        username.strip().lower()
-        for username in raw.split(";")
-        if username.strip()
+        username.strip().lower() for username in raw.split(";") if username.strip()
     }
     logger.info("AI allowlist loaded: %s users", len(allowlist))
     return allowlist
@@ -49,9 +47,7 @@ def get_admin_allowlist() -> Set[str]:
         raw = "admina"
 
     allowlist = {
-        username.strip().lower()
-        for username in raw.split(";")
-        if username.strip()
+        username.strip().lower() for username in raw.split(";") if username.strip()
     }
     logger.info("Admin allowlist loaded: %s users", len(allowlist))
     return allowlist
@@ -82,13 +78,15 @@ def get_username_from_token(request: Request) -> str:
         token = token[7:]
 
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         username: Optional[str] = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=404, detail="Not Found")
         return username
-    except JWTError:
-        raise HTTPException(status_code=404, detail="Not Found")
+    except JWTError as exc:
+        raise HTTPException(status_code=404, detail="Not Found") from exc
 
 
 async def require_ai_access(request: Request) -> str:

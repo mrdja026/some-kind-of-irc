@@ -7,6 +7,7 @@ Fails open if Redis is unavailable to avoid hard outages.
 
 import time
 from typing import Optional, Tuple
+from uuid import uuid4
 
 import redis.asyncio as redis
 from fastapi import HTTPException
@@ -29,7 +30,9 @@ def _get_redis() -> redis.Redis:
     return _redis_client
 
 
-async def check_rate_limit(user_id: str, max_requests: int, window_seconds: int) -> Tuple[bool, int]:
+async def check_rate_limit(
+    user_id: str, max_requests: int, window_seconds: int
+) -> Tuple[bool, int]:
     """Sliding-window rate limit using a Redis sorted set per user.
 
     Returns (allowed, retry_after_seconds).
@@ -49,7 +52,7 @@ async def check_rate_limit(user_id: str, max_requests: int, window_seconds: int)
             retry_after = max(1, window_seconds - (now - oldest_ts))
             return False, retry_after
 
-        await redis_client.zadd(key, {str(now): now})
+        await redis_client.zadd(key, {f"{now}-{uuid4()}": now})
         await redis_client.expire(key, window_seconds)
         return True, 0
     except Exception:
@@ -57,7 +60,9 @@ async def check_rate_limit(user_id: str, max_requests: int, window_seconds: int)
         return True, 0
 
 
-async def remaining_requests(user_id: str, max_requests: int, window_seconds: int) -> int:
+async def remaining_requests(
+    user_id: str, max_requests: int, window_seconds: int
+) -> int:
     """Return remaining requests in the current window (best effort)."""
     redis_client = _get_redis()
     now = int(time.time())

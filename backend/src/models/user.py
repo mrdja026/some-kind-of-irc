@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 from src.core.database import Base
 
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -11,6 +12,9 @@ class User(Base):
     hash_type = Column(String, nullable=True)  # 'bcrypt' for new users, NULL for legacy
     status = Column(String, default="online")
     profile_picture_url = Column(String, nullable=True)
+    adk_provider_test_bucket = Column(
+        String, nullable=True
+    )  # 'crewai', 'googleAdk', or NULL
     display_name_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
