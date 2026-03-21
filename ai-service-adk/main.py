@@ -136,6 +136,7 @@ async def get_ai_status(username: str = Depends(require_ai_access)):
 @app.post("/ai/calendar/questions", response_model=CalendarQuestionResponse)
 async def generate_calendar_question(
     request: CalendarQuestionRequest,
+    http_request: Request,
     username: str = Depends(require_ai_access),
 ):
     """Generate calendar clarification or confirmation question."""
@@ -157,11 +158,26 @@ async def generate_calendar_question(
         "timezone": "UTC",
         "attendees": [],
     }
-    return CalendarQuestionResponse(
+    resp = CalendarQuestionResponse(
         status=status,
         question=result.get("question", ""),
         event=event_payload,
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_question",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/questions",
+            "request": {
+                "previous_answers": request.previous_answers,
+            },
+            "response": {"status": resp.status},
+        },
+    )
+    return resp
 
 
 @app.post("/ai/calendar/create", response_model=CalendarCreateResponse)
@@ -185,11 +201,31 @@ async def create_calendar_event_endpoint(
         event=request.event.model_dump(),
         auth_token=auth_token,
     )
-    return CalendarCreateResponse(
+    resp = CalendarCreateResponse(
         event_id=result.get("event_id"),
         html_link=result.get("html_link"),
         summary=result.get("summary"),
     )
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    await append_ai_session_event(
+        kind="calendar_create",
+        username=username,
+        correlation_id=http_request.headers.get("x-correlation-id"),
+        request_id=rid,
+        payload={
+            "route": "/ai/calendar/create",
+            "request": {
+                "event_title": request.event.title,
+                "start_datetime": request.event.start_datetime,
+                "timezone": request.event.timezone,
+            },
+            "response": {
+                "event_id": resp.event_id,
+                "html_link": resp.html_link,
+            },
+        },
+    )
+    return resp
 
 
 @app.post("/ai/gmail/questions", response_model=GmailQuestionsResponse)
