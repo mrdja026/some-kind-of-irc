@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import socketserver
+import threading
 from datetime import datetime, timezone
 
 import redis
@@ -157,13 +158,12 @@ def main() -> None:
 
     def handle_sig(signum: int, _frame: object) -> None:
         LOG.info("Received signal %s, shutting down TCP server", signum)
-        # Write dump from the handler: Docker/K8s may not reliably run try/finally
-        # after ThreadingMixIn + serve_forever shutdown in all cases.
-        try:
-            _write_merged_session_dump()
-        except Exception:
-            LOG.exception("Session dump from signal handler failed")
-        server.shutdown()
+        # Shutdown must run in a separate thread: calling server.shutdown() from
+        # the signal handler (which runs in the main thread blocked in
+        # serve_forever()) would deadlock because shutdown() waits for
+        # serve_forever() to exit. The dump is written in the finally block
+        # after all worker threads have drained.
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, handle_sig)
     signal.signal(signal.SIGINT, handle_sig)

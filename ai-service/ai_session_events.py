@@ -23,7 +23,13 @@ def _client() -> Optional[redis_async.Redis]:
     if not url:
         return None
     if _ai_log is None:
-        _ai_log = redis_async.from_url(url, encoding="utf-8", decode_responses=True)
+        _ai_log = redis_async.from_url(
+            url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
     return _ai_log
 
 

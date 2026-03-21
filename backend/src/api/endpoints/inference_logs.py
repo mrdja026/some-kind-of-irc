@@ -78,49 +78,68 @@ async def get_inference_logs(
         client = _get_redis_log()
         stream_key = settings.AI_SESSION_STREAM_KEY
 
-        rows = client.xrevrange(stream_key, count=limit * 3)
-
         events: list[InferenceLogEvent] = []
-        for msg_id, fields in rows:
-            kind = fields.get("kind", "")
-            if kind not in GMAIL_EVENT_KINDS:
-                continue
+        last_id = "+"
+        batch_size = min(limit * 3, 500)
 
-            payload_raw = fields.get("payload", "{}")
-            try:
-                payload = json.loads(payload_raw)
-            except json.JSONDecodeError:
-                payload = {"raw": payload_raw}
-
-            event = InferenceLogEvent(
-                event_id=msg_id,
-                recorded_at=fields.get("recorded_at", ""),
-                source=fields.get("source", ""),
-                kind=kind,
-                backend=fields.get("backend", ""),
-                username=fields.get("username") or None,
-                request_id=fields.get("request_id") or None,
-                correlation_id=fields.get("correlation_id") or None,
-                payload=payload if isinstance(payload, dict) else {"value": payload},
-            )
-            events.append(event)
-
-            if len(events) >= limit:
+        while len(events) < limit:
+            rows = client.xrevrange(stream_key, max=last_id, count=batch_size)
+            if not rows:
                 break
+
+            for msg_id, fields in rows:
+                kind = fields.get("kind", "")
+                if kind not in GMAIL_EVENT_KINDS:
+                    continue
+
+                # Scope results to the requesting user
+                row_username = fields.get("username") or ""
+                if row_username != current_user.username:
+                    continue
+
+                payload_raw = fields.get("payload", "{}")
+                try:
+                    payload = json.loads(payload_raw)
+                except json.JSONDecodeError:
+                    payload = {"raw": payload_raw}
+
+                event = InferenceLogEvent(
+                    event_id=msg_id,
+                    recorded_at=fields.get("recorded_at", ""),
+                    source=fields.get("source", ""),
+                    kind=kind,
+                    backend=fields.get("backend", ""),
+                    username=row_username or None,
+                    request_id=fields.get("request_id") or None,
+                    correlation_id=fields.get("correlation_id") or None,
+                    payload=payload if isinstance(payload, dict) else {"value": payload},
+                )
+                events.append(event)
+
+                if len(events) >= limit:
+                    break
+
+            if len(rows) < batch_size:
+                # Stream exhausted
+                break
+            # Advance cursor past the last entry seen
+            last_id = "(" + rows[-1][0]
 
         events.reverse()
 
         return InferenceLogsResponse(events=events, total=len(events))
 
+    except HTTPException:
+        raise
     except redis.RedisError as exc:
         logger.error("Redis error reading inference logs: %s", exc)
         raise HTTPException(
             status_code=503,
             detail="Failed to read inference logs from Redis",
-        )
+        ) from exc
     except Exception as exc:
         logger.exception("Unexpected error reading inference logs: %s", exc)
         raise HTTPException(
             status_code=500,
             detail="Internal server error",
-        )
+        ) from exc

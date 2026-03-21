@@ -205,7 +205,7 @@ def build_session_dump_document(
     )
     sources = _collect_sources(merged)
     if not sources:
-        sources = ["caddy"]
+        sources = []
 
     doc: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

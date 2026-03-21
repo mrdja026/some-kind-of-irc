@@ -1,0 +1,13 @@
+# Secrets and infrastructure credentials
+infra_resource/
+
+# Generated AI session dump files
+*-data-session.json
+frontend/public/datasets/*.json
+
+# Development artifacts
+.git
+**/.env
+**/__pycache__
+**/*.pyc
+node_modules
