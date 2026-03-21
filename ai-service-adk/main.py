@@ -12,11 +12,11 @@ Endpoints:
 """
 
 import logging
-from typing import Literal, Optional, List, Dict, Any
+from typing import Annotated, Literal, Optional, List, Dict, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from auth import require_ai_access
 from config import settings
@@ -70,14 +70,17 @@ class CalendarCreateResponse(BaseModel):
 
 
 # Gmail Pydantic Models (matching ai-service/main.py)
+MAX_GMAIL_EMAILS = 100
+
+
 class GmailSummaryRequest(BaseModel):
-    emails: List[Dict[str, Any]]
+    emails: Annotated[List[Dict[str, Any]], Field(max_length=MAX_GMAIL_EMAILS)]
     interest: str
     answers: List[str] = []
 
 
 class GmailQuestionsRequest(BaseModel):
-    emails: List[Dict[str, Any]]
+    emails: Annotated[List[Dict[str, Any]], Field(max_length=MAX_GMAIL_EMAILS)]
     interest: str = ""
     previous_answers: List[str] = []
     question_count: int = 2

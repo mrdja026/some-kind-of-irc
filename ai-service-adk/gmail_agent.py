@@ -219,7 +219,9 @@ Follow the user's instructions precisely and return ONLY the requested JSON form
         prompt = (
             "You are helping a user filter their Gmail inbox based on the emails below.\n"
             f"User interest (if provided): {interest}\n"
-            f"Previous answers: {json.dumps(previous_answers)}\n\n"
+            f"Previous answers: {json.dumps(previous_answers)}\n"
+            "Assume the knowledge the user wants is already contained in these emails.\n"
+            "Ask only about preferences, priorities, or what to focus on; do not ask them to restate email content.\n\n"
             f"Emails (raw HTML allowed):\n{email_context}\n\n"
             f"Generate exactly {question_count} short, distinct question(s) to clarify what matters most.\n"
             "Return ONLY a JSON array of strings."
