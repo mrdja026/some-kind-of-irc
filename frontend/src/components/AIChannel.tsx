@@ -23,6 +23,8 @@ interface AIChannelProps {
   onCommand?: (command: string) => void
   requestedIntent?: 'gmail' | null
   onIntentHandled?: () => void
+  showTimeline?: boolean
+  onToggleTimeline?: () => void
 }
 
 type ConversationEntry = {
@@ -57,6 +59,8 @@ export function AIChannel({
   onCommand,
   requestedIntent,
   onIntentHandled,
+  showTimeline = false,
+  onToggleTimeline,
 }: AIChannelProps) {
   const [query, setQuery] = useState('')
   const [responses, setResponses] = useState<ConversationEntry[]>([])
@@ -87,8 +91,7 @@ export function AIChannel({
   const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
-  const [showTimeline, setShowTimeline] = useState(false)
-  
+
   // Use global AI backend context
   const { backend, needsSelection, setBackend } = useAIBackend()
   
@@ -552,7 +555,7 @@ export function AIChannel({
                 </div>
               )}
               <button
-                onClick={() => setShowTimeline(!showTimeline)}
+                onClick={() => onToggleTimeline?.()}
                 className={`p-2 rounded-lg transition-colors ${
                   showTimeline
                     ? 'bg-purple-100 text-purple-700'
@@ -900,7 +903,7 @@ export function AIChannel({
       {/* Inference Timeline Panel */}
       {showTimeline && (
         <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-sm">
-          <InferenceTimeline onClose={() => setShowTimeline(false)} />
+          <InferenceTimeline onClose={() => onToggleTimeline?.()} />
         </div>
       )}
     </div>

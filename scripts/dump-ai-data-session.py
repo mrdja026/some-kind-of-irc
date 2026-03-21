@@ -39,6 +39,14 @@ def main() -> int:
     caddy_key = os.getenv("REDIS_LOG_STREAM_KEY", DEFAULT_CADDY_STREAM_KEY).strip()
     ai_key = os.getenv("AI_SESSION_STREAM_KEY", DEFAULT_AI_STREAM_KEY).strip()
     session_id = os.getenv("SESSION_ID", "").strip() or None
+    stdout = os.getenv("DUMP_TO_STDOUT", "").lower() in ("1", "true", "yes")
+    dump_dir = os.getenv("SESSION_DUMP_DIR", "").strip()
+    if not stdout and not dump_dir:
+        print(
+            "Set SESSION_DUMP_DIR to write a file, or DUMP_TO_STDOUT=1 for stdout",
+            file=sys.stderr,
+        )
+        return 1
 
     client = redis.from_url(url, decode_responses=False)
     try:
@@ -51,19 +59,10 @@ def main() -> int:
     finally:
         client.close()
 
-    stdout = os.getenv("DUMP_TO_STDOUT", "").lower() in ("1", "true", "yes")
     if stdout:
         json.dump(doc, sys.stdout, indent=2, ensure_ascii=False)
         sys.stdout.write("\n")
         return 0
-
-    dump_dir = os.getenv("SESSION_DUMP_DIR", "").strip()
-    if not dump_dir:
-        print(
-            "Set SESSION_DUMP_DIR to write a file, or DUMP_TO_STDOUT=1 for stdout",
-            file=sys.stderr,
-        )
-        return 1
 
     path = write_session_dump_json(doc, dump_dir)
     print(path)

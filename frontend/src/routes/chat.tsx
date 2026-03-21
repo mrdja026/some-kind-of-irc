@@ -47,7 +47,7 @@ import { UserProfileModal } from '../components/UserProfileModal'
 import { UserContextMenu } from '../components/UserContextMenu'
 import { ChannelsSidebar } from '../components/ChannelsSidebar'
 import { ImagePopup } from '../components/ImagePopup'
-import { InferenceTimeline } from '../components/InferenceTimeline'
+
 
 export const Route = createFileRoute('/chat')({
   ssr: true, // Full SSR - render components on server
@@ -1377,12 +1377,9 @@ function ChatPage() {
                   }}
                   requestedIntent={pendingAiIntent}
                   onIntentHandled={() => setPendingAiIntent(null)}
+                  showTimeline={showInferenceTimeline}
+                  onToggleTimeline={() => setShowInferenceTimeline(!showInferenceTimeline)}
                 />
-                {showInferenceTimeline && (
-                  <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-sm">
-                    <InferenceTimeline onClose={() => setShowInferenceTimeline(false)} />
-                  </div>
-                )}
               </div>
             ) : activeMode === 'localqa' ? (
               <LocalQAChannel
