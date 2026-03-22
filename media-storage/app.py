@@ -65,12 +65,20 @@ def _encode_image(image: Image.Image, content_type: str) -> bytes:
 
 app = Flask(__name__)
 
-# CORS configuration - allow origins from environment or default to common local URLs
-allowed_origins = os.getenv(
+# CORS: scope to specific routes and methods; strip whitespace from env var origins
+_raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269",
-).split(",")
-CORS(app, origins=allowed_origins, supports_credentials=True)
+)
+allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+CORS(
+    app,
+    resources={
+        r"/upload": {"origins": allowed_origins, "methods": ["POST", "OPTIONS"]},
+        r"/health": {"origins": allowed_origins, "methods": ["GET", "OPTIONS"]},
+    },
+    supports_credentials=True,
+)
 
 max_upload_mb = int(os.getenv("MAX_UPLOAD_MB", "10"))
 app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024

@@ -37,13 +37,15 @@ spec:
             - name: MINIO_BUCKET
               value: "media"
             - name: MINIO_ACCESS_KEY
-              value: "minioadmin"
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: MINIO_ROOT_USER
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: irc-app-secret
                   key: MINIO_ROOT_PASSWORD
-                  optional: true
             - name: BACKEND_VERIFY_URL
               value: "http://monolith:8002/auth/me"
             - name: PUBLIC_BASE_URL
