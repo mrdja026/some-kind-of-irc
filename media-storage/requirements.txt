@@ -1,4 +1,5 @@
 flask
+flask-cors
 boto3
 requests
 Pillow>=10.0,<11.0

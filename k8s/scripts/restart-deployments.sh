@@ -27,16 +27,38 @@ echo "Building ai-service image..."
 docker build -t "ai-service:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/ai-service"
 docker tag "ai-service:${TIMESTAMP_TAG}" ai-service:latest
 
+echo "Building ai-service-adk image..."
+docker build -t "ai-service-adk:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/ai-service-adk"
+docker tag "ai-service-adk:${TIMESTAMP_TAG}" ai-service-adk:latest
+
+echo "Building audit-logger image..."
+docker build -t "audit-logger:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/audit-logger"
+docker tag "audit-logger:${TIMESTAMP_TAG}" audit-logger:latest
+
 echo "Building data-processor image..."
 docker build -t "data-processor:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/data-processor"
 docker tag "data-processor:${TIMESTAMP_TAG}" data-processor:latest
+
+echo "Building minio image..."
+docker build -t "minio:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/minio"
+docker tag "minio:${TIMESTAMP_TAG}" minio:latest
+
+echo "Building media-storage image..."
+docker build -t "media-storage:${TIMESTAMP_TAG}" "${PROJECT_ROOT}/media-storage"
+docker tag "media-storage:${TIMESTAMP_TAG}" media-storage:latest
 
 echo "Building frontend image (SSR)..."
 docker build -t "irc-frontend:${TIMESTAMP_TAG}" \
   --build-arg VITE_API_URL=http://monolith:8002 \
   --build-arg VITE_WS_URL=ws://monolith:8002 \
+  --build-arg VITE_AI_API_URL=http://ai-service:8001 \
+  --build-arg VITE_ADK_API_URL=http://ai-service-adk:8004 \
+  --build-arg VITE_DATA_PROCESSOR_URL=http://data-processor:8003 \
   --build-arg VITE_PUBLIC_API_URL=http://localhost \
   --build-arg VITE_PUBLIC_WS_URL=ws://localhost \
+  --build-arg VITE_PUBLIC_AI_API_URL=http://localhost \
+  --build-arg VITE_PUBLIC_ADK_API_URL=http://localhost \
+  --build-arg VITE_PUBLIC_DATA_PROCESSOR_URL=http://localhost \
   "${PROJECT_ROOT}/frontend"
 docker tag "irc-frontend:${TIMESTAMP_TAG}" irc-frontend:latest
 
@@ -49,8 +71,20 @@ docker save "irc-monolith:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
 echo "Importing ai-service:${TIMESTAMP_TAG}..."
 docker save "ai-service:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
 
+echo "Importing ai-service-adk:${TIMESTAMP_TAG}..."
+docker save "ai-service-adk:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
+
+echo "Importing audit-logger:${TIMESTAMP_TAG}..."
+docker save "audit-logger:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
+
 echo "Importing data-processor:${TIMESTAMP_TAG}..."
 docker save "data-processor:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
+
+echo "Importing minio:${TIMESTAMP_TAG}..."
+docker save "minio:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
+
+echo "Importing media-storage:${TIMESTAMP_TAG}..."
+docker save "media-storage:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
 
 echo "Importing irc-frontend:${TIMESTAMP_TAG}..."
 docker save "irc-frontend:${TIMESTAMP_TAG}" | sudo k3s ctr images import -
@@ -64,8 +98,20 @@ sed -i "s|image: irc-monolith:.*|image: irc-monolith:${TIMESTAMP_TAG}|g" "${MANI
 # Update ai-service manifest
 sed -i "s|image: ai-service:.*|image: ai-service:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/ai-service.yaml"
 
+# Update ai-service-adk manifest
+sed -i "s|image: ai-service-adk:.*|image: ai-service-adk:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/ai-service-adk.yaml"
+
+# Update audit-logger manifest
+sed -i "s|image: audit-logger:.*|image: audit-logger:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/audit-logger.yaml"
+
 # Update data-processor manifest
 sed -i "s|image: data-processor:.*|image: data-processor:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/data-processor.yaml"
+
+# Update minio manifest
+sed -i "s|image: minio:.*|image: minio:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/minio.yaml"
+
+# Update media-storage manifest
+sed -i "s|image: media-storage:.*|image: media-storage:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/media-storage.yaml"
 
 # Update frontend manifest
 sed -i "s|image: irc-frontend:.*|image: irc-frontend:${TIMESTAMP_TAG}|g" "${MANIFESTS_DIR}/frontend.yaml"
@@ -83,24 +129,36 @@ echo "=== Applying deployments ==="
 kubectl apply -f "${MANIFESTS_DIR}/configmap.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/secret.yaml"
 
-# Apply all deployments
-kubectl apply -f "${MANIFESTS_DIR}/monolith.yaml"
-kubectl apply -f "${MANIFESTS_DIR}/ai-service.yaml"
-kubectl apply -f "${MANIFESTS_DIR}/data-processor.yaml"
-kubectl apply -f "${MANIFESTS_DIR}/frontend.yaml"
+# Apply infrastructure services
 kubectl apply -f "${MANIFESTS_DIR}/redis.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/postgresql.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/minio.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/audit-logger.yaml"
+
+# Apply application services
+kubectl apply -f "${MANIFESTS_DIR}/monolith.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/ai-service.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/ai-service-adk.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/data-processor.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/media-storage.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/frontend.yaml"
 
 echo ""
 echo "=== Waiting for rollouts to complete ==="
 
-# Wait for all deployments
-kubectl rollout status deployment/monolith -n "$NAMESPACE" --timeout=300s
-kubectl rollout status deployment/ai-service -n "$NAMESPACE" --timeout=300s
-kubectl rollout status deployment/data-processor -n "$NAMESPACE" --timeout=300s
-kubectl rollout status deployment/frontend -n "$NAMESPACE" --timeout=300s
+# Wait for infrastructure deployments
 kubectl rollout status deployment/redis -n "$NAMESPACE" --timeout=300s
 kubectl rollout status deployment/postgresql -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/minio -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/audit-logger -n "$NAMESPACE" --timeout=300s
+
+# Wait for application deployments
+kubectl rollout status deployment/monolith -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/ai-service -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/ai-service-adk -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/data-processor -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/media-storage -n "$NAMESPACE" --timeout=300s
+kubectl rollout status deployment/frontend -n "$NAMESPACE" --timeout=300s
 
 echo ""
 echo "=== Verifying pod images ==="
@@ -114,8 +172,24 @@ echo "Checking ai-service pods..."
 kubectl get pods -n "$NAMESPACE" -l app=ai-service -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 
 echo ""
+echo "Checking ai-service-adk pods..."
+kubectl get pods -n "$NAMESPACE" -l app=ai-service-adk -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+
+echo ""
+echo "Checking audit-logger pods..."
+kubectl get pods -n "$NAMESPACE" -l app=audit-logger -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+
+echo ""
 echo "Checking data-processor pods..."
 kubectl get pods -n "$NAMESPACE" -l app=data-processor -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+
+echo ""
+echo "Checking minio pods..."
+kubectl get pods -n "$NAMESPACE" -l app=minio -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+
+echo ""
+echo "Checking media-storage pods..."
+kubectl get pods -n "$NAMESPACE" -l app=media-storage -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 
 echo ""
 echo "Checking frontend pods..."

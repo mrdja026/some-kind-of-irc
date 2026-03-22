@@ -1,0 +1,98 @@
+---
+# Backend Alembic Migration Job
+# Runs Alembic migrations for the FastAPI backend
+# This job should be deleted and recreated on each deployment:
+#   kubectl delete job -n irc-app backend-migrations --ignore-not-found
+#   kubectl apply -f k8s/manifests/migrations-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backend-migrations
+  namespace: irc-app
+  labels:
+    app: migrations
+    component: backend
+spec:
+  ttlSecondsAfterFinished: 300 # Clean up after 5 minutes
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: migrations
+        component: backend
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: alembic-migrate
+          image: irc-monolith:latest
+          imagePullPolicy: Never
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+            - secretRef:
+                name: irc-app-secret
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: DB_PASSWORD
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+---
+# Data Processor Django Migration Job
+# Runs Django migrations for the data-processor service
+# This job should be deleted and recreated on each deployment:
+#   kubectl delete job -n irc-app data-processor-migrations --ignore-not-found
+#   kubectl apply -f k8s/manifests/migrations-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-processor-migrations
+  namespace: irc-app
+  labels:
+    app: migrations
+    component: data-processor
+spec:
+  ttlSecondsAfterFinished: 300 # Clean up after 5 minutes
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: migrations
+        component: data-processor
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: django-migrate
+          image: data-processor:latest
+          imagePullPolicy: Never
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+            - secretRef:
+                name: irc-app-secret
+          env:
+            - name: ALLOWED_HOSTS
+              value: "*"
+            - name: DEBUG
+              value: "false"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: DB_PASSWORD
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

@@ -7,6 +7,7 @@ from typing import Optional
 import boto3
 import requests
 from flask import Flask, jsonify, redirect, request
+from flask_cors import CORS
 from botocore.exceptions import EndpointConnectionError, ClientError
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
@@ -63,6 +64,21 @@ def _encode_image(image: Image.Image, content_type: str) -> bytes:
 
 
 app = Flask(__name__)
+
+# CORS: scope to specific routes and methods; strip whitespace from env var origins
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269",
+)
+allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+CORS(
+    app,
+    resources={
+        r"/upload": {"origins": allowed_origins, "methods": ["POST", "OPTIONS"]},
+        r"/health": {"origins": allowed_origins, "methods": ["GET", "OPTIONS"]},
+    },
+    supports_credentials=True,
+)
 
 max_upload_mb = int(os.getenv("MAX_UPLOAD_MB", "10"))
 app.config["MAX_CONTENT_LENGTH"] = max_upload_mb * 1024 * 1024
@@ -135,7 +151,9 @@ def _ensure_bucket_exists():
     except ClientError:
         create_kwargs = {"Bucket": minio_bucket}
         if minio_region and minio_region != "us-east-1":
-            create_kwargs["CreateBucketConfiguration"] = {"LocationConstraint": minio_region}
+            create_kwargs["CreateBucketConfiguration"] = {
+                "LocationConstraint": minio_region
+            }
         s3_client.create_bucket(**create_kwargs)
         created = True
 

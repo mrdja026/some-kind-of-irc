@@ -314,6 +314,7 @@ function ChatPage() {
   const [isChannelDrawerOpen, setIsChannelDrawerOpen] = useState(false)
   const [selectedImageMessage, setSelectedImageMessage] = useState<Message | null>(null)
   const [showInferenceTimeline, setShowInferenceTimeline] = useState(false)
+  const isAnyMobileDrawerOpen = isNavOpen || isChannelDrawerOpen
 
   const setActiveChannel = useCallback(
     (channelId: number) => {
@@ -331,6 +332,43 @@ function ChatPage() {
       setSelectedChannelId(search.channelId)
     }
   }, [search.channelId, selectedChannelId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      setIsNavOpen(false)
+      setIsChannelDrawerOpen(false)
+    }
+
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return
+    }
+
+    const mobileBreakpointQuery = window.matchMedia('(max-width: 1023px)')
+    const syncBodyLock = () => {
+      const shouldLockBody = isAnyMobileDrawerOpen && mobileBreakpointQuery.matches
+      document.body.classList.toggle('drawer-open', shouldLockBody)
+    }
+
+    syncBodyLock()
+    mobileBreakpointQuery.addEventListener('change', syncBodyLock)
+
+    return () => {
+      mobileBreakpointQuery.removeEventListener('change', syncBodyLock)
+      document.body.classList.remove('drawer-open')
+    }
+  }, [isAnyMobileDrawerOpen])
 
   useEffect(() => {
     if (!chatContainerRef.current || !chatInputBarRef.current) {
@@ -1056,17 +1094,22 @@ function ChatPage() {
 
   return (
     <div
-      className="h-screen overflow-hidden flex chat-shell"
+      className="h-dvh max-h-dvh overflow-hidden flex chat-shell"
       onClick={handleContextMenuClose}
     >
       {isNavOpen && (
         <div
           className="fixed inset-0 bg-black/20 z-40"
           onClick={() => setIsNavOpen(false)}
+          aria-hidden="true"
         />
       )}
       <aside
-        className={`fixed top-0 left-0 h-full w-full sm:w-72 z-50 transform transition-transform duration-300 ease-in-out nav-drawer ${
+        id="primary-nav-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Primary navigation"
+        className={`fixed top-0 left-0 h-full w-[min(20rem,85vw)] z-50 transform transition-transform duration-300 ease-in-out nav-drawer ${
           isNavOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -1132,14 +1175,19 @@ function ChatPage() {
         </nav>
       </aside>
       {/* Sidebar */}
-      <div className="hidden md:flex md:w-64 flex-col chat-sidebar">
+      <div className="hidden lg:flex lg:w-72 flex-col chat-sidebar">
         {/* User info */}
         <div className="p-3 md:p-4 border-b chat-divider">
           <div className="flex items-center gap-2 md:gap-3">
             <button
-              onClick={() => setIsNavOpen(true)}
+              onClick={() => {
+                setIsChannelDrawerOpen(false)
+                setIsNavOpen(true)
+              }}
               className="p-2 rounded-lg chat-menu-button min-w-[44px] min-h-[44px]"
               aria-label="Open menu"
+              aria-controls="primary-nav-drawer"
+              aria-expanded={isNavOpen}
             >
               <Menu size={18} />
             </button>
@@ -1192,12 +1240,17 @@ function ChatPage() {
       {/* Mobile Channels Drawer */}
       {isChannelDrawerOpen && (
         <div
-          className="fixed inset-0 bg-black/20 z-40 md:hidden"
+          className="fixed inset-0 bg-black/20 z-40 lg:hidden"
           onClick={() => setIsChannelDrawerOpen(false)}
+          aria-hidden="true"
         />
       )}
       <aside
-        className={`fixed top-0 left-0 h-full w-full sm:w-72 z-50 transform transition-transform duration-300 ease-in-out md:hidden nav-drawer flex flex-col ${
+        id="channels-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Channels list"
+        className={`fixed top-0 left-0 h-full w-[min(20rem,85vw)] z-50 transform transition-transform duration-300 ease-in-out lg:hidden nav-drawer flex flex-col ${
           isChannelDrawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -1236,15 +1289,32 @@ function ChatPage() {
       </aside>
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col w-full md:w-auto min-h-0">
+      <div className="flex-1 flex flex-col w-full min-w-0 min-h-0">
         {/* Mobile menu button - shown only on mobile */}
-        <div className="md:hidden p-2 border-b chat-header flex items-center gap-2">
+        <div className="lg:hidden p-2 border-b chat-header flex items-center gap-2 safe-area-inline">
           <button
-            onClick={() => setIsNavOpen(true)}
+            onClick={() => {
+              setIsChannelDrawerOpen(false)
+              setIsNavOpen(true)
+            }}
             className="p-2 rounded-lg chat-menu-button min-w-[44px] min-h-[44px]"
             aria-label="Open menu"
+            aria-controls="primary-nav-drawer"
+            aria-expanded={isNavOpen}
           >
             <Menu size={18} />
+          </button>
+          <button
+            onClick={() => {
+              setIsNavOpen(false)
+              setIsChannelDrawerOpen(true)
+            }}
+            className="p-2 rounded-lg chat-menu-button min-w-[44px] min-h-[44px]"
+            aria-label="Open channels"
+            aria-controls="channels-drawer"
+            aria-expanded={isChannelDrawerOpen}
+          >
+            <MessageSquare size={18} />
           </button>
           {user?.profile_picture_url ? (
             <img
@@ -1268,20 +1338,25 @@ function ChatPage() {
         {selectedChannelId ? (
           <>
             {/* Channel header with mode toggle */}
-            <div className="p-2 md:p-2.5 border-b chat-header">
-              <div className="flex items-center justify-between gap-2 md:gap-4">
+            <div className="p-2 md:p-2.5 border-b chat-header safe-area-inline">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                 <button
                   type="button"
-                  onClick={() => setIsChannelDrawerOpen(true)}
-                  className="no-touch-target flex items-center gap-2 min-w-0 flex-1 text-left md:pointer-events-none"
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    setIsChannelDrawerOpen(true)
+                  }}
+                  className="no-touch-target flex items-center gap-2 min-w-0 w-full text-left lg:pointer-events-none lg:w-auto"
+                  aria-controls="channels-drawer"
+                  aria-expanded={isChannelDrawerOpen}
                 >
                   <div className="w-2 h-2 rounded-full chat-dot flex-shrink-0"></div>
                   <div className="font-semibold text-sm md:text-base truncate">
                     {selectedChannelLabel}
                   </div>
-                  <ChevronDown size={16} className="flex-shrink-0 md:hidden" />
+                  <ChevronDown size={16} className="flex-shrink-0 lg:hidden" />
                 </button>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
                   {user?.username === 'admina' && (
                     <button
                       type="button"
@@ -1458,7 +1533,7 @@ function ChatPage() {
                 {/* Message input */}
                 <div
                   ref={chatInputBarRef}
-                  className="absolute bottom-4 left-0 right-0 z-20 px-4 pointer-events-none"
+                  className="absolute bottom-0 left-0 right-0 z-20 px-4 safe-area-inline safe-area-bottom pointer-events-none"
                 >
                   <div className="max-w-4xl mx-auto w-full pointer-events-auto">
                     <input
@@ -1470,7 +1545,7 @@ function ChatPage() {
                     />
                     <form
                       onSubmit={handleSubmit}
-                      className="flex flex-col sm:flex-row gap-2 relative bg-white/80 p-2 rounded-2xl shadow-xl border border-stone-200/50 backdrop-blur-sm"
+                      className="flex items-end gap-2 relative bg-white/80 p-2 rounded-2xl shadow-xl border border-stone-200/50 backdrop-blur-sm"
                     >
                       <div className="flex gap-2 flex-1 min-w-0 items-end">
                         <button
@@ -1483,6 +1558,7 @@ function ChatPage() {
                           }
                           className="p-2 rounded-xl transition-colors chat-attach-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 hover:bg-stone-100"
                           title="Attach file"
+                          aria-label="Attach image"
                         >
                           <Plus size={20} />
                         </button>
@@ -1496,6 +1572,7 @@ function ChatPage() {
                             disabled={isInteractionDisabled}
                             className="w-full px-3 py-3 bg-transparent border-0 focus:ring-0 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-stone-400"
                             style={{ minHeight: '44px' }}
+                            aria-label="Message input"
                           />
                           <div className="absolute bottom-full left-0 w-full mb-2">
                             <MentionAutocomplete
@@ -1515,6 +1592,7 @@ function ChatPage() {
                           !selectedChannelId
                         }
                         className="p-2 rounded-xl transition-all chat-send-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 shadow-sm"
+                        aria-label="Send message"
                       >
                         <ArrowUp size={20} />
                       </button>
