@@ -56,6 +56,7 @@ inject_anthropic_api_key() {
             --from-literal=SECRET_KEY="your-secret-key-here" \
             --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
             --from-literal=DB_PASSWORD="change-me-local-password" \
+            --from-literal=MINIO_ROOT_USER="minioadmin" \
             --from-literal=MINIO_ROOT_PASSWORD="minioadmin" \
             --dry-run=client -o yaml | kubectl apply -f -
         echo -e "${GREEN}✓ ANTHROPIC_API_KEY injected${NC}"

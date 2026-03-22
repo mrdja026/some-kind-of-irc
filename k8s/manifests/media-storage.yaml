@@ -30,12 +30,6 @@ spec:
             - configMapRef:
                 name: irc-app-config
           env:
-            - name: MINIO_ENDPOINT
-              value: "http://minio:9000"
-            - name: MINIO_PUBLIC_ENDPOINT
-              value: "http://localhost:8080/minio"
-            - name: MINIO_BUCKET
-              value: "media"
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -48,8 +42,6 @@ spec:
                   key: MINIO_ROOT_PASSWORD
             - name: BACKEND_VERIFY_URL
               value: "http://monolith:8002/auth/me"
-            - name: PUBLIC_BASE_URL
-              value: "http://localhost:9101"
           resources:
             requests:
               memory: "64Mi"
