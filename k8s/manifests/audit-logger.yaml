@@ -38,13 +38,13 @@ spec:
               cpu: "200m"
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8004
             initialDelaySeconds: 2
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8004
             initialDelaySeconds: 5
             periodSeconds: 20
