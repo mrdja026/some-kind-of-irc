@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_SCRIPTS="$SCRIPT_DIR/k8s/scripts"
+K8S_MANIFESTS="$SCRIPT_DIR/k8s/manifests"
 SEED_USERS_FILE="$SCRIPT_DIR/backend/seed_users.json"
 
 print_seed_credentials() {
@@ -43,6 +44,48 @@ for user in payload.get("users", []):
 PY
 }
 
+inject_anthropic_api_key() {
+    # Inject ANTHROPIC_API_KEY from environment into K8s secret
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        echo -e "${GREEN}Injecting ANTHROPIC_API_KEY into secret...${NC}"
+        kubectl patch secret irc-app-secret -n irc-app \
+            --type='json' \
+            -p="[{\"op\": \"replace\", \"path\": \"/stringData/ANTHROPIC_API_KEY\", \"value\": \"${ANTHROPIC_API_KEY}\"}]" \
+            2>/dev/null || \
+        kubectl create secret generic irc-app-secret -n irc-app \
+            --from-literal=SECRET_KEY="your-secret-key-here" \
+            --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
+            --from-literal=DB_PASSWORD="change-me-local-password" \
+            --from-literal=MINIO_ROOT_PASSWORD="minioadmin" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo -e "${GREEN}✓ ANTHROPIC_API_KEY injected${NC}"
+    else
+        echo -e "${YELLOW}Warning: ANTHROPIC_API_KEY not set. AI features will be unavailable.${NC}"
+        echo -e "${YELLOW}Set it with: export ANTHROPIC_API_KEY=your-key-here${NC}"
+    fi
+}
+
+create_minio_bucket() {
+    # Create the 'media' bucket in MinIO using a temporary job
+    echo -e "${GREEN}Creating MinIO 'media' bucket...${NC}"
+    
+    # Use kubectl to run mc (MinIO Client) in a one-shot pod
+    kubectl run minio-bucket-setup -n irc-app \
+        --image=minio/mc:latest \
+        --restart=Never \
+        --rm \
+        --wait \
+        --command -- sh -c "
+            mc alias set myminio http://minio:9000 minioadmin minioadmin && \
+            mc mb myminio/media --ignore-existing && \
+            mc anonymous set public myminio/media
+        " 2>/dev/null || {
+        echo -e "${YELLOW}Warning: MinIO bucket creation may have failed or bucket already exists${NC}"
+    }
+    
+    echo -e "${GREEN}✓ MinIO bucket 'media' ready${NC}"
+}
+
 echo -e "${GREEN}=== K3s Strangler Pattern Local Development ===${NC}"
 echo ""
 
@@ -60,7 +103,7 @@ if ! grep -q "Ubuntu" /etc/os-release 2>/dev/null; then
 fi
 
 # Check for required tools
-echo -e "${GREEN}[1/7] Checking prerequisites...${NC}"
+echo -e "${GREEN}[1/8] Checking prerequisites...${NC}"
 
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}Error: Docker is required but not installed${NC}"
@@ -72,8 +115,14 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
+# Check ANTHROPIC_API_KEY
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo -e "${YELLOW}Warning: ANTHROPIC_API_KEY is not set${NC}"
+    echo -e "${YELLOW}AI features will be unavailable. Set with: export ANTHROPIC_API_KEY=sk-...${NC}"
+fi
+
 # Check if ports 80/443 are free (listeners only; ignore outbound connections)
-echo -e "${GREEN}[2/7] Checking ports 80/443 availability...${NC}"
+echo -e "${GREEN}[2/8] Checking ports 80/443 availability...${NC}"
 
 if ss -tlnp 2>/dev/null | grep -q ':80 '; then
     echo -e "${RED}Error: Port 80 is already in use (something is listening)${NC}"
@@ -92,7 +141,7 @@ fi
 echo -e "${GREEN}✓ Ports 80/443 are free${NC}"
 
 # Check if K3s is already installed
-echo -e "${GREEN}[3/7] Checking K3s installation...${NC}"
+echo -e "${GREEN}[3/8] Checking K3s installation...${NC}"
 
 if command -v k3s &>/dev/null && kubectl get nodes &>/dev/null 2>&1; then
     echo -e "${YELLOW}K3s is already installed and running${NC}"
@@ -106,14 +155,14 @@ else
 fi
 
 # Install Argo CD
-echo -e "${GREEN}[4/7] Installing Argo CD...${NC}"
+echo -e "${GREEN}[4/8] Installing Argo CD...${NC}"
 if ! "$K8S_SCRIPTS/02-install-argocd.sh"; then
     echo -e "${RED}Error: Argo CD installation failed${NC}"
     exit 1
 fi
 
 # Install NGINX Ingress
-echo -e "${GREEN}[5/7] Installing NGINX Ingress Controller...${NC}"
+echo -e "${GREEN}[5/8] Installing NGINX Ingress Controller...${NC}"
 if ! "$K8S_SCRIPTS/03-install-nginx-ingress.sh"; then
     echo -e "${RED}Error: NGINX Ingress installation failed${NC}"
     exit 1
@@ -132,25 +181,38 @@ else
 fi
 
 # Deploy Redis + PostgreSQL
-echo -e "${GREEN}[6/7] Deploying Redis and PostgreSQL...${NC}"
+echo -e "${GREEN}[6/8] Deploying Redis and PostgreSQL...${NC}"
 if ! "$K8S_SCRIPTS/04-deploy-redis-postgres.sh"; then
     echo -e "${RED}Error: Redis/PostgreSQL deployment failed${NC}"
     exit 1
 fi
 
-# Deploy monolith + ai-service + data-processor
-echo -e "${GREEN}[7/7] Deploying monolith, ai-service, and data-processor...${NC}"
+# Deploy all services (monolith, ai-service, ai-service-adk, data-processor, minio, media-storage, audit-logger)
+echo -e "${GREEN}[7/8] Deploying all services...${NC}"
 if ! "$K8S_SCRIPTS/05-deploy-services.sh"; then
     echo -e "${RED}Error: Service deployment failed${NC}"
     exit 1
 fi
 
+# Inject ANTHROPIC_API_KEY if set
+inject_anthropic_api_key
+
+# Restart AI services to pick up the new key (if they exist)
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo -e "${GREEN}Restarting AI services to pick up API key...${NC}"
+    kubectl rollout restart deployment/ai-service -n irc-app 2>/dev/null || true
+    kubectl rollout restart deployment/ai-service-adk -n irc-app 2>/dev/null || true
+fi
+
 # Configure ingress routes (Strangler Pattern)
-echo -e "${GREEN}Configuring Strangler Pattern ingress routes...${NC}"
+echo -e "${GREEN}[8/8] Configuring Strangler Pattern ingress routes...${NC}"
 if ! "$K8S_SCRIPTS/06-configure-ingress.sh"; then
     echo -e "${RED}Error: Ingress configuration failed${NC}"
     exit 1
 fi
+
+# Create MinIO bucket
+create_minio_bucket
 
 # Seed users
 echo -e "${GREEN}Seeding default users from backend/seed_users.json...${NC}"
@@ -174,20 +236,40 @@ NODE_IP="$(hostname -I | awk '{print $1}')"
 echo "Services:"
 echo "  - Frontend (SSR):       http://localhost:4269 (or http://${NODE_IP}:4269)"
 echo "  - Backend API:          http://localhost/ (via ingress)"
-echo "  - Argo CD:              https://localhost:8443 (get password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
+echo "  - AI Service:           http://localhost/ai/*"
+echo "  - AI Service ADK:       http://localhost/adk/*"
+echo "  - Data Processor:       http://localhost/data-processor/*"
+echo "  - Media Storage:        http://localhost/media/*"
+echo "  - MinIO (S3):           http://localhost/minio/*"
+echo "  - Argo CD:              https://localhost:8443"
 echo ""
 echo "Strangler Pattern Routes:"
 echo "  - /auth/*             → monolith (until auth-service exists)"
-echo "  - /ai/*               → ai-service (real AI service)"
+echo "  - /ai/*               → ai-service (Claude AI)"
+echo "  - /adk/*              → ai-service-adk (Google ADK AI, A/B testing)"
 echo "  - /data-processor/*   → data-processor (rewrites to /api/*)"
-echo "  - /*                  → monolith (default fallback)"
+echo "  - /media/*            → media-storage"
+echo "  - /minio/*            → minio (S3 API)"
+echo "  - /healthz            → ai-service"
+echo "  - /*                  → frontend (default)"
+echo ""
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo -e "${GREEN}✓ ANTHROPIC_API_KEY is configured${NC}"
+else
+    echo -e "${YELLOW}⚠ ANTHROPIC_API_KEY is not set - AI features disabled${NC}"
+    echo "  Set with: export ANTHROPIC_API_KEY=sk-ant-..."
+fi
 echo ""
 echo "Login credentials (source: backend/seed_users.json):"
 print_seed_credentials "$SEED_USERS_FILE"
 echo ""
 echo "Commands:"
-echo "  kubectl get pods -n irc-app     # View running pods"
-echo "  kubectl logs -n irc-app -f      # Follow logs"
-echo "  k3s-uninstall.sh                # Remove K3s cluster"
+echo "  kubectl get pods -n irc-app        # View running pods"
+echo "  kubectl logs -n irc-app -f         # Follow logs"
+echo "  kubectl port-forward -n irc-app svc/minio 9001:9001  # MinIO Console"
+echo "  k3s-uninstall.sh                   # Remove K3s cluster"
+echo ""
+echo "Argo CD Admin Password:"
+echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 echo ""
 echo -e "${GREEN}============================================================${NC}"

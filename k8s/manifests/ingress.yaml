@@ -43,6 +43,14 @@ spec:
                 name: monolith
                 port:
                   number: 8002
+          # Route /healthz to ai-service (legacy healthcheck)
+          - path: /healthz
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-service
+                port:
+                  number: 8001
           # Route /ai/* to ai-service
           - path: /ai
             pathType: Prefix
@@ -51,6 +59,22 @@ spec:
                 name: ai-service
                 port:
                   number: 8001
+          # Route /media/upload to monolith (special case)
+          - path: /media/upload
+            pathType: Exact
+            backend:
+              service:
+                name: monolith
+                port:
+                  number: 8002
+          # Route /media/* to media-storage
+          - path: /media
+            pathType: Prefix
+            backend:
+              service:
+                name: media-storage
+                port:
+                  number: 9101
           # Default: everything else goes to frontend (SSR)
           - path: /
             pathType: Prefix
@@ -82,3 +106,51 @@ spec:
                 name: data-processor
                 port:
                   number: 8003
+---
+# ADK Ingress — with strip prefix rewrite
+# Rewrites /adk/<path> to /<path> for the Google ADK AI service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: irc-app-adk-ingress
+  namespace: irc-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /adk/(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ai-service-adk
+                port:
+                  number: 8004
+---
+# MinIO Ingress — with strip prefix rewrite
+# Rewrites /minio/<path> to /<path> for the MinIO S3-compatible API
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: irc-app-minio-ingress
+  namespace: irc-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # MinIO may need large uploads
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /minio/(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9000

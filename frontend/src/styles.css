@@ -336,10 +336,17 @@ code {
     padding-left: max(0px, env(safe-area-inset-left));
     padding-right: max(0px, env(safe-area-inset-right));
   }
-  
-  .fixed,
-  .absolute {
-    left: max(0px, env(safe-area-inset-left));
-    right: max(0px, env(safe-area-inset-right));
+
+  .safe-area-inline {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
   }
+
+  .safe-area-bottom {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+body.drawer-open {
+  overflow: hidden;
 }

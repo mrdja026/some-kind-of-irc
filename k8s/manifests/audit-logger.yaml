@@ -1,0 +1,63 @@
+---
+# Audit Logger deployment — lightweight HTTP audit logging service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-logger
+  namespace: irc-app
+  labels:
+    app: audit-logger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audit-logger
+  template:
+    metadata:
+      labels:
+        app: audit-logger
+    spec:
+      containers:
+        - name: audit-logger
+          # Build and import this image locally:
+          #   docker build -t audit-logger:latest ./audit-logger
+          #   sudo k3s ctr images import <(docker save audit-logger:latest)
+          image: audit-logger:latest
+          imagePullPolicy: Never # Use locally imported image
+          ports:
+            - containerPort: 8004
+          env:
+            - name: PORT
+              value: "8004"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8004
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: audit-logger
+  namespace: irc-app
+spec:
+  selector:
+    app: audit-logger
+  ports:
+    - port: 8004
+      targetPort: 8004
+  type: ClusterIP

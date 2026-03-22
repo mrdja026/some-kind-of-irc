@@ -1,0 +1,82 @@
+---
+# Media Storage deployment — proxy service for MinIO media operations
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-storage
+  namespace: irc-app
+  labels:
+    app: media-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: media-storage
+  template:
+    metadata:
+      labels:
+        app: media-storage
+    spec:
+      containers:
+        - name: media-storage
+          # Build and import this image locally:
+          #   docker build -t media-storage:latest ./media-storage
+          #   sudo k3s ctr images import <(docker save media-storage:latest)
+          image: media-storage:latest
+          imagePullPolicy: Never # Use locally imported image
+          ports:
+            - containerPort: 9101
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+          env:
+            - name: MINIO_ENDPOINT
+              value: "http://minio:9000"
+            - name: MINIO_PUBLIC_ENDPOINT
+              value: "http://localhost:8080/minio"
+            - name: MINIO_BUCKET
+              value: "media"
+            - name: MINIO_ACCESS_KEY
+              value: "minioadmin"
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: irc-app-secret
+                  key: MINIO_ROOT_PASSWORD
+                  optional: true
+            - name: BACKEND_VERIFY_URL
+              value: "http://monolith:8002/auth/me"
+            - name: PUBLIC_BASE_URL
+              value: "http://localhost:9101"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9101
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9101
+            initialDelaySeconds: 5
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-storage
+  namespace: irc-app
+spec:
+  selector:
+    app: media-storage
+  ports:
+    - port: 9101
+      targetPort: 9101
+  type: ClusterIP

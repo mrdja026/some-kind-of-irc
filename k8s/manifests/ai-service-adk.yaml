@@ -1,0 +1,70 @@
+---
+# AI Service ADK deployment — Google ADK AI service for A/B testing (/adk/* endpoints)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service-adk
+  namespace: irc-app
+  labels:
+    app: ai-service-adk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-service-adk
+  template:
+    metadata:
+      labels:
+        app: ai-service-adk
+    spec:
+      containers:
+        - name: ai-service-adk
+          # Build and import this image locally:
+          #   docker build -t ai-service-adk:latest ./ai-service-adk
+          #   sudo k3s ctr images import <(docker save ai-service-adk:latest)
+          image: ai-service-adk:latest
+          imagePullPolicy: Never # Use locally imported image
+          ports:
+            - containerPort: 8004
+          envFrom:
+            - configMapRef:
+                name: irc-app-config
+            - secretRef:
+                name: irc-app-secret
+          env:
+            - name: ADK_MODEL
+              value: "anthropic/claude-3-haiku-20240307"
+            - name: BACKEND_URL
+              value: "http://monolith:8002"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8004
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8004
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service-adk
+  namespace: irc-app
+spec:
+  selector:
+    app: ai-service-adk
+  ports:
+    - port: 8004
+      targetPort: 8004
+  type: ClusterIP

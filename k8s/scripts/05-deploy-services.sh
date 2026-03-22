@@ -29,8 +29,20 @@ docker build -t irc-monolith:latest "${PROJECT_ROOT}/backend"
 echo "Building ai-service image..."
 docker build -t ai-service:latest "${PROJECT_ROOT}/ai-service"
 
+echo "Building ai-service-adk image..."
+docker build -t ai-service-adk:latest "${PROJECT_ROOT}/ai-service-adk"
+
+echo "Building audit-logger image..."
+docker build -t audit-logger:latest "${PROJECT_ROOT}/audit-logger"
+
 echo "Building data-processor image..."
 docker build -t data-processor:latest "${PROJECT_ROOT}/data-processor"
+
+echo "Building minio image..."
+docker build -t minio:latest "${PROJECT_ROOT}/minio"
+
+echo "Building media-storage image..."
+docker build -t media-storage:latest "${PROJECT_ROOT}/media-storage"
 
 echo "Building redis-log-sink image..."
 docker build -t redis-log-sink:latest \
@@ -41,8 +53,14 @@ echo "Building frontend image (SSR)..."
 docker build -t irc-frontend:latest \
   --build-arg VITE_API_URL=http://monolith:8002 \
   --build-arg VITE_WS_URL=ws://monolith:8002 \
+  --build-arg VITE_AI_API_URL=http://ai-service:8001 \
+  --build-arg VITE_ADK_API_URL=http://ai-service-adk:8004 \
+  --build-arg VITE_DATA_PROCESSOR_URL=http://data-processor:8003 \
   --build-arg VITE_PUBLIC_API_URL=http://localhost \
   --build-arg VITE_PUBLIC_WS_URL=ws://localhost \
+  --build-arg VITE_PUBLIC_AI_API_URL=http://localhost \
+  --build-arg VITE_PUBLIC_ADK_API_URL=http://localhost \
+  --build-arg VITE_PUBLIC_DATA_PROCESSOR_URL=http://localhost \
   "${PROJECT_ROOT}/frontend"
 
 echo ""
@@ -54,8 +72,20 @@ docker save irc-monolith:latest | sudo k3s ctr images import -
 echo "Importing ai-service:latest..."
 docker save ai-service:latest | sudo k3s ctr images import -
 
+echo "Importing ai-service-adk:latest..."
+docker save ai-service-adk:latest | sudo k3s ctr images import -
+
+echo "Importing audit-logger:latest..."
+docker save audit-logger:latest | sudo k3s ctr images import -
+
 echo "Importing data-processor:latest..."
 docker save data-processor:latest | sudo k3s ctr images import -
+
+echo "Importing minio:latest..."
+docker save minio:latest | sudo k3s ctr images import -
+
+echo "Importing media-storage:latest..."
+docker save media-storage:latest | sudo k3s ctr images import -
 
 echo "Importing redis-log-sink:latest..."
 docker save redis-log-sink:latest | sudo k3s ctr images import -
@@ -69,16 +99,13 @@ kubectl apply -f "${MANIFESTS_DIR}/configmap.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/secret.yaml"
 
 echo ""
-echo "=== Deploying monolith ==="
-kubectl apply -f "${MANIFESTS_DIR}/monolith.yaml"
+echo "=== Deploying infrastructure services ==="
 
-echo ""
-echo "=== Deploying ai-service ==="
-kubectl apply -f "${MANIFESTS_DIR}/ai-service.yaml"
+echo "Deploying minio..."
+kubectl apply -f "${MANIFESTS_DIR}/minio.yaml"
 
-echo ""
-echo "=== Deploying data-processor ==="
-kubectl apply -f "${MANIFESTS_DIR}/data-processor.yaml"
+echo "Deploying audit-logger..."
+kubectl apply -f "${MANIFESTS_DIR}/audit-logger.yaml"
 
 echo ""
 echo "=== Applying redis.yaml (redis-log + redis-log-sink) ==="
@@ -87,18 +114,72 @@ echo "=== Applying redis.yaml (redis-log + redis-log-sink) ==="
 kubectl apply -f "${MANIFESTS_DIR}/redis.yaml"
 
 echo ""
-echo "=== Deploying frontend ==="
+echo "=== Waiting for infrastructure services ==="
+echo "Waiting for minio to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/minio -n irc-app
+
+echo "Waiting for audit-logger to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/audit-logger -n irc-app
+
+echo ""
+echo "=== Running database migrations ==="
+# Delete previous migration jobs if they exist
+kubectl delete job -n irc-app backend-migrations --ignore-not-found
+kubectl delete job -n irc-app data-processor-migrations --ignore-not-found
+
+# Apply migration jobs
+kubectl apply -f "${MANIFESTS_DIR}/migrations-job.yaml"
+
+# Wait for migrations to complete
+echo "Waiting for backend migrations..."
+kubectl wait --for=condition=complete --timeout=120s job/backend-migrations -n irc-app || {
+  echo "Backend migrations failed or timed out. Check logs:"
+  echo "  kubectl logs -n irc-app job/backend-migrations"
+}
+
+echo "Waiting for data-processor migrations..."
+kubectl wait --for=condition=complete --timeout=120s job/data-processor-migrations -n irc-app || {
+  echo "Data-processor migrations failed or timed out. Check logs:"
+  echo "  kubectl logs -n irc-app job/data-processor-migrations"
+}
+
+echo ""
+echo "=== Deploying application services ==="
+
+echo "Deploying monolith..."
+kubectl apply -f "${MANIFESTS_DIR}/monolith.yaml"
+
+echo "Deploying ai-service..."
+kubectl apply -f "${MANIFESTS_DIR}/ai-service.yaml"
+
+echo "Deploying ai-service-adk..."
+kubectl apply -f "${MANIFESTS_DIR}/ai-service-adk.yaml"
+
+echo "Deploying data-processor..."
+kubectl apply -f "${MANIFESTS_DIR}/data-processor.yaml"
+
+echo "Deploying media-storage..."
+kubectl apply -f "${MANIFESTS_DIR}/media-storage.yaml"
+
+echo "Deploying frontend..."
 kubectl apply -f "${MANIFESTS_DIR}/frontend.yaml"
 
 echo ""
+echo "=== Waiting for application services ==="
 echo "Waiting for monolith to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/monolith -n irc-app
 
 echo "Waiting for ai-service to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/ai-service -n irc-app
 
+echo "Waiting for ai-service-adk to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/ai-service-adk -n irc-app
+
 echo "Waiting for data-processor to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/data-processor -n irc-app
+
+echo "Waiting for media-storage to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/media-storage -n irc-app
 
 echo "Waiting for redis-log-sink to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/redis-log-sink -n irc-app
@@ -120,16 +201,14 @@ echo "=== All services deployed ==="
 echo ""
 kubectl get pods -n irc-app
 echo ""
-echo "To test monolith:"
-echo "  kubectl port-forward -n irc-app svc/monolith 8002:8002"
-echo "  curl http://localhost:8002/health"
+echo "To test services:"
+echo "  monolith:        curl http://localhost/health"
+echo "  ai-service:      curl http://localhost/healthz"
+echo "  ai-service-adk:  curl http://localhost/adk/healthz"
+echo "  data-processor:  curl http://localhost/data-processor/healthz"
 echo ""
-echo "To test ai-service:"
-echo "  kubectl port-forward -n irc-app svc/ai-service 8001:8001"
-echo "  curl http://localhost:8001/healthz"
-echo ""
-echo "To test data-processor:"
-echo "  kubectl port-forward -n irc-app svc/data-processor 8003:8003"
-echo "  curl http://localhost:8003/healthz"
+echo "MinIO Console (port-forward):"
+echo "  kubectl port-forward -n irc-app svc/minio 9001:9001"
+echo "  Open http://localhost:9001 (minioadmin/minioadmin)"
 echo ""
 echo "Next step: Run 06-configure-ingress.sh"
