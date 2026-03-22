@@ -52,6 +52,12 @@ data:
 
   # MinIO object storage
   MINIO_ENDPOINT: "http://minio:9000"
-  MINIO_PUBLIC_ENDPOINT: "http://localhost:8080/minio"
+  # REQUIRED: Replace with your VPS external IP/hostname before deploying.
+  # The ingress exposes MinIO at /minio and media-storage at /media.
+  # Example: http://203.0.113.10:8080/minio
+  MINIO_PUBLIC_ENDPOINT: "http://CHANGE_ME:8080/minio"
   MINIO_BUCKET: "media"
   MINIO_ACCESS_KEY: "minioadmin"
+  # REQUIRED: Base URL that external clients use to reach media-storage through the ingress.
+  # Example: http://203.0.113.10:8080
+  PUBLIC_BASE_URL: "http://CHANGE_ME:8080"
