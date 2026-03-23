@@ -80,6 +80,7 @@ is_private_ip() {
 
 resolve_public_base_url() {
     local node_ip="$1"
+    local detected_ip
     if [[ -n "${PUBLIC_BASE_URL:-}" ]]; then
         echo "${PUBLIC_BASE_URL}"
         return
@@ -90,6 +91,11 @@ resolve_public_base_url() {
     fi
     if [[ -n "$node_ip" ]] && ! is_private_ip "$node_ip"; then
         echo "http://${node_ip}"
+        return
+    fi
+    detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
+    if [[ "$detected_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "http://${detected_ip}"
         return
     fi
     echo "http://localhost"
