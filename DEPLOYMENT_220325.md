@@ -51,88 +51,29 @@ Ready to deploy? The script is well-documented and handles everything automatica
 
 ---
 
-## Post-Deployment Issues (2026-03-22)
+## Hurdles Resolved in Repo (2026-03-23)
+- Removed Argo CD from the K3s flow to avoid argocd-repo-server crashloops on small VPSes.
+- ADK-only AI routing (no ai-service) with `/healthz` pointing to `ai-service-adk`.
+- `run_locally_k3s.sh` now patches `PUBLIC_BASE_URL`, `MINIO_PUBLIC_ENDPOINT`, and `ALLOWED_ORIGINS` after deploy.
+- MinIO buckets `media` and `synt-data` are created during deployment.
+- Upload limit raised to 20MB (ingress `proxy-body-size` + media-storage `MAX_UPLOAD_MB`).
+- Media downloads are served directly by media-storage (no dependency on `/minio` ingress).
 
-### Issue 1: Health Check Endpoint Mismatch
-**Status**: Fixed in repo, needs redeploy
-**Files affected**:
-- `k8s/manifests/audit-logger.yaml` - Changed `/healthz` to `/health`
-- `k8s/manifests/media-storage.yaml` - Changed `/healthz` to `/health`
+## Manual Steps Still Required
+- **Free ports 80/443** before running the script (stop nginx/caddy or any service bound to those ports).
+- **Set ANTHROPIC_API_KEY** if AI/Gmail features are needed.
+- **Update IP-specific config** if the VPS IP changes:
+  - Patch `PUBLIC_BASE_URL`, `MINIO_PUBLIC_ENDPOINT`, and `ALLOWED_ORIGINS` in the `irc-app-config` ConfigMap.
+- **MinIO console access** from a host machine requires `kubectl port-forward` + SSH tunnel (console is not exposed publicly).
+- **Seed synthetic claims** if needed (bucket is created but seeding is manual).
+- **Fix legacy image URLs** if older messages still reference `http://CHANGE_ME:8080/...`.
+- **HTTPS** requires a domain; self-signed certs work but show browser warnings.
 
-**Fix on VPS**:
-```bash
-git pull
-kubectl delete deployment audit-logger media-storage -n irc-app
-kubectl apply -f k8s/manifests/audit-logger.yaml
-kubectl apply -f k8s/manifests/media-storage.yaml
-```
-
-### Issue 2: CORS Errors on Media Upload & AI Service ADK
-**Status**: Partially fixed, needs VPS IP in ALLOWED_ORIGINS
-**Root cause**: 
-- `ALLOWED_ORIGINS` in configmap only includes localhost, not VPS public IP
-- media-storage Flask app was missing flask-cors (now fixed in repo)
-
-**Fix on VPS**:
-```bash
-# 1. Pull latest (includes flask-cors fix)
-git pull
-
-# 2. Get VPS IP and update configmap
-VPS_IP=$(curl -s ifconfig.me)
-kubectl patch configmap irc-app-config -n irc-app --type merge \
-  -p "{\"data\":{\"ALLOWED_ORIGINS\":\"http://localhost,http://127.0.0.1,http://localhost:4269,http://$VPS_IP,http://$VPS_IP:4269,http://$VPS_IP:80\"}}"
-
-# 3. Rebuild media-storage with flask-cors
-docker build -t media-storage:latest ./media-storage
-sudo k3s ctr images import <(docker save media-storage:latest)
-
-# 4. Restart affected services
-kubectl rollout restart deployment/media-storage -n irc-app
-kubectl rollout restart deployment/ai-service-adk -n irc-app
-kubectl rollout restart deployment/monolith -n irc-app
-```
-
-### Issue 3: Admin User Not Recognized
-**Status**: Needs investigation
-**Symptom**: User "admina" told they are not an admin when accessing AI features
-**Possible causes**:
-1. User seeding didn't set `is_admin=true` in database
-2. JWT token not including admin flag
-3. AI service not reading admin flag correctly
-
-**Diagnose on VPS**:
-```bash
-# Check if admina has is_admin=true
-kubectl exec -n irc-app deploy/postgresql -- psql -U app_user -d app_db \
-  -c "SELECT id, username, is_admin FROM users WHERE username='admina';"
-```
-
-**Fix if is_admin is false**:
-```bash
-kubectl exec -n irc-app deploy/postgresql -- psql -U app_user -d app_db \
-  -c "UPDATE users SET is_admin = true WHERE username = 'admina';"
-```
-
-### Issue 4: Low-RAM VPS Timeouts
-**Status**: Known limitation
-**Symptom**: Deployment hangs waiting for pods on 4GB RAM VPS
-**Workaround**: Be patient, increase timeouts, or use larger VPS
-
----
-
-## What's Working (Verified 2026-03-22)
-- [x] Frontend loads at http://<VPS_IP>/ (via ingress)
-- [x] Frontend loads at http://<VPS_IP>:4269 (direct)
-- [x] Data processor working (document upload/processing)
-- [x] User login works
-- [x] All pods running after health check fixes
-- [x] Ingress routing configured (strangler pattern)
-
-## What Needs Testing After Fixes
-- [ ] Media upload (after CORS fix)
-- [ ] AI features (after CORS + admin fix)
-- [ ] MinIO public access via /minio/*
+## What Needs Testing After Deploy
+- [ ] Image upload + display from `/media/uploads/.../display.jpg`
+- [ ] AI access for allowlisted users
+- [ ] MinIO access via `/minio/*` (S3 API)
+- [ ] WebSocket chat connectivity (`/ws/*`)
 
 ---
 
