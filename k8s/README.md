@@ -113,7 +113,6 @@ The script handles:
 | Service | Port | Description |
 |---------|------|-------------|
 | monolith | 8002 | FastAPI backend (auth, channels, websocket) |
-| ai-service | 8001 | Claude AI service |
 | ai-service-adk | 8004 | Google ADK AI service (A/B testing) |
 | audit-logger | 8004 | Lightweight HTTP audit logging |
 | data-processor | 8003 | Django REST Framework (OCR, document processing) |
@@ -131,14 +130,14 @@ After all scripts complete:
 ```bash
 # Check all pods are running
 kubectl get pods -n irc-app
-# Expected: monolith, ai-service, ai-service-adk, audit-logger, data-processor,
+# Expected: monolith, ai-service-adk, audit-logger, data-processor,
 #           minio, media-storage, frontend, redis, redis-log, redis-log-sink, postgresql
 
 # Test routing
 curl http://localhost/health              # → monolith 200
-curl http://localhost/healthz             # → ai-service 200
+curl http://localhost/healthz             # → ai-service-adk 200
 curl http://localhost/adk/healthz         # → ai-service-adk 200
-curl http://localhost/data-processor/healthz  # → data-processor 200
+curl http://localhost/data-processor/health  # → data-processor 404 (non-admin)
 
 # Access Argo CD UI
 kubectl port-forward svc/argocd-server -n argocd 8080:443
@@ -158,13 +157,12 @@ kubectl port-forward -n irc-app svc/minio 9001:9001
 
 **Strangler routes**:
 - `/auth/*` → monolith (until auth-service exists)
-- `/ai/*` → ai-service (Claude AI)
 - `/adk/*` → ai-service-adk (Google ADK AI, A/B testing)
 - `/data-processor/*` → data-processor (rewrites to `/api/*`)
 - `/media/upload` → monolith
 - `/media/*` → media-storage
 - `/minio/*` → minio (S3 API)
-- `/healthz` → ai-service
+- `/healthz` → ai-service-adk
 - `/*` → frontend (default)
 
 **Login credentials**: sourced from `backend/seed_users.json`
@@ -183,7 +181,6 @@ python3 -c "import json; from pathlib import Path; p=Path('backend/seed_users.js
 k8s/
 ├── README.md
 ├── manifests/                  # Kubernetes YAML manifests
-│   ├── ai-service.yaml         # AI Service (Claude)
 │   ├── ai-service-adk.yaml     # AI Service ADK (Google ADK)
 │   ├── audit-logger.yaml       # Audit Logger
 │   ├── configmap.yaml          # Shared ConfigMap
@@ -218,8 +215,7 @@ The ingress is configured with a split routing strategy:
 - `/channels/*` → monolith
 - `/ws` → monolith (WebSocket)
 - `/health` → monolith
-- `/healthz` → ai-service
-- `/ai/*` → ai-service
+- `/healthz` → ai-service-adk
 - `/media/upload` → monolith
 - `/media/*` → media-storage
 - `/*` → frontend (default)
@@ -275,11 +271,11 @@ kubectl logs -n irc-app job/backend-migrations
 kubectl logs -n irc-app job/data-processor-migrations
 ```
 
-### MinIO bucket not created
+### MinIO buckets not created
 ```bash
 # Manual bucket creation
 kubectl port-forward -n irc-app svc/minio 9001:9001
-# Open http://localhost:9001 and create bucket manually
+# Open http://localhost:9001 and create buckets manually
 ```
 
 ### ANTHROPIC_API_KEY not working
@@ -287,7 +283,6 @@ kubectl port-forward -n irc-app svc/minio 9001:9001
 # Verify secret contains the key
 kubectl get secret irc-app-secret -n irc-app -o jsonpath='{.data.ANTHROPIC_API_KEY}' | base64 -d
 
-# Restart AI services after updating secret
-kubectl rollout restart deployment/ai-service -n irc-app
+# Restart AI service after updating secret
 kubectl rollout restart deployment/ai-service-adk -n irc-app
 ```

@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_SCRIPTS="$SCRIPT_DIR/k8s/scripts"
 K8S_MANIFESTS="$SCRIPT_DIR/k8s/manifests"
 SEED_USERS_FILE="$SCRIPT_DIR/backend/seed_users.json"
+NODE_IP="$(hostname -I | awk '{print $1}')"
 
 print_seed_credentials() {
     local seed_file="$1"
@@ -66,11 +67,79 @@ inject_anthropic_api_key() {
     fi
 }
 
-create_minio_bucket() {
-    # Create the 'media' bucket in MinIO using a temporary job
-    echo -e "${GREEN}Creating MinIO 'media' bucket...${NC}"
-    
-    # Use kubectl to run mc (MinIO Client) in a one-shot pod
+is_private_ip() {
+    local ip="$1"
+    if [[ -z "$ip" ]]; then
+        return 1
+    fi
+    if [[ "$ip" =~ ^10\. ]] || [[ "$ip" =~ ^192\.168\. ]] || [[ "$ip" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+        return 0
+    fi
+    return 1
+}
+
+resolve_public_base_url() {
+    local node_ip="$1"
+    if [[ -n "${PUBLIC_BASE_URL:-}" ]]; then
+        echo "${PUBLIC_BASE_URL}"
+        return
+    fi
+    if [[ -n "${PUBLIC_HOST:-}" ]]; then
+        echo "http://${PUBLIC_HOST}"
+        return
+    fi
+    if [[ -n "$node_ip" ]] && ! is_private_ip "$node_ip"; then
+        echo "http://${node_ip}"
+        return
+    fi
+    echo "http://localhost"
+}
+
+build_allowed_origins() {
+    local public_base_url="$1"
+    local base_allowed
+    base_allowed="http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
+    local trimmed="${public_base_url%/}"
+    if [[ -n "$trimmed" ]]; then
+        base_allowed+="${base_allowed:+,}${trimmed}"
+        if [[ ! "$trimmed" =~ :[0-9]+$ ]]; then
+            base_allowed+="${base_allowed:+,}${trimmed}:4269"
+        fi
+    fi
+    if [[ -n "${ALLOWED_ORIGINS:-}" ]]; then
+        base_allowed+="${base_allowed:+,}${ALLOWED_ORIGINS}"
+    fi
+    echo "$base_allowed"
+}
+
+configure_public_endpoints() {
+    local public_base_url="$1"
+    local minio_public_endpoint="$2"
+    local allowed_origins="$3"
+
+    echo -e "${GREEN}Updating public endpoints and CORS...${NC}"
+    local patch_payload
+    patch_payload=$(cat <<EOF
+{"data":{"PUBLIC_BASE_URL":"${public_base_url}","MINIO_PUBLIC_ENDPOINT":"${minio_public_endpoint}","ALLOWED_ORIGINS":"${allowed_origins}"}}
+EOF
+)
+    kubectl patch configmap irc-app-config -n irc-app --type merge -p "$patch_payload" >/dev/null
+    echo -e "${GREEN}✓ Public endpoints and CORS updated${NC}"
+}
+
+restart_runtime_deployments() {
+    echo -e "${GREEN}Restarting deployments to apply config...${NC}"
+    kubectl rollout restart deployment/monolith -n irc-app 2>/dev/null || true
+    kubectl rollout restart deployment/ai-service-adk -n irc-app 2>/dev/null || true
+    kubectl rollout restart deployment/data-processor -n irc-app 2>/dev/null || true
+    kubectl rollout restart deployment/media-storage -n irc-app 2>/dev/null || true
+}
+
+create_minio_buckets() {
+    local media_bucket="${MINIO_BUCKET:-media}"
+    local claims_bucket="${MINIO_CLAIMS_BUCKET:-synt-data}"
+    echo -e "${GREEN}Creating MinIO buckets (${media_bucket}, ${claims_bucket})...${NC}"
+
     kubectl run minio-bucket-setup -n irc-app \
         --image=minio/mc:latest \
         --restart=Never \
@@ -78,13 +147,14 @@ create_minio_bucket() {
         --wait \
         --command -- sh -c "
             mc alias set myminio http://minio:9000 minioadmin minioadmin && \
-            mc mb myminio/media --ignore-existing && \
-            mc anonymous set public myminio/media
+            mc mb myminio/${media_bucket} --ignore-existing && \
+            mc anonymous set public myminio/${media_bucket} && \
+            mc mb myminio/${claims_bucket} --ignore-existing
         " 2>/dev/null || {
         echo -e "${YELLOW}Warning: MinIO bucket creation may have failed or bucket already exists${NC}"
     }
-    
-    echo -e "${GREEN}✓ MinIO bucket 'media' ready${NC}"
+
+    echo -e "${GREEN}✓ MinIO buckets ready${NC}"
 }
 
 echo -e "${GREEN}=== K3s Strangler Pattern Local Development ===${NC}"
@@ -188,22 +258,28 @@ if ! "$K8S_SCRIPTS/04-deploy-redis-postgres.sh"; then
     exit 1
 fi
 
-# Deploy all services (monolith, ai-service, ai-service-adk, data-processor, minio, media-storage, audit-logger)
+# Prepare public URLs for build + config
+PUBLIC_BASE_URL="$(resolve_public_base_url "$NODE_IP")"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+PUBLIC_WS_URL="${PUBLIC_WS_URL:-${PUBLIC_BASE_URL/https:\/\//wss://}}"
+if [[ "$PUBLIC_WS_URL" == "$PUBLIC_BASE_URL" ]]; then
+    PUBLIC_WS_URL="${PUBLIC_BASE_URL/http:\/\//ws://}"
+fi
+MINIO_PUBLIC_ENDPOINT="${MINIO_PUBLIC_ENDPOINT:-${PUBLIC_BASE_URL}/minio}"
+ALLOWED_ORIGINS="$(build_allowed_origins "$PUBLIC_BASE_URL")"
+export PUBLIC_BASE_URL
+export PUBLIC_WS_URL
+
+# Deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger)
 echo -e "${GREEN}[7/8] Deploying all services...${NC}"
 if ! "$K8S_SCRIPTS/05-deploy-services.sh"; then
     echo -e "${RED}Error: Service deployment failed${NC}"
     exit 1
 fi
 
-# Inject ANTHROPIC_API_KEY if set
+configure_public_endpoints "$PUBLIC_BASE_URL" "$MINIO_PUBLIC_ENDPOINT" "$ALLOWED_ORIGINS"
 inject_anthropic_api_key
-
-# Restart AI services to pick up the new key (if they exist)
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-    echo -e "${GREEN}Restarting AI services to pick up API key...${NC}"
-    kubectl rollout restart deployment/ai-service -n irc-app 2>/dev/null || true
-    kubectl rollout restart deployment/ai-service-adk -n irc-app 2>/dev/null || true
-fi
+restart_runtime_deployments
 
 # Configure ingress routes (Strangler Pattern)
 echo -e "${GREEN}[8/8] Configuring Strangler Pattern ingress routes...${NC}"
@@ -212,8 +288,9 @@ if ! "$K8S_SCRIPTS/06-configure-ingress.sh"; then
     exit 1
 fi
 
-# Create MinIO bucket
-create_minio_bucket
+# Create MinIO buckets
+create_minio_buckets
+echo -e "${YELLOW}Note: Seed synthetic claims with scripts/seed_synthetic_claims.py if needed.${NC}"
 
 # Seed users
 echo -e "${GREEN}Seeding default users from backend/seed_users.json...${NC}"
@@ -233,25 +310,22 @@ echo -e "${GREEN}============================================================${N
 echo -e "${GREEN}K3s Strangler Pattern environment is ready!${NC}"
 echo -e "${GREEN}============================================================${NC}"
 echo ""
-NODE_IP="$(hostname -I | awk '{print $1}')"
 echo "Services:"
 echo "  - Frontend (SSR):       http://localhost:4269 (or http://${NODE_IP}:4269)"
-echo "  - Backend API:          http://localhost/ (via ingress)"
-echo "  - AI Service:           http://localhost/ai/*"
-echo "  - AI Service ADK:       http://localhost/adk/*"
-echo "  - Data Processor:       http://localhost/data-processor/*"
-echo "  - Media Storage:        http://localhost/media/*"
-echo "  - MinIO (S3):           http://localhost/minio/*"
+echo "  - Backend API:          ${PUBLIC_BASE_URL}/ (via ingress)"
+echo "  - AI Service ADK:       ${PUBLIC_BASE_URL}/adk/*"
+echo "  - Data Processor:       ${PUBLIC_BASE_URL}/data-processor/*"
+echo "  - Media Storage:        ${PUBLIC_BASE_URL}/media/*"
+echo "  - MinIO (S3):           ${PUBLIC_BASE_URL}/minio/*"
 echo "  - Argo CD:              https://localhost:8443"
 echo ""
 echo "Strangler Pattern Routes:"
 echo "  - /auth/*             → monolith (until auth-service exists)"
-echo "  - /ai/*               → ai-service (Claude AI)"
 echo "  - /adk/*              → ai-service-adk (Google ADK AI, A/B testing)"
 echo "  - /data-processor/*   → data-processor (rewrites to /api/*)"
 echo "  - /media/*            → media-storage"
 echo "  - /minio/*            → minio (S3 API)"
-echo "  - /healthz            → ai-service"
+echo "  - /healthz            → ai-service-adk"
 echo "  - /*                  → frontend (default)"
 echo ""
 if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then

@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: K3s Full Service Parity
-The K3s deployment SHALL include all services present in docker-compose: backend (monolith), ai-service, ai-service-adk, audit-logger, data-processor, frontend, redis, redis-log, redis-log-sink, postgresql, minio, and media-storage.
+The K3s deployment SHALL include all services present in docker-compose: backend (monolith), ai-service-adk, audit-logger, data-processor, frontend, redis, redis-log, redis-log-sink, postgresql, minio, and media-storage.
 
 #### Scenario: All services deployed
 - **WHEN** `run_locally_k3s.sh` completes successfully
-- **THEN** `kubectl get pods -n irc-app` shows all 12 service pods in Running state
+- **THEN** `kubectl get pods -n irc-app` shows all 11 service pods in Running state
 
 #### Scenario: Service health verification
 - **WHEN** all pods are running
-- **THEN** health endpoints `/health`, `/healthz`, `/adk/healthz`, `/data-processor/healthz` return HTTP 200
+- **THEN** health endpoints `/health`, `/healthz`, `/adk/healthz` return HTTP 200
 
 ### Requirement: ANTHROPIC_API_KEY Environment Injection
 The K3s deployment script SHALL read ANTHROPIC_API_KEY from the environment and inject it into the K8s secret.
@@ -48,6 +48,10 @@ The K3s deployment SHALL include MinIO for S3-compatible object storage with aut
 - **WHEN** MinIO and media-storage pods are running
 - **THEN** the "media" bucket exists with public read policy
 
+#### Scenario: Claims bucket creation
+- **WHEN** MinIO and media-storage pods are running
+- **THEN** the "synt-data" bucket exists for claim retrieval
+
 ### Requirement: Complete Ingress Routing
 The NGINX Ingress SHALL route all application paths matching the Caddyfile configuration.
 
@@ -65,7 +69,7 @@ The NGINX Ingress SHALL route all application paths matching the Caddyfile confi
 
 #### Scenario: Health endpoint routing
 - **WHEN** request is made to `/healthz`
-- **THEN** request is routed to ai-service health endpoint
+- **THEN** request is routed to ai-service-adk health endpoint
 
 ## MODIFIED Requirements
 
@@ -75,10 +79,6 @@ The NGINX Ingress SHALL route requests based on the Strangler Pattern, directing
 #### Scenario: Auth routes to monolith
 - **WHEN** request path starts with `/auth`
 - **THEN** request is routed to monolith service
-
-#### Scenario: AI routes to ai-service
-- **WHEN** request path starts with `/ai`
-- **THEN** request is routed to ai-service
 
 #### Scenario: Data-processor routes with rewrite
 - **WHEN** request path starts with `/data-processor`

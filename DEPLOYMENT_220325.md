@@ -34,9 +34,9 @@ Step	Action
 4/8	Install Argo CD
 5/8	Install NGINX Ingress
 6/8	Deploy Redis + PostgreSQL
-7/8	Build & deploy all services (monolith, ai-service, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
+7/8	Build & deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
 8/8	Configure ingress routes
-Then: Inject ANTHROPIC_API_KEY, create MinIO bucket, seed users.
+Then: Inject ANTHROPIC_API_KEY, create MinIO buckets, seed users.
 Verify Deployment
 # Check pods
 kubectl get pods -n irc-app
@@ -44,7 +44,7 @@ kubectl get pods -n irc-app
 curl http://localhost/health
 curl http://localhost/healthz
 curl http://localhost/adk/healthz
-curl http://localhost/data-processor/healthz
+curl http://localhost/data-processor/health
 # Access from external IP
 curl http://<VPS_IP>/health
 ---
@@ -68,7 +68,7 @@ kubectl apply -f k8s/manifests/audit-logger.yaml
 kubectl apply -f k8s/manifests/media-storage.yaml
 ```
 
-### Issue 2: CORS Errors on Media Upload & AI Service
+### Issue 2: CORS Errors on Media Upload & AI Service ADK
 **Status**: Partially fixed, needs VPS IP in ALLOWED_ORIGINS
 **Root cause**: 
 - `ALLOWED_ORIGINS` in configmap only includes localhost, not VPS public IP
@@ -90,7 +90,6 @@ sudo k3s ctr images import <(docker save media-storage:latest)
 
 # 4. Restart affected services
 kubectl rollout restart deployment/media-storage -n irc-app
-kubectl rollout restart deployment/ai-service -n irc-app
 kubectl rollout restart deployment/ai-service-adk -n irc-app
 kubectl rollout restart deployment/monolith -n irc-app
 ```
