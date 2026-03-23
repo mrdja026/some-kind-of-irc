@@ -23,7 +23,7 @@ data:
   DB_USER: "app_user"
 
   # CORS
-  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
+  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269,http://46.225.9.4,http://46.225.9.4:4269"
 
   # Upload limits
   MAX_UPLOAD_MB: "20"
@@ -46,14 +46,11 @@ data:
 
   # MinIO object storage
   MINIO_ENDPOINT: "http://minio:9000"
-  # REQUIRED: Replace with your VPS external IP/hostname before deploying.
   # The ingress exposes MinIO at /minio and media-storage at /media.
-  # Example: http://203.0.113.10:8080/minio
-  MINIO_PUBLIC_ENDPOINT: "http://CHANGE_ME:8080/minio"
+  MINIO_PUBLIC_ENDPOINT: "http://46.225.9.4/minio"
   MINIO_BUCKET: "media"
   MINIO_CLAIMS_BUCKET: "synt-data"
   MINIO_CLAIMS_PREFIX: ""
   MINIO_ACCESS_KEY: "minioadmin"
-  # REQUIRED: Base URL that external clients use to reach media-storage through the ingress.
-  # Example: http://203.0.113.10:8080
-  PUBLIC_BASE_URL: "http://CHANGE_ME:8080"
+  # Base URL that external clients use to reach media-storage through the ingress.
+  PUBLIC_BASE_URL: "http://46.225.9.4"
