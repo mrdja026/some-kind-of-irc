@@ -5,11 +5,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import List, Optional, cast, Any
-from functools import lru_cache
 
 from src.core.database import get_db
 from src.core.config import settings
-from src.core.admin import is_user_admin
 from src.models.user import User
 from src.models.channel import Channel
 from src.models.message import Message
@@ -39,20 +37,6 @@ def _as_opt_str(value: Any) -> Optional[str]:
     if value is None:
         return None
     return str(value)
-
-
-@lru_cache(maxsize=1)
-def _ai_allowlist() -> set[str]:
-    return {
-        entry.strip().lower()
-        for entry in settings.AI_ALLOWLIST.split(";")
-        if entry.strip()
-    }
-
-
-def _user_has_ai_access(user: User) -> bool:
-    username = _as_str(user.username).lower()
-    return is_user_admin(username) or username in _ai_allowlist()
 
 
 # Pydantic models
