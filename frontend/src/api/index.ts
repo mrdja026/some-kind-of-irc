@@ -4,10 +4,6 @@ import type {
   Message,
   AIStatus,
   CalendarEventPayload,
-  LocalAIMessage,
-  LocalAIQueryResponse,
-  LocalAIStreamEvent,
-  LocalAIStatus,
   InferenceLogEvent,
 } from '../types';
 
@@ -26,51 +22,7 @@ const API_BASE_URL =
         return origin;
       })();
 
-const AI_API_BASE_URL =
-  typeof window === 'undefined'
-    ? import.meta.env.VITE_AI_API_URL || import.meta.env.VITE_API_URL || 'http://backend:8002'
-    : (() => {
-        const origin = window.location.origin;
-        const isLocalHost =
-          window.location.hostname === 'localhost' ||
-          window.location.hostname === '127.0.0.1';
-        const normalizeLocalAiUrl = (value: string): string => {
-          if (!isLocalHost) {
-            return value;
-          }
-          if (value.includes(':8002') || value.includes(':8001') || value.includes(':4269')) {
-            return 'http://localhost:8080';
-          }
-          return value;
-        };
-        const explicit = import.meta.env.VITE_PUBLIC_AI_API_URL?.trim();
-        if (explicit) {
-          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
-            return origin;
-          }
-          return normalizeLocalAiUrl(explicit);
-        }
-        const browserAi = import.meta.env.VITE_AI_API_URL?.trim();
-        if (browserAi) {
-          if (browserAi.includes('localhost') && window.location.hostname !== 'localhost') {
-            return origin;
-          }
-          return normalizeLocalAiUrl(browserAi);
-        }
-        const fallback = import.meta.env.VITE_PUBLIC_API_URL?.trim();
-        if (fallback) {
-          if (fallback.includes('localhost') && window.location.hostname !== 'localhost') {
-            return origin;
-          }
-          return normalizeLocalAiUrl(fallback);
-        }
-        if (isLocalHost) {
-          return 'http://localhost:8080';
-        }
-        return origin;
-      })();
-
-// ADK AI service base URL (Google ADK backend for A/B testing)
+// ADK AI service base URL (now the only AI backend)
 const ADK_API_BASE_URL =
   typeof window === 'undefined'
     ? import.meta.env.VITE_ADK_API_URL || import.meta.env.VITE_AI_API_URL || 'http://backend:8002'
@@ -108,45 +60,6 @@ const ADK_API_BASE_URL =
         }
         return origin;
       })();
-
-export type AIBackendType = 'crewAI' | 'googleADK';
-
-// Storage key for AI backend preference (matches context)
-const AI_BACKEND_STORAGE_KEY = 'ai-backend-preference';
-
-// Helper to get the current AI backend preference from localStorage
-export const getStoredAIBackend = (): AIBackendType => {
-  if (typeof window === 'undefined') {
-    return 'crewAI';
-  }
-  const stored = localStorage.getItem(AI_BACKEND_STORAGE_KEY);
-  // Map context values to API values
-  if (stored === 'googleAdk') {
-    return 'googleADK';
-  }
-  if (stored === 'crewai') {
-    return 'crewAI';
-  }
-  return 'crewAI'; // Default to CrewAI
-};
-
-// Helper to get the correct base URL based on backend type
-const getAIBaseUrl = (backend: AIBackendType = 'crewAI'): string => {
-  if (backend === 'googleADK') {
-    // ADK service is routed via /adk prefix in Caddy
-    return ADK_API_BASE_URL;
-  }
-  return AI_API_BASE_URL;
-};
-
-// Helper to get the correct endpoint path based on backend type
-const getAIEndpointPath = (path: string, backend: AIBackendType = 'crewAI'): string => {
-  if (backend === 'googleADK') {
-    // ADK endpoints are accessed via /adk prefix which Caddy strips
-    return `/adk${path}`;
-  }
-  return path;
-};
 
 const parseAIError = async (response: Response, fallback: string): Promise<string> => {
   const payload = await response.json().catch(() => null);
@@ -216,12 +129,8 @@ export const generateGmailQuestions = async (
   interest: string,
   previousAnswers: string[] = [],
   questionCount = 2,
-  backend?: AIBackendType,
 ): Promise<{ questions: string[] }> => {
-  const resolvedBackend = backend ?? getStoredAIBackend();
-  const baseUrl = getAIBaseUrl(resolvedBackend);
-  const path = getAIEndpointPath('/ai/gmail/questions', resolvedBackend);
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/gmail/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -242,12 +151,8 @@ export const generateGmailSummary = async (
   emails: any[],
   interest: string,
   answers: string[],
-  backend?: AIBackendType,
 ): Promise<{ final_summary: string; top_email_ids: string[]; reasoning: string }> => {
-  const resolvedBackend = backend ?? getStoredAIBackend();
-  const baseUrl = getAIBaseUrl(resolvedBackend);
-  const path = getAIEndpointPath('/ai/gmail/summary', resolvedBackend);
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/gmail/summary`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -262,12 +167,8 @@ export const generateGmailSummary = async (
 export const generateCalendarQuestion = async (
   request: string,
   previousAnswers: string[] = [],
-  backend?: AIBackendType,
 ): Promise<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }> => {
-  const resolvedBackend = backend ?? getStoredAIBackend();
-  const baseUrl = getAIBaseUrl(resolvedBackend);
-  const path = getAIEndpointPath('/ai/calendar/questions', resolvedBackend);
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/calendar/questions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -281,12 +182,8 @@ export const generateCalendarQuestion = async (
 
 export const createCalendarEvent = async (
   event: CalendarEventPayload,
-  backend?: AIBackendType,
 ): Promise<{ event_id: string | null; html_link: string | null; summary: string | null }> => {
-  const resolvedBackend = backend ?? getStoredAIBackend();
-  const baseUrl = getAIBaseUrl(resolvedBackend);
-  const path = getAIEndpointPath('/ai/calendar/create', resolvedBackend);
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/calendar/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -538,9 +435,9 @@ export const addUserToChannel = async (
   }
 };
 
-// AI Agent APIs
+// AI Agent APIs (using ADK service only)
 export const getAIStatus = async (): Promise<AIStatus> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/status`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/status`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -550,119 +447,13 @@ export const getAIStatus = async (): Promise<AIStatus> => {
 };
 
 export const getAIHealth = async (): Promise<{ service: string; status: string }> => {
-  const response = await fetch(`${AI_API_BASE_URL}/healthz`, {
+  const response = await fetch(`${ADK_API_BASE_URL}/adk/healthz`, {
     credentials: 'include',
   });
   if (!response.ok) {
     throw new Error('AI service health check failed');
   }
   return response.json();
-};
-
-export const getLocalAIStatus = async (): Promise<LocalAIStatus> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/local/status`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'Failed to get local AI status'));
-  }
-  return response.json();
-};
-
-export const queryLocalAI = async (
-  query: string,
-  options: {
-    mode?: 'chat' | 'greeting';
-    history?: LocalAIMessage[];
-  } = {},
-): Promise<LocalAIQueryResponse> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/local/query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      query,
-      mode: options.mode ?? 'chat',
-      history: options.history ?? [],
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'Local AI query failed'));
-  }
-  return response.json();
-};
-
-export const queryLocalAIStream = async (
-  query: string,
-  handlers: {
-    onEvent?: (event: LocalAIStreamEvent) => void;
-    onError?: (message: string) => void;
-    signal?: AbortSignal;
-  } = {},
-  options: {
-    mode?: 'chat' | 'greeting';
-    history?: LocalAIMessage[];
-  } = {},
-): Promise<void> => {
-  const response = await fetch(`${AI_API_BASE_URL}/ai/local/query/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      query,
-      mode: options.mode ?? 'chat',
-      history: options.history ?? [],
-    }),
-    signal: handlers.signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseAIError(response, 'Local AI stream failed'));
-  }
-
-  if (!response.body) {
-    throw new Error('Streaming not supported by the browser');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const emit = (event: LocalAIStreamEvent) => {
-    handlers.onEvent?.(event);
-    if (event.type === 'error') {
-      handlers.onError?.(event.message);
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let separatorIndex = buffer.indexOf('\n\n');
-    while (separatorIndex !== -1) {
-      const chunk = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const event = JSON.parse(payload) as LocalAIStreamEvent;
-          emit(event);
-        } catch {
-          // Ignore malformed chunks
-        }
-      }
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-  }
 };
 
 export const getGmailAuthUrl = async (): Promise<{ authorization_url: string }> => {

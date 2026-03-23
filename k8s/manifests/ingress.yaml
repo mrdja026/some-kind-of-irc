@@ -43,22 +43,14 @@ spec:
                 name: monolith
                 port:
                   number: 8002
-          # Route /healthz to ai-service (legacy healthcheck)
+          # Route /healthz to ai-service-adk (healthcheck)
           - path: /healthz
             pathType: Prefix
             backend:
               service:
-                name: ai-service
+                name: ai-service-adk
                 port:
-                  number: 8001
-          # Route /ai/* to ai-service
-          - path: /ai
-            pathType: Prefix
-            backend:
-              service:
-                name: ai-service
-                port:
-                  number: 8001
+                  number: 8004
           # Route /media/upload to monolith (special case)
           - path: /media/upload
             pathType: Exact

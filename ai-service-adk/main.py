@@ -71,7 +71,7 @@ class CalendarCreateResponse(BaseModel):
 
 
 # Gmail Pydantic Models (matching ai-service/main.py)
-MAX_GMAIL_EMAILS = 100
+MAX_GMAIL_EMAILS = 10
 
 
 class GmailSummaryRequest(BaseModel):

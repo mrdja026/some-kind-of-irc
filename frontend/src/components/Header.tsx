@@ -2,7 +2,6 @@ import { Link } from '@tanstack/react-router'
 
 import { useState } from 'react'
 import { Home, Menu, LogIn, MessageSquare, X } from 'lucide-react'
-import { AIBackendToggle } from './AIBackendToggle'
 
 export default function Header() {
   const [isOpen, setIsOpen] = useState(false)
@@ -28,9 +27,6 @@ export default function Header() {
             </Link>
           </h1>
         </div>
-        
-        {/* AI Backend Toggle */}
-        <AIBackendToggle />
       </header>
 
       <aside
