@@ -1,0 +1,338 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "synthetic_claims/claim.schema.yaml"
+title: SyntheticClaim
+description: Canonical schema for a single synthetic property claim record.
+type: object
+additionalProperties: false
+required:
+  - claim_id
+  - policy_id
+  - status
+  - claim_type
+  - loss_date
+  - reported_date
+  - insured
+  - policy
+  - claim_intake
+  - documents
+  - adjuster_notes
+  - coverage_review
+  - resolution
+  - conversation_seed_questions
+properties:
+  claim_id:
+    type: string
+    pattern: "^CLM-\\d{4}-\\d{4}$"
+  policy_id:
+    type: string
+    pattern: "^POL-\\d{6}$"
+  status:
+    $ref: "#/$defs/ClaimStatus"
+  claim_type:
+    $ref: "#/$defs/ClaimType"
+  loss_date:
+    type: string
+    format: date
+  reported_date:
+    type: string
+    format: date
+  insured:
+    $ref: "#/$defs/Insured"
+  policy:
+    $ref: "#/$defs/Policy"
+  claim_intake:
+    $ref: "#/$defs/ClaimIntake"
+  documents:
+    type: array
+    items:
+      $ref: "#/$defs/ClaimDocument"
+  adjuster_notes:
+    type: array
+    items:
+      $ref: "#/$defs/AdjusterNote"
+  coverage_review:
+    $ref: "#/$defs/CoverageReview"
+  resolution:
+    $ref: "#/$defs/Resolution"
+  conversation_seed_questions:
+    type: array
+    items:
+      type: string
+      minLength: 1
+$defs:
+  ClaimStatus:
+    type: string
+    enum:
+      - new
+      - pending_documents
+      - investigating
+      - coverage_review
+      - reopened
+      - paid
+      - partially_paid
+      - denied
+      - closed_no_payment
+  ClaimType:
+    type: string
+    enum:
+      - fire_damage
+      - glass_breakage
+      - smoke_damage
+      - storm_damage
+      - theft
+      - water_damage
+  ReportedBy:
+    type: string
+    enum:
+      - broker
+      - insured
+      - spouse
+  IntakeChannel:
+    type: string
+    enum:
+      - broker_portal
+      - email
+      - mobile_app
+      - phone
+  CoverageDecision:
+    type: string
+    enum:
+      - covered
+      - not_covered
+      - pending
+  ResolutionOutcome:
+    type: string
+    enum:
+      - closed_no_payment
+      - denied
+      - paid
+      - partially_paid
+      - pending
+  PaymentMethod:
+    type:
+      - string
+      - "null"
+    enum:
+      - bank_transfer
+      - check
+      - null
+  PolicyProduct:
+    type: string
+    enum:
+      - Condo Protect
+      - Homeowners Basic
+      - Homeowners Plus
+  DocumentType:
+    type: string
+    enum:
+      - adjuster_report
+      - claim_form
+      - cleaning_estimate
+      - contents_inventory
+      - fire_report
+      - photo_set
+      - plumber_invoice
+      - police_report
+      - repair_quote
+      - roofer_estimate
+      - weather_report
+  CoverageLimits:
+    type: object
+    additionalProperties: false
+    required:
+      - dwelling_eur
+      - contents_eur
+      - water_damage_eur
+    properties:
+      dwelling_eur:
+        type: integer
+        minimum: 0
+      contents_eur:
+        type: integer
+        minimum: 0
+      water_damage_eur:
+        type: integer
+        minimum: 0
+  Insured:
+    type: object
+    additionalProperties: false
+    required:
+      - full_name
+      - email
+      - phone
+      - property_address
+    properties:
+      full_name:
+        type: string
+        minLength: 1
+      email:
+        type: string
+        format: email
+      phone:
+        type: string
+        pattern: "^\\+\\d{9,15}$"
+      property_address:
+        type: string
+        minLength: 1
+  Policy:
+    type: object
+    additionalProperties: false
+    required:
+      - product
+      - effective_date
+      - expiration_date
+      - deductible_eur
+      - coverage_limits
+      - endorsements
+      - exclusions
+    properties:
+      product:
+        $ref: "#/$defs/PolicyProduct"
+      effective_date:
+        type: string
+        format: date
+      expiration_date:
+        type: string
+        format: date
+      deductible_eur:
+        type: integer
+        minimum: 0
+      coverage_limits:
+        $ref: "#/$defs/CoverageLimits"
+      endorsements:
+        type: array
+        items:
+          type: string
+          minLength: 1
+      exclusions:
+        type: array
+        items:
+          type: string
+          minLength: 1
+  ClaimIntake:
+    type: object
+    additionalProperties: false
+    required:
+      - reported_by
+      - channel
+      - summary
+      - cause_of_loss
+      - initial_damage_estimate_eur
+      - emergency_mitigation_completed
+      - injuries_reported
+    properties:
+      reported_by:
+        $ref: "#/$defs/ReportedBy"
+      channel:
+        $ref: "#/$defs/IntakeChannel"
+      summary:
+        type: string
+        minLength: 1
+      cause_of_loss:
+        type: string
+        minLength: 1
+      initial_damage_estimate_eur:
+        type: integer
+        minimum: 0
+      emergency_mitigation_completed:
+        type: boolean
+      injuries_reported:
+        type: boolean
+  ClaimDocument:
+    type: object
+    additionalProperties: false
+    required:
+      - doc_id
+      - doc_type
+      - title
+      - created_at
+    properties:
+      doc_id:
+        type: string
+        pattern: "^DOC-\\d{3}$"
+      doc_type:
+        $ref: "#/$defs/DocumentType"
+      title:
+        type: string
+        minLength: 1
+      created_at:
+        type: string
+        format: date-time
+  AdjusterNote:
+    type: object
+    additionalProperties: false
+    required:
+      - timestamp
+      - author
+      - note
+    properties:
+      timestamp:
+        type: string
+        format: date-time
+      author:
+        type: string
+        minLength: 1
+      note:
+        type: string
+        minLength: 1
+  CoverageReview:
+    type: object
+    additionalProperties: false
+    required:
+      - reviewed_by
+      - decision
+      - reasoning
+      - applied_deductible_eur
+      - approved_repairs_eur
+      - approved_contents_eur
+    properties:
+      reviewed_by:
+        type: string
+        minLength: 1
+      decision:
+        $ref: "#/$defs/CoverageDecision"
+      reasoning:
+        type: string
+        minLength: 1
+      applied_deductible_eur:
+        type: integer
+        minimum: 0
+      approved_repairs_eur:
+        type: integer
+        minimum: 0
+      approved_contents_eur:
+        type: integer
+        minimum: 0
+  Resolution:
+    type: object
+    additionalProperties: false
+    required:
+      - resolution_date
+      - outcome
+      - gross_settlement_eur
+      - deductible_eur
+      - net_payment_eur
+      - payment_method
+      - customer_letter_summary
+    properties:
+      resolution_date:
+        type:
+          - string
+          - "null"
+        format: date
+      outcome:
+        $ref: "#/$defs/ResolutionOutcome"
+      gross_settlement_eur:
+        type: integer
+        minimum: 0
+      deductible_eur:
+        type: integer
+        minimum: 0
+      net_payment_eur:
+        type: integer
+        minimum: 0
+      payment_method:
+        $ref: "#/$defs/PaymentMethod"
+      customer_letter_summary:
+        type: string
+        minLength: 1
