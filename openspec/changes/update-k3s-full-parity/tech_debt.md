@@ -51,6 +51,12 @@
 **Impact**: Potential security concern, non-standard for Node.js apps
 **Recommendation**: Change to port 3000/8080 and update service targetPort
 
+### 9. Local Allowlist Defaults Expanded
+**Location**: `k8s/manifests/configmap.yaml`, `docker-compose.yml`, `.env.local`
+**Issue**: Local defaults include non-admin seed users in ADMIN/AI allowlists for convenience
+**Impact**: Admin-only features are reachable by guest/guest2 when defaults are used
+**Recommendation**: Override allowlists in production and review before deployment
+
 ## Implementation Notes (2026-03-22)
 
 ### ANTHROPIC_API_KEY Injection

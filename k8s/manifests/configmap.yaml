@@ -25,9 +25,12 @@ data:
   # CORS
   ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
 
+  # Upload limits
+  MAX_UPLOAD_MB: "20"
+
   # User allowlists
-  ADMIN_ALLOWLIST: "admina"
-  AI_ALLOWLIST: "admina;guest2;guest3"
+  ADMIN_ALLOWLIST: "admina;guest;guest2"
+  AI_ALLOWLIST: "admina;guest;guest2;guest3"
 
   # Service URLs
   DATA_PROCESSOR_URL: "http://data-processor:8003"

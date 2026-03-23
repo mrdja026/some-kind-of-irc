@@ -6,6 +6,8 @@ kind: Ingress
 metadata:
   name: irc-app-core-ingress
   namespace: irc-app
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
 spec:
   ingressClassName: nginx
   rules:
