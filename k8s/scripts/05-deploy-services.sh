@@ -20,14 +20,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}/../.."
 MANIFESTS_DIR="${SCRIPT_DIR}/../manifests"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+PUBLIC_WS_URL="${PUBLIC_WS_URL:-${PUBLIC_BASE_URL/https:\/\//wss://}}"
+if [[ "$PUBLIC_WS_URL" == "$PUBLIC_BASE_URL" ]]; then
+  PUBLIC_WS_URL="${PUBLIC_BASE_URL/http:\/\//ws://}"
+fi
 
 echo "=== Building Docker images ==="
 
 echo "Building monolith image..."
 docker build -t irc-monolith:latest "${PROJECT_ROOT}/backend"
-
-echo "Building ai-service image..."
-docker build -t ai-service:latest "${PROJECT_ROOT}/ai-service"
 
 echo "Building ai-service-adk image..."
 docker build -t ai-service-adk:latest "${PROJECT_ROOT}/ai-service-adk"
@@ -53,14 +56,14 @@ echo "Building frontend image (SSR)..."
 docker build -t irc-frontend:latest \
   --build-arg VITE_API_URL=http://monolith:8002 \
   --build-arg VITE_WS_URL=ws://monolith:8002 \
-  --build-arg VITE_AI_API_URL=http://ai-service:8001 \
+  --build-arg VITE_AI_API_URL=http://ai-service-adk:8004 \
   --build-arg VITE_ADK_API_URL=http://ai-service-adk:8004 \
   --build-arg VITE_DATA_PROCESSOR_URL=http://data-processor:8003 \
-  --build-arg VITE_PUBLIC_API_URL=http://localhost \
-  --build-arg VITE_PUBLIC_WS_URL=ws://localhost \
-  --build-arg VITE_PUBLIC_AI_API_URL=http://localhost \
-  --build-arg VITE_PUBLIC_ADK_API_URL=http://localhost \
-  --build-arg VITE_PUBLIC_DATA_PROCESSOR_URL=http://localhost \
+  --build-arg VITE_PUBLIC_API_URL="${PUBLIC_BASE_URL}" \
+  --build-arg VITE_PUBLIC_WS_URL="${PUBLIC_WS_URL}" \
+  --build-arg VITE_PUBLIC_AI_API_URL="${PUBLIC_BASE_URL}" \
+  --build-arg VITE_PUBLIC_ADK_API_URL="${PUBLIC_BASE_URL}" \
+  --build-arg VITE_PUBLIC_DATA_PROCESSOR_URL="${PUBLIC_BASE_URL}" \
   "${PROJECT_ROOT}/frontend"
 
 echo ""
@@ -68,9 +71,6 @@ echo "=== Importing images into K3s ==="
 
 echo "Importing irc-monolith:latest..."
 docker save irc-monolith:latest | sudo k3s ctr images import -
-
-echo "Importing ai-service:latest..."
-docker save ai-service:latest | sudo k3s ctr images import -
 
 echo "Importing ai-service-adk:latest..."
 docker save ai-service-adk:latest | sudo k3s ctr images import -
@@ -149,9 +149,6 @@ echo "=== Deploying application services ==="
 echo "Deploying monolith..."
 kubectl apply -f "${MANIFESTS_DIR}/monolith.yaml"
 
-echo "Deploying ai-service..."
-kubectl apply -f "${MANIFESTS_DIR}/ai-service.yaml"
-
 echo "Deploying ai-service-adk..."
 kubectl apply -f "${MANIFESTS_DIR}/ai-service-adk.yaml"
 
@@ -168,9 +165,6 @@ echo ""
 echo "=== Waiting for application services ==="
 echo "Waiting for monolith to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/monolith -n irc-app
-
-echo "Waiting for ai-service to be ready..."
-kubectl wait --for=condition=available --timeout=300s deployment/ai-service -n irc-app
 
 echo "Waiting for ai-service-adk to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/ai-service-adk -n irc-app
@@ -203,9 +197,9 @@ kubectl get pods -n irc-app
 echo ""
 echo "To test services:"
 echo "  monolith:        curl http://localhost/health"
-echo "  ai-service:      curl http://localhost/healthz"
-echo "  ai-service-adk:  curl http://localhost/adk/healthz"
-echo "  data-processor:  curl http://localhost/data-processor/healthz"
+echo "  ai-service-adk:  curl http://localhost/healthz"
+echo "  adk direct:      curl http://localhost/adk/healthz"
+echo "  data-processor:  curl http://localhost/data-processor/health"
 echo ""
 echo "MinIO Console (port-forward):"
 echo "  kubectl port-forward -n irc-app svc/minio 9001:9001"

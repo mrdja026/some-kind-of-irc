@@ -122,6 +122,10 @@ export MINIO_PUBLIC_ENDPOINT="${MINIO_PUBLIC_ENDPOINT:-http://localhost:8080/min
 export MINIO_BUCKET="${MINIO_BUCKET:-media}"
 export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
 export MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
+export SYNTHETIC_CLAIMS_BUCKET="${SYNTHETIC_CLAIMS_BUCKET:-synt-data}"
+export SYNTHETIC_CLAIMS_PREFIX="${SYNTHETIC_CLAIMS_PREFIX:-synthetic_claims}"
+export MINIO_CLAIMS_BUCKET="${MINIO_CLAIMS_BUCKET:-${SYNTHETIC_CLAIMS_BUCKET}}"
+export MINIO_CLAIMS_PREFIX="${MINIO_CLAIMS_PREFIX:-${SYNTHETIC_CLAIMS_PREFIX}}"
 export BACKEND_VERIFY_URL="${BACKEND_VERIFY_URL:-http://backend:8002/auth/me}"
 export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:9101}"
 export DATA_PROCESSOR_URL="${DATA_PROCESSOR_URL:-http://data-processor:8003}"
@@ -303,6 +307,17 @@ s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
 print(f"Public read policy applied to bucket '{bucket}'.")
 PY
   echo "Warning: failed to ensure public bucket; check media-storage/minio connectivity."
+fi
+
+echo "Seeding synthetic claims into bucket '${SYNTHETIC_CLAIMS_BUCKET}'..."
+if ! "${COMPOSE_CMD[@]}" run --rm -T --no-deps \
+  -v "$ROOT_DIR:/repo:ro" \
+  media-storage \
+  python /repo/scripts/seed_synthetic_claims.py \
+  --source-dir /repo/synthetic_claims \
+  --bucket "${SYNTHETIC_CLAIMS_BUCKET}" \
+  --prefix "${SYNTHETIC_CLAIMS_PREFIX}"; then
+  echo "Warning: failed to seed synthetic claims; check media-storage/minio connectivity."
 fi
 
 echo "Running upload smoke test..."

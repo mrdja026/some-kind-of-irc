@@ -1,11 +1,14 @@
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from secrets import randbelow
 import requests
 import io
-from typing import List
+from typing import Any, List
 from fpdf import FPDF
 
 from src.core.config import settings
+from src.api.endpoints.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -21,35 +24,40 @@ class PdfGenerateRequest(BaseModel):
     links: List[str] = []
 
 
+class ClaimResponse(BaseModel):
+    filename: str
+    claim: Any
+
+
 @router.post("/pdf/generate")
 def generate_pdf(request: Request, body: PdfGenerateRequest):
     try:
         pdf = FPDF()
         pdf.add_page()
-        
+
         # Title
         pdf.set_font("helvetica", "B", 16)
         pdf.cell(0, 10, body.title, new_x="LMARGIN", new_y="NEXT", align="C")
         pdf.ln(10)
-        
+
         # Sections
         pdf.set_font("helvetica", "", 12)
         for section in body.sections:
             pdf.set_font("helvetica", "B", 14)
             pdf.cell(0, 10, section.heading, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
-            
+
             pdf.set_font("helvetica", "", 12)
             pdf.multi_cell(0, 6, section.content)
             pdf.ln(5)
-            
+
         # Links
         if body.links:
             pdf.add_page()
             pdf.set_font("helvetica", "B", 14)
             pdf.cell(0, 10, "Relevant Links", new_x="LMARGIN", new_y="NEXT")
             pdf.ln(5)
-            
+
             pdf.set_font("helvetica", "", 10)
             pdf.set_text_color(0, 0, 255)
             for link in body.links:
@@ -60,7 +68,7 @@ def generate_pdf(request: Request, body: PdfGenerateRequest):
         pdf_bytes = pdf.output()
         buffer = io.BytesIO(pdf_bytes)
         buffer.seek(0)
-        
+
         # Upload to Media Storage
         storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
         response = requests.post(
@@ -75,10 +83,12 @@ def generate_pdf(request: Request, body: PdfGenerateRequest):
             cookies=request.cookies,
             timeout=15,
         )
-        
+
         if not response.ok:
-            raise HTTPException(status_code=response.status_code, detail="Media storage upload failed")
-            
+            raise HTTPException(
+                status_code=response.status_code, detail="Media storage upload failed"
+            )
+
         return response.json()
 
     except Exception as e:
@@ -124,3 +134,42 @@ def upload_media(request: Request, file: UploadFile = File(...)):
         return response.json()
     except ValueError:
         raise HTTPException(status_code=502, detail="Invalid storage response")
+
+
+@router.get("/claims/random", response_model=ClaimResponse)
+def get_random_claim(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    claim_index = randbelow(100) + 1
+    filename = f"CLM-2026-{claim_index:04d}.json"
+    storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
+
+    try:
+        response = requests.get(
+            f"{storage_url}/claims/{filename}",
+            cookies=request.cookies,
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Media storage unavailable")
+
+    if not response.ok:
+        detail = "Claim retrieval failed"
+        try:
+            payload = response.json()
+            detail = payload.get("detail", detail)
+        except ValueError:
+            if response.text:
+                detail = response.text
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Invalid storage response")
+
+    if not isinstance(payload, dict) or "claim" not in payload:
+        raise HTTPException(status_code=502, detail="Invalid claim payload")
+
+    return payload

@@ -24,8 +24,8 @@ spec:
           #   docker build -t irc-frontend:latest ./frontend \
           #     --build-arg VITE_API_URL=http://monolith:8002 \
           #     --build-arg VITE_WS_URL=ws://monolith:8002 \
-          #     --build-arg VITE_PUBLIC_API_URL=http://localhost \
-          #     --build-arg VITE_PUBLIC_WS_URL=ws://localhost
+          #     --build-arg VITE_PUBLIC_API_URL=http://<public-host> \
+          #     --build-arg VITE_PUBLIC_WS_URL=ws://<public-host>
           #   sudo k3s ctr images import <(docker save irc-frontend:latest)
           image: irc-frontend:latest
           imagePullPolicy: Never # Use locally imported image

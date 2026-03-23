@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   createCalendarEvent,
+  fetchRandomClaim,
   fetchGmailMessages,
   generateCalendarQuestion,
   generateGmailQuestions,
@@ -11,7 +12,7 @@ import {
   getAIStatus,
 } from '../api'
 import type { CalendarEventPayload } from '../types'
-import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock } from 'lucide-react'
+import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 
 interface AIChannelProps {
@@ -30,12 +31,26 @@ type ConversationEntry = {
   query: string
   response: string
   agent: string
-  mode?: 'agent_message'
+  mode?: 'agent_message' | 'claim_message'
   emails?: any[]
   pdfUrl?: string
+  claim?: unknown
+  claimFilename?: string
+  claimPretty?: string
 }
 
-const GMAIL_OPTIONS = [
+type ClaimReportNode = {
+  label?: string
+  value?: string
+  children?: ClaimReportNode[]
+}
+
+type ClaimReportSection = {
+  title: string
+  nodes: ClaimReportNode[]
+}
+
+const AI_OPTIONS = [
   {
     id: '1',
     label: 'Analyze my emails',
@@ -47,6 +62,12 @@ const GMAIL_OPTIONS = [
     label: 'Create a meeting',
     icon: Calendar,
     description: 'Schedule a new meeting in your calendar',
+  },
+  {
+    id: 'claims',
+    label: 'Claims Q&A',
+    icon: Flag,
+    description: "Review a random claim from the People's Archive",
   },
 ]
 
@@ -75,6 +96,7 @@ export function AIChannel({
     | 'quiz'
     | 'analyzing'
     | 'summary'
+    | 'claims'
     | 'calendar-intake'
     | 'calendar-clarify'
     | 'calendar-confirm'
@@ -153,6 +175,211 @@ export function AIChannel({
     return /^(yes|y|yep|sure|ok|okay|confirm)\b/.test(normalized)
   }
 
+  const formatClaim = (payload: unknown) => {
+    try {
+      return JSON.stringify(payload, null, 2) || ''
+    } catch {
+      return String(payload)
+    }
+  }
+
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+
+  const formatLabel = (value: string) =>
+    value
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+
+  const formatDateValue = (value: string) => {
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+    const hasTime = value.includes('T') || value.includes(':')
+    return hasTime ? parsed.toLocaleString() : parsed.toLocaleDateString()
+  }
+
+  const formatClaimValue = (value: unknown, keyPath?: string) => {
+    if (value === null || value === undefined) {
+      return 'Not reported'
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'Yes' : 'No'
+    }
+    if (typeof value === 'number') {
+      if (keyPath?.toLowerCase().endsWith('_eur')) {
+        return `€${value.toLocaleString('en-US')}`
+      }
+      return value.toLocaleString('en-US')
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        return 'Not reported'
+      }
+      const normalizedKey = keyPath?.toLowerCase() ?? ''
+      if (normalizedKey.includes('date') || normalizedKey.includes('timestamp') || normalizedKey.endsWith('_at')) {
+        return formatDateValue(trimmed)
+      }
+      return trimmed
+    }
+    return JSON.stringify(value)
+  }
+
+  const MAX_REPORT_DEPTH = 5
+  const MAX_ARRAY_ITEMS = 50
+
+  const buildClaimNode = (
+    label: string | undefined,
+    value: unknown,
+    depth: number,
+    keyPath: string,
+  ): ClaimReportNode => {
+    if (value === null || value === undefined) {
+      return { label, value: 'Not reported' }
+    }
+
+    if (depth >= MAX_REPORT_DEPTH) {
+      return { label, value: formatClaimValue(value, keyPath) }
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return { label, value: 'No entries recorded.' }
+      }
+      const children = value.slice(0, MAX_ARRAY_ITEMS).map((item, index) => {
+        const needsLabel = isRecord(item) || Array.isArray(item)
+        const itemLabel = needsLabel ? `Item ${index + 1}` : undefined
+        return buildClaimNode(itemLabel, item, depth + 1, `${keyPath}[${index}]`)
+      })
+      if (value.length > MAX_ARRAY_ITEMS) {
+        children.push({ value: `...${value.length - MAX_ARRAY_ITEMS} more items` })
+      }
+      return { label, children }
+    }
+
+    if (isRecord(value)) {
+      const entries = Object.entries(value)
+      if (!entries.length) {
+        return { label, value: 'No entries recorded.' }
+      }
+      const children = entries.map(([key, nestedValue]) =>
+        buildClaimNode(formatLabel(key), nestedValue, depth + 1, `${keyPath}.${key}`),
+      )
+      return { label, children }
+    }
+
+    return { label, value: formatClaimValue(value, keyPath) }
+  }
+
+  const buildSectionNodes = (
+    value: unknown,
+    keyPath: string,
+    itemLabel?: string,
+  ): ClaimReportNode[] => {
+    if (value === null || value === undefined) {
+      return [{ value: 'Not reported' }]
+    }
+
+    if (Array.isArray(value)) {
+      if (!value.length) {
+        return [{ value: 'No entries recorded.' }]
+      }
+      return value.slice(0, MAX_ARRAY_ITEMS).map((item, index) => {
+        const needsLabel = isRecord(item) || Array.isArray(item)
+        const labelPrefix = itemLabel ?? 'Item'
+        const label = needsLabel ? `${labelPrefix} ${index + 1}` : undefined
+        return buildClaimNode(label, item, 1, `${keyPath}[${index}]`)
+      })
+    }
+
+    if (isRecord(value)) {
+      return Object.entries(value).map(([key, nestedValue]) =>
+        buildClaimNode(formatLabel(key), nestedValue, 1, `${keyPath}.${key}`),
+      )
+    }
+
+    return [{ value: formatClaimValue(value, keyPath) }]
+  }
+
+  const buildClaimReport = (payload: unknown): ClaimReportSection[] => {
+    if (!isRecord(payload)) {
+      return [
+        {
+          title: 'Collective Summary',
+          nodes: [{ value: 'Claim dossier is unavailable or malformed.' }],
+        },
+      ]
+    }
+
+    const record = payload
+    const usedKeys = new Set<string>()
+    const sections: ClaimReportSection[] = []
+
+    const dossierKeys = [
+      'claim_id',
+      'policy_id',
+      'status',
+      'claim_type',
+      'loss_date',
+      'reported_date',
+    ]
+
+    dossierKeys.forEach((key) => usedKeys.add(key))
+
+    sections.push({
+      title: "People's Dossier",
+      nodes: dossierKeys.map((key) => buildClaimNode(formatLabel(key), record[key], 1, key)),
+    })
+
+    const orderedSections: Array<{ title: string; key: string; itemLabel?: string }> = [
+      { title: 'Incident & Intake', key: 'claim_intake' },
+      { title: 'Insured & Property', key: 'insured' },
+      { title: 'Policy & Limits', key: 'policy' },
+      { title: 'Coverage Review', key: 'coverage_review' },
+      { title: 'Resolution & Payment', key: 'resolution' },
+      { title: 'Document Register', key: 'documents', itemLabel: 'Document' },
+      { title: 'Adjuster Notes', key: 'adjuster_notes', itemLabel: 'Note' },
+      { title: 'Collective Questions', key: 'conversation_seed_questions' },
+    ]
+
+    orderedSections.forEach((section) => {
+      usedKeys.add(section.key)
+      sections.push({
+        title: section.title,
+        nodes: buildSectionNodes(record[section.key], section.key, section.itemLabel),
+      })
+    })
+
+    const additionalNodes = Object.entries(record)
+      .filter(([key]) => !usedKeys.has(key))
+      .map(([key, value]) => buildClaimNode(formatLabel(key), value, 1, key))
+
+    if (additionalNodes.length) {
+      sections.push({ title: 'Additional Signals', nodes: additionalNodes })
+    }
+
+    return sections
+  }
+
+  const renderClaimNodes = (nodes: ClaimReportNode[], depth = 0) => (
+    <ul className={`claim-report-list ${depth > 0 ? 'claim-report-list--nested' : ''}`}>
+      {nodes.map((node, nodeIndex) => (
+        <li key={`${node.label || 'value'}-${nodeIndex}`}>
+          {node.label && (
+            <span className="claim-report-label">
+              {node.label}
+              {node.value ? ': ' : ''}
+            </span>
+          )}
+          {node.value && <span className="claim-report-value">{node.value}</span>}
+          {node.children && renderClaimNodes(node.children, depth + 1)}
+        </li>
+      ))}
+    </ul>
+  )
+
   const handleReset = useCallback(() => {
     setGmailStage('choice')
     setGmailQuestions([])
@@ -221,8 +448,35 @@ export function AIChannel({
         setIsSubmitting(false)
         return
       }
+
+      if (optionId === 'claims') {
+        setStreamProgress("Requesting a claim from the People's Archive...")
+        const { filename, claim } = await fetchRandomClaim()
+        const claimPretty = formatClaim(claim)
+        const rallyingCall =
+          `Comrade, claim ${filename} has been delivered for collective review. ` +
+          'Ask your questions below to serve the shared record.'
+        setResponses([
+          {
+            id: Date.now(),
+            query: '',
+            response: rallyingCall,
+            agent: 'Claims Q&A',
+            mode: 'claim_message',
+            claim,
+            claimFilename: filename,
+            claimPretty,
+          },
+        ])
+        setGmailStage('claims')
+        setActiveQuestion(`Ask about ${filename}...`)
+        setStreamProgress(null)
+        setIsSubmitting(false)
+        return
+      }
     } catch (err) {
-      setStreamError('Failed to start. Please try again.')
+      const message = err instanceof Error ? err.message : 'Failed to start. Please try again.'
+      setStreamError(message)
       setStreamProgress(null)
       console.error(err)
     } finally {
@@ -260,6 +514,12 @@ export function AIChannel({
     ])
 
     try {
+      if (gmailStage === 'claims') {
+        setIsSubmitting(false)
+        setQuery('')
+        return
+      }
+
       if (gmailStage === 'calendar-intake' || gmailStage === 'calendar-clarify') {
         setStreamProgress('Reviewing meeting details...')
         const { status, question, event } = await generateCalendarQuestion(
@@ -514,8 +774,29 @@ export function AIChannel({
     }
   }
 
-  const isFlowComplete = gmailStage === 'summary' || gmailStage === 'calendar-done'
+  const isFlowComplete =
+    gmailStage === 'summary' || gmailStage === 'calendar-done' || gmailStage === 'claims'
   const showOptionCards = gmailStage === 'choice' && responses.length === 0 && !isSubmitting
+  const isClaimsMode = gmailStage === 'claims'
+  const isCalendarMode = gmailStage.includes('calendar')
+  const aiUnavailable = Boolean(healthMessage) || Boolean(aiAccessMessage) || aiStatus?.available === false
+  const aiUnavailableMessage =
+    aiAccessMessage || healthMessage || 'AI service is not configured yet. Please contact administrator.'
+  const assistantLabel = isClaimsMode
+    ? 'Claims Q&A'
+    : isCalendarMode
+      ? 'Calendar Assistant'
+      : 'Gmail Assistant'
+  const assistantBadgeClass = isClaimsMode
+    ? 'bg-red-100 text-red-700'
+    : 'bg-amber-100 text-amber-700'
+  const assistantTagClass = isClaimsMode
+    ? 'bg-red-100/70 text-red-800'
+    : 'bg-amber-100/50 text-amber-800'
+  const assistantIcon = isClaimsMode ? Flag : isCalendarMode ? Calendar : Sparkles
+  const assistantIconClass = isClaimsMode ? 'text-red-600' : 'text-amber-600'
+  const AssistantIcon = assistantIcon
+  const inputDisabled = isSubmitting || (!isClaimsMode && aiUnavailable)
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
@@ -524,10 +805,12 @@ export function AIChannel({
         <div className="p-3 md:p-4 border-b chat-header">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <Sparkles size={18} className="text-amber-600 flex-shrink-0" />
+              <AssistantIcon size={18} className={`${assistantIconClass} flex-shrink-0`} />
               <div className="font-semibold text-sm md:text-base truncate">{channelName}</div>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
-                Gmail Assistant
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${assistantBadgeClass}`}
+              >
+                {assistantLabel}
               </span>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -569,22 +852,24 @@ export function AIChannel({
         {showOptionCards && (
           <div className="text-center py-6 md:py-8 px-4">
             <div className="inline-flex items-center justify-center w-12 h-12 md:w-16 md:h-16 rounded-full bg-amber-100 mb-3 md:mb-4">
-              <Mail size={24} className="md:w-8 md:h-8 text-amber-600" />
+              <Sparkles size={24} className="md:w-8 md:h-8 text-amber-600" />
             </div>
-            <h2 className="text-lg md:text-xl font-semibold mb-2">Gmail Assistant</h2>
+            <h2 className="text-lg md:text-xl font-semibold mb-2">AI Assistants</h2>
             <p className="chat-meta mb-6 md:mb-8 max-w-md mx-auto text-sm md:text-base">
               Choose what you'd like to do:
             </p>
 
             {/* Option cards */}
             <div className="grid gap-3 md:gap-4 max-w-lg mx-auto">
-              {GMAIL_OPTIONS.map((option) => {
+              {AI_OPTIONS.map((option) => {
                 const Icon = option.icon
+                const isClaimsOption = option.id === 'claims'
+                const isOptionDisabled = isSubmitting || (!isClaimsOption && aiUnavailable)
                 return (
                   <button
                     key={option.id}
                     onClick={() => handleOptionSelect(option.id)}
-                    disabled={isSubmitting || Boolean(healthMessage) || Boolean(aiAccessMessage)}
+                    disabled={isOptionDisabled}
                     className="flex items-center gap-3 md:gap-4 p-4 md:p-5 rounded-xl chat-card hover:border-amber-300 hover:bg-amber-50/50 transition-all text-left group min-h-[72px] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <div className="w-12 h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center bg-amber-100 group-hover:bg-amber-200 transition-colors flex-shrink-0">
@@ -612,31 +897,44 @@ export function AIChannel({
                 <span className="text-sm text-amber-600 ml-2">{streamProgress || 'Starting...'}</span>
               </div>
             )}
+
+            {streamError && !isSubmitting && (
+              <div className="mt-6 p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 max-w-lg mx-auto">
+                <div className="text-red-800 font-medium text-sm md:text-base">Request failed</div>
+                <div className="text-red-700 text-xs md:text-sm">{streamError}</div>
+              </div>
+            )}
           </div>
         )}
 
         {/* Error messages at top */}
-        {(healthMessage || aiAccessMessage) && showOptionCards && (
+        {aiUnavailable && showOptionCards && (
           <div className="p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 mb-4 max-w-lg mx-auto">
             <div className="text-red-800 font-medium text-sm md:text-base">AI unavailable</div>
             <div className="text-red-700 text-xs md:text-sm">
-              {aiAccessMessage || healthMessage}
-            </div>
-          </div>
-        )}
-
-        {aiStatus?.available === false && showOptionCards && (
-          <div className="p-3 md:p-4 rounded-xl bg-red-50 border border-red-200 mb-4 max-w-lg mx-auto">
-            <div className="text-red-800 font-medium text-sm md:text-base">AI unavailable</div>
-            <div className="text-red-700 text-xs md:text-sm">
-              AI service is not configured yet. Please contact administrator.
+              {aiUnavailableMessage} Claims Q&A is still available.
             </div>
           </div>
         )}
 
         {/* Conversation */}
-        {responses.map((response, index) => (
-          <div key={index} className="mb-4 md:mb-6">
+        {responses.map((response, index) => {
+          const isClaimMessage = response.mode === 'claim_message'
+          const responseCardClass = isClaimMessage
+            ? 'bg-red-50 border-red-200'
+            : 'bg-amber-50 border-amber-200'
+          const responseAvatarClass = isClaimMessage ? 'bg-red-200' : 'bg-amber-200'
+          const responseIconClass = isClaimMessage ? 'text-red-700' : 'text-amber-700'
+          const responseTitleClass = isClaimMessage ? 'text-red-800' : 'text-amber-800'
+          const responseBadgeClass = isClaimMessage
+            ? 'bg-red-200 text-red-800'
+            : 'bg-amber-200 text-amber-800'
+          const responseTextClass = isClaimMessage ? 'text-red-900' : 'text-amber-900'
+          const ResponseIcon = isClaimMessage ? Flag : Mail
+          const claimReport = isClaimMessage ? buildClaimReport(response.claim) : []
+
+          return (
+            <div key={index} className="mb-4 md:mb-6">
             {/* User query */}
             {response.query && (
               <div className="flex gap-2 md:gap-3 chat-card p-2 md:p-3 rounded-xl mb-2 md:mb-3">
@@ -654,21 +952,63 @@ export function AIChannel({
 
             {/* AI response */}
             {response.response && (
-              <div className="flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200">
-                <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
-                  <Mail size={14} className="md:w-4 md:h-4 text-amber-700" />
+              <div className={`flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl border ${responseCardClass}`}>
+                <div
+                  className={`w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 ${responseAvatarClass}`}
+                >
+                  <ResponseIcon size={14} className={`md:w-4 md:h-4 ${responseIconClass}`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <div className="text-xs md:text-sm font-semibold text-amber-800">
+                    <div className={`text-xs md:text-sm font-semibold ${responseTitleClass}`}>
                       {response.agent}
                     </div>
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-800">
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${responseBadgeClass}`}>
                       AI
                     </span>
                   </div>
-                  <div className="text-amber-900 whitespace-pre-wrap text-sm md:text-base break-words">
+                  <div className={`${responseTextClass} whitespace-pre-wrap text-sm md:text-base break-words`}>
+                    {isClaimMessage && (
+                      <div className="mb-3">
+                        <div className="text-xs uppercase tracking-wider text-red-700">
+                          People's Claim Archive
+                        </div>
+                        {response.claimFilename && (
+                          <div className="text-xs text-red-700">File: {response.claimFilename}</div>
+                        )}
+                      </div>
+                    )}
                     {response.response}
+
+                    {isClaimMessage && (
+                      <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-4 claim-report">
+                        <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-3">
+                          Collective Report
+                        </div>
+                        <div className="space-y-4">
+                          {claimReport.map((section, sectionIndex) => (
+                            <div key={`${section.title}-${sectionIndex}`}>
+                              <div className="claim-report-title text-red-800 text-xs">
+                                {section.title}
+                              </div>
+                              <div className="mt-2 text-sm md:text-base">
+                                {renderClaimNodes(section.nodes)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {response.claimPretty && (
+                          <details className="claim-report-details mt-4">
+                            <summary className="text-xs uppercase tracking-widest text-red-700">
+                              Full dossier (raw JSON)
+                            </summary>
+                            <pre className="mt-2 text-xs font-mono text-red-900 whitespace-pre-wrap break-words">
+                              {response.claimPretty}
+                            </pre>
+                          </details>
+                        )}
+                      </div>
+                    )}
                     
                     {/* Email list */}
                     {response.mode === 'agent_message' && response.emails && (
@@ -721,7 +1061,8 @@ export function AIChannel({
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
 
         {/* Loading skeleton */}
         {isSubmitting && !showOptionCards && (
@@ -798,8 +1139,8 @@ export function AIChannel({
                   Start Over
                 </button>
               )}
-              <span className="text-xs md:text-sm font-medium px-2 py-1 bg-amber-100/50 rounded-md text-amber-800">
-                {gmailStage.includes('calendar') ? 'Calendar Assistant' : 'Gmail Assistant'}
+              <span className={`text-xs md:text-sm font-medium px-2 py-1 rounded-md ${assistantTagClass}`}>
+                {assistantLabel}
               </span>
             </div>
             <form
@@ -815,16 +1156,13 @@ export function AIChannel({
                   className="w-full px-3 py-3 bg-transparent border-0 focus:ring-0 text-sm md:text-base disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-stone-400"
                   style={{ minHeight: '44px' }}
                   autoFocus
-                  disabled={isSubmitting || Boolean(healthMessage) || Boolean(aiAccessMessage)}
+                  disabled={inputDisabled}
                 />
               </div>
               <button
                 type="submit"
                 disabled={
-                  isSubmitting ||
-                  Boolean(healthMessage) ||
-                  Boolean(aiAccessMessage) ||
-                  !query.trim()
+                  inputDisabled || !query.trim()
                 }
                 className="p-2 rounded-xl transition-all chat-send-button disabled:opacity-60 h-[44px] w-[44px] flex items-center justify-center flex-shrink-0 shadow-sm"
               >

@@ -51,6 +51,12 @@
 **Impact**: Potential security concern, non-standard for Node.js apps
 **Recommendation**: Change to port 3000/8080 and update service targetPort
 
+### 9. Local Allowlist Defaults Expanded
+**Location**: `k8s/manifests/configmap.yaml`, `docker-compose.yml`, `.env.local`
+**Issue**: Local defaults include non-admin seed users in ADMIN/AI allowlists for convenience
+**Impact**: Admin-only features are reachable by guest/guest2 when defaults are used
+**Recommendation**: Override allowlists in production and review before deployment
+
 ## Implementation Notes (2026-03-22)
 
 ### ANTHROPIC_API_KEY Injection
@@ -69,12 +75,17 @@ Database migrations are implemented as K8s Jobs (`migrations-job.yaml`) rather t
 **Trade-off**: Requires orchestration in deploy script
 
 ### MinIO Bucket Creation
-The `run_locally_k3s.sh` script creates the 'media' bucket using a one-shot `minio/mc` pod. This runs after MinIO is deployed and before the application services need it.
+The `run_locally_k3s.sh` script creates the 'media' and 'synt-data' buckets using a one-shot `minio/mc` pod. This runs after MinIO is deployed and before the application services need it.
+
+### Public Base URL Auto-Detection
+The `run_locally_k3s.sh` script now derives `PUBLIC_BASE_URL` from the node IP when it is public, and falls back to `http://localhost` for private IPs. It patches the ConfigMap to keep CORS and MinIO public URLs in sync.
+
+**Trade-off**: The heuristic can pick a LAN IP on non-VPS nodes; override with `PUBLIC_BASE_URL` when needed.
 
 ### Health Check Inconsistency
 Services use different health check endpoints:
 - `/health` (monolith)
-- `/healthz` (ai-service, ai-service-adk, audit-logger, data-processor, media-storage)
+- `/healthz` (ai-service-adk, audit-logger, data-processor, media-storage)
 - `/minio/health/ready` (minio)
 
 **Recommendation**: Standardize on `/healthz` for new services.
@@ -82,7 +93,7 @@ Services use different health check endpoints:
 ## Deferred Work
 
 - [ ] Update Helm chart or mark as deprecated
-- [ ] Add HPA for ai-service, ai-service-adk, data-processor
+- [ ] Add HPA for ai-service-adk, data-processor
 - [ ] Add NetworkPolicy for namespace isolation
 - [ ] Document vLLM configuration for K3s
 - [ ] Add PodDisruptionBudget for postgres, redis, minio
@@ -107,9 +118,9 @@ Services use different health check endpoints:
 **Cause**: media-storage Flask app missing CORS headers for K8s ingress
 **Status**: Needs investigation
 
-#### CORS Errors on AI Service
+#### CORS Errors on AI Service ADK
 **Symptom**: Browser console shows CORS errors when accessing AI features
-**Location**: `k8s/manifests/ai-service.yaml`, `ai-service/main.py`
+**Location**: `k8s/manifests/ai-service-adk.yaml`, `ai-service-adk/main.py`
 **Status**: Needs investigation
 
 #### Admin Check Failing
@@ -117,7 +128,7 @@ Services use different health check endpoints:
 **Possible Causes**:
 1. User seeding didn't set `is_admin=true`
 2. JWT token not including admin flag
-3. AI service not reading admin flag from token correctly
+3. AI service ADK not reading admin flag from token correctly
 **Status**: Needs investigation
 
 ### Health Check Endpoint Fixes

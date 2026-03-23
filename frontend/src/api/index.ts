@@ -5,6 +5,7 @@ import type {
   AIStatus,
   CalendarEventPayload,
   InferenceLogEvent,
+  ClaimResponse,
 } from '../types';
 
 const API_BASE_URL =
@@ -218,6 +219,17 @@ export const generatePdf = async (
   });
   if (!response.ok) {
     throw new Error('Failed to generate PDF');
+  }
+  return response.json();
+};
+
+export const fetchRandomClaim = async (): Promise<ClaimResponse> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/random`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch claim' }));
+    throw new Error(error.detail || 'Failed to fetch claim');
   }
   return response.json();
 };

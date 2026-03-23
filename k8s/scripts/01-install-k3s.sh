@@ -48,4 +48,4 @@ echo ""
 echo "K3s systemd service status:"
 systemctl is-active k3s
 echo ""
-echo "Next step: Run 02-install-argocd.sh"
+echo "Next step: Run 03-install-nginx-ingress.sh"

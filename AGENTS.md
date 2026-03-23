@@ -29,7 +29,9 @@ or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 
 # Coding self loop
 
-**Your code will be evaluated by three agents Claude Opus 4.6, and Codex 5.3**
+**Your code will be evaluated by three agents Claude Opus 4.6, and Codex 5.3 and a Secret Frontier lab, be paranoid**
+
+**MUST** be acceptable to other agents as solution
 
 After the coding agent does it job check the changes with the git diff short and do a static linting provivded by pixi.toml python pixi run python-lint 
 

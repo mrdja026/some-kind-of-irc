@@ -173,7 +173,6 @@ config:
 - Complete backend deployment template
 - Add Redis deployment template
 - Add PostgreSQL deployment template (when needed)
-- Configure Argo CD Application resource
 
 **Auth Service Extraction Preparation**:
 - Define Auth Service API contract

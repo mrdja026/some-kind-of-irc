@@ -29,16 +29,11 @@ if ! command -v k3s &>/dev/null && ! command -v kubectl &>/dev/null; then
 fi
 
 # 2) Delete application namespaces (idempotent)
-info "Deleting namespaces: irc-app, argocd, ingress-nginx (ignore if missing)..."
+info "Deleting namespaces: irc-app, ingress-nginx (ignore if missing)..."
 kubectl delete namespace irc-app --ignore-not-found=true --grace-period=0 --force=true || true
-kubectl delete namespace argocd --ignore-not-found=true --grace-period=0 --force=true || true
 kubectl delete namespace ingress-nginx --ignore-not-found=true --grace-period=0 --force=true || true
 
-# 3) Remove Argo CD CRDs (cleaner uninstall)
-info "Removing Argo CD CRDs (ignore if missing)..."
-kubectl delete crd applications.argoproj.io appprojects.argoproj.io --ignore-not-found=true || true
-
-# 4) Uninstall K3s (server/agent) if present
+# 3) Uninstall K3s (server/agent) if present
 if [ -x "/usr/local/bin/k3s-uninstall.sh" ]; then
     info "Running k3s-uninstall.sh..."
     sudo /usr/local/bin/k3s-uninstall.sh || warn "k3s-uninstall.sh reported issues; continuing"
@@ -52,6 +47,6 @@ fi
 # 5) Final status
 echo
 info "============================================================"
-info "K3s teardown complete (applications, ingress, Argo CD, cluster)."
+info "K3s teardown complete (applications, ingress, cluster)."
 info "If kubeconfig still references the removed cluster, remove that context manually."
 info "============================================================"
