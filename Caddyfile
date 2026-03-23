@@ -11,22 +11,14 @@
 
 :80 {
   @compressible {
-    not path /ai/query/stream /ai/local/query/stream
+    not path /adk/ai/query/stream
   }
   encode @compressible gzip
 
   @api path /auth/* /channels/* /health
   reverse_proxy @api backend:8002
 
-  @ai_stream path /ai/query/stream /ai/local/query/stream
-  reverse_proxy @ai_stream ai-service:8001 {
-    flush_interval -1
-  }
-
-  @ai path /ai/*
-  reverse_proxy @ai ai-service:8001
-
-  # Google ADK AI service for A/B testing
+  # ADK AI service (Google ADK backend)
   @adk path /adk/*
   handle @adk {
     uri strip_prefix /adk
@@ -34,7 +26,7 @@
   }
 
   @ai_health path /healthz
-  reverse_proxy @ai_health ai-service:8001
+  reverse_proxy @ai_health ai-service-adk:8004
 
   @ws path /ws/*
   reverse_proxy @ws backend:8002

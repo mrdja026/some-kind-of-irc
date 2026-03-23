@@ -127,19 +127,13 @@ export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:9101}"
 export DATA_PROCESSOR_URL="${DATA_PROCESSOR_URL:-http://data-processor:8003}"
 export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269,http://localhost:8080,http://127.0.0.1:8080}"
 export FEATURE_DATA_PROCESSOR="true"
-export FEATURE_LOCAL_QA="${FEATURE_LOCAL_QA:-true}"
-export LOCAL_QA_CHANNEL_NAME="${LOCAL_QA_CHANNEL_NAME:-#qa-local}"
 export AI_RATE_LIMIT_PER_HOUR="${AI_RATE_LIMIT_PER_HOUR:-100}"
-export LOCAL_QA_RATE_LIMIT_PER_HOUR="${LOCAL_QA_RATE_LIMIT_PER_HOUR:-100}"
 export DB_HOST="${DB_HOST:-postgres}"
 export DB_PORT="${DB_PORT:-5432}"
 export DB_NAME="${DB_NAME:-app_db}"
 export DB_USER="${DB_USER:-app_user}"
 
 export AI_ALLOWLIST="${AI_ALLOWLIST:-admina;guest;guest2;guest3}"
-export LOCAL_QA_VLLM_BASE_URL="${LOCAL_QA_VLLM_BASE_URL:-http://host.docker.internal:8066/v1}"
-export LOCAL_QA_MODEL_NAME="${LOCAL_QA_MODEL_NAME:-phi3-mini}"
-export LOCAL_QA_API_KEY="${LOCAL_QA_API_KEY:-NA}"
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "Warning: ANTHROPIC_API_KEY is not set. Gmail summaries will be unavailable."
 fi
@@ -170,7 +164,6 @@ if [ "$BUILD_IMAGES" -eq 1 ]; then
   echo "Building docker images..."
   "${COMPOSE_CMD[@]}" build \
     backend \
-    ai-service \
     ai-service-adk \
     audit-logger \
     frontend \
@@ -206,21 +199,12 @@ echo "Running data-processor Django migrations..."
 "${COMPOSE_CMD[@]}" run --rm data-processor python manage.py migrate --noinput
 
 echo "Starting application services..."
-"${COMPOSE_CMD[@]}" up -d backend ai-service ai-service-adk audit-logger media-storage data-processor frontend caddy
+"${COMPOSE_CMD[@]}" up -d backend ai-service-adk audit-logger media-storage data-processor frontend caddy
 
 echo "Waiting for backend to become healthy..."
 if ensure_backend_running; then
   echo "Backend is up."
 fi
-
-echo "Waiting for ai-service to become healthy..."
-for _ in {1..30}; do
-  if curl -fsS http://localhost:8001/healthz >/dev/null 2>&1; then
-    echo "AI service is up."
-    break
-  fi
-  sleep 2
-done
 
 echo "Waiting for ai-service-adk to become healthy..."
 for _ in {1..30}; do
@@ -230,15 +214,6 @@ for _ in {1..30}; do
   fi
   sleep 2
 done
-
-echo "Checking local vLLM endpoint for Q&A local..."
-LOCAL_QA_MODELS_URL="${LOCAL_QA_VLLM_BASE_URL%/}/models"
-if curl -fsS "$LOCAL_QA_MODELS_URL" >/dev/null 2>&1; then
-  echo "Local vLLM endpoint is reachable ($LOCAL_QA_MODELS_URL)."
-else
-  echo "Warning: local vLLM endpoint not reachable at $LOCAL_QA_MODELS_URL."
-  echo "Q&A local will use fallback responses until vLLM is available."
-fi
 
 echo "Waiting for Caddy AI proxy to become healthy..."
 for _ in {1..30}; do
@@ -348,11 +323,8 @@ Deploy summary
 - Frontend (direct):   http://localhost:4269
 - Frontend (caddy):    http://localhost:8080
 - Backend API:         http://localhost:8002
-- AI Service (CrewAI): http://localhost:8080/ai/
 - AI Service (ADK):    http://localhost:8080/adk/
 - Anthropic API key:   ANTHROPIC_API_KEY (required for Gmail summaries)
-- Q&A local channel:   #qa-local (shown as Q&A local)
-- Local vLLM endpoint: http://host.docker.internal:8066/v1
 - Data Processor:      http://localhost:8080/data-processor/
 - Media proxy:         http://localhost:8080/media/...
 - MinIO console:       http://localhost:9001
