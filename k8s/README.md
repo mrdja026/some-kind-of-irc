@@ -69,19 +69,16 @@ chmod +x k8s/scripts/*.sh
 # 1. Install K3s (single-node, systemd)
 sudo ./k8s/scripts/01-install-k3s.sh
 
-# 2. Install Argo CD
-./k8s/scripts/02-install-argocd.sh
-
-# 3. Install NGINX Ingress Controller
+# 2. Install NGINX Ingress Controller
 ./k8s/scripts/03-install-nginx-ingress.sh
 
-# 4. Deploy Redis, Redis log sink, and PostgreSQL
+# 3. Deploy Redis, Redis log sink, and PostgreSQL
 ./k8s/scripts/04-deploy-redis-postgres.sh
 
-# 5. Build and deploy all services
+# 4. Build and deploy all services
 ./k8s/scripts/05-deploy-services.sh
 
-# 6. Configure ingress routes (Strangler Pattern)
+# 5. Configure ingress routes (Strangler Pattern)
 ./k8s/scripts/06-configure-ingress.sh
 ```
 
@@ -139,10 +136,6 @@ curl http://localhost/healthz             # → ai-service-adk 200
 curl http://localhost/adk/healthz         # → ai-service-adk 200
 curl http://localhost/data-processor/health  # → data-processor 404 (non-admin)
 
-# Access Argo CD UI
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-# Open https://localhost:8080 (user: admin, password from script output)
-
 # Access MinIO Console
 kubectl port-forward -n irc-app svc/minio 9001:9001
 # Open http://localhost:9001 (minioadmin/minioadmin)
@@ -152,7 +145,6 @@ kubectl port-forward -n irc-app svc/minio 9001:9001
 
 - **Frontend (SSR)**: http://localhost:4269 (port-forwarded from K3s)
 - **Backend API**: http://localhost/ (via NGINX Ingress on port 80)
-- **Argo CD**: https://localhost:8443 (after port-forward)
 - **MinIO Console**: http://localhost:9001 (after port-forward)
 
 **Strangler routes**:
@@ -198,7 +190,6 @@ k8s/
 │   └── irc-app/
 └── scripts/                    # Setup scripts (run in order)
     ├── 01-install-k3s.sh
-    ├── 02-install-argocd.sh
     ├── 03-install-nginx-ingress.sh
     ├── 04-deploy-redis-postgres.sh
     ├── 05-deploy-services.sh

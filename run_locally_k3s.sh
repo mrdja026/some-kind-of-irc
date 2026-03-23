@@ -174,7 +174,7 @@ if ! grep -q "Ubuntu" /etc/os-release 2>/dev/null; then
 fi
 
 # Check for required tools
-echo -e "${GREEN}[1/8] Checking prerequisites...${NC}"
+echo -e "${GREEN}[1/7] Checking prerequisites...${NC}"
 
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}Error: Docker is required but not installed${NC}"
@@ -193,7 +193,7 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 
 # Check if ports 80/443 are free (listeners only; ignore outbound connections)
-echo -e "${GREEN}[2/8] Checking ports 80/443 availability...${NC}"
+echo -e "${GREEN}[2/7] Checking ports 80/443 availability...${NC}"
 
 if ss -tlnp 2>/dev/null | grep -q ':80 '; then
     echo -e "${RED}Error: Port 80 is already in use (something is listening)${NC}"
@@ -212,7 +212,7 @@ fi
 echo -e "${GREEN}✓ Ports 80/443 are free${NC}"
 
 # Check if K3s is already installed
-echo -e "${GREEN}[3/8] Checking K3s installation...${NC}"
+echo -e "${GREEN}[3/7] Checking K3s installation...${NC}"
 
 if command -v k3s &>/dev/null && kubectl get nodes &>/dev/null 2>&1; then
     echo -e "${YELLOW}K3s is already installed and running${NC}"
@@ -225,15 +225,8 @@ else
     fi
 fi
 
-# Install Argo CD
-echo -e "${GREEN}[4/8] Installing Argo CD...${NC}"
-if ! "$K8S_SCRIPTS/02-install-argocd.sh"; then
-    echo -e "${RED}Error: Argo CD installation failed${NC}"
-    exit 1
-fi
-
 # Install NGINX Ingress
-echo -e "${GREEN}[5/8] Installing NGINX Ingress Controller...${NC}"
+echo -e "${GREEN}[4/7] Installing NGINX Ingress Controller...${NC}"
 if ! "$K8S_SCRIPTS/03-install-nginx-ingress.sh"; then
     echo -e "${RED}Error: NGINX Ingress installation failed${NC}"
     exit 1
@@ -252,7 +245,7 @@ else
 fi
 
 # Deploy Redis + PostgreSQL
-echo -e "${GREEN}[6/8] Deploying Redis and PostgreSQL...${NC}"
+echo -e "${GREEN}[5/7] Deploying Redis and PostgreSQL...${NC}"
 if ! "$K8S_SCRIPTS/04-deploy-redis-postgres.sh"; then
     echo -e "${RED}Error: Redis/PostgreSQL deployment failed${NC}"
     exit 1
@@ -271,7 +264,7 @@ export PUBLIC_BASE_URL
 export PUBLIC_WS_URL
 
 # Deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger)
-echo -e "${GREEN}[7/8] Deploying all services...${NC}"
+echo -e "${GREEN}[6/7] Deploying all services...${NC}"
 if ! "$K8S_SCRIPTS/05-deploy-services.sh"; then
     echo -e "${RED}Error: Service deployment failed${NC}"
     exit 1
@@ -282,7 +275,7 @@ inject_anthropic_api_key
 restart_runtime_deployments
 
 # Configure ingress routes (Strangler Pattern)
-echo -e "${GREEN}[8/8] Configuring Strangler Pattern ingress routes...${NC}"
+echo -e "${GREEN}[7/7] Configuring Strangler Pattern ingress routes...${NC}"
 if ! "$K8S_SCRIPTS/06-configure-ingress.sh"; then
     echo -e "${RED}Error: Ingress configuration failed${NC}"
     exit 1
@@ -317,7 +310,6 @@ echo "  - AI Service ADK:       ${PUBLIC_BASE_URL}/adk/*"
 echo "  - Data Processor:       ${PUBLIC_BASE_URL}/data-processor/*"
 echo "  - Media Storage:        ${PUBLIC_BASE_URL}/media/*"
 echo "  - MinIO (S3):           ${PUBLIC_BASE_URL}/minio/*"
-echo "  - Argo CD:              https://localhost:8443"
 echo ""
 echo "Strangler Pattern Routes:"
 echo "  - /auth/*             → monolith (until auth-service exists)"
@@ -343,8 +335,5 @@ echo "  kubectl get pods -n irc-app        # View running pods"
 echo "  kubectl logs -n irc-app -f         # Follow logs"
 echo "  kubectl port-forward -n irc-app svc/minio 9001:9001  # MinIO Console"
 echo "  k3s-uninstall.sh                   # Remove K3s cluster"
-echo ""
-echo "Argo CD Admin Password:"
-echo "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 echo ""
 echo -e "${GREEN}============================================================${NC}"

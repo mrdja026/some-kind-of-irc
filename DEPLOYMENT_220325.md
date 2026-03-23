@@ -26,16 +26,15 @@ export ANTHROPIC_API_KEY="sk-ant-your-key-here"
 # Make script executable and run
 chmod +x run_locally_k3s.sh
 ./run_locally_k3s.sh
-What the Script Does (8 steps)
+What the Script Does (7 steps)
 Step	Action
-1/8	Check prerequisites (docker, curl)
-2/8	Verify ports 80/443 are free
-3/8	Install K3s (idempotent)
-4/8	Install Argo CD
-5/8	Install NGINX Ingress
-6/8	Deploy Redis + PostgreSQL
-7/8	Build & deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
-8/8	Configure ingress routes
+1/7	Check prerequisites (docker, curl)
+2/7	Verify ports 80/443 are free
+3/7	Install K3s (idempotent)
+4/7	Install NGINX Ingress
+5/7	Deploy Redis + PostgreSQL
+6/7	Build & deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
+7/7	Configure ingress routes
 Then: Inject ANTHROPIC_API_KEY, create MinIO buckets, seed users.
 Verify Deployment
 # Check pods
@@ -146,11 +145,10 @@ The `run_locally_k3s.sh` script is a **dev environment bootstrapper**, not a pro
 
 | Step | What it does | Needed for production? |
 |------|--------------|------------------------|
-| 3/8 | Install K3s | ❌ Already installed on VPS |
-| 4/8 | Install Argo CD | ❌ Not used, or should be GitOps |
-| 5/8 | Install NGINX Ingress | ❌ Already installed |
-| 6/8 | Deploy Redis + PostgreSQL | ⚠️ One-time only |
-| 7/8 | Build images with Docker on VPS | ❌ Should use container registry |
+| 3/7 | Install K3s | ❌ Already installed on VPS |
+| 4/7 | Install NGINX Ingress | ❌ Already installed |
+| 5/7 | Deploy Redis + PostgreSQL | ⚠️ One-time only |
+| 6/7 | Build images with Docker on VPS | ❌ Should use container registry |
 
 ### What Production Should Look Like
 
@@ -161,13 +159,7 @@ kubectl apply -f k8s/manifests/
 kubectl rollout restart deployment -n irc-app
 ```
 
-**Option B: GitOps with Argo CD (if we're installing it anyway)**
-```bash
-# Argo CD watches repo and auto-deploys on push
-git push  # That's it
-```
-
-**Option C: CI/CD Pipeline**
+**Option B: CI/CD Pipeline**
 ```yaml
 # GitHub Actions / GitLab CI
 - Build images → Push to registry
@@ -178,13 +170,11 @@ git push  # That's it
 ### Current Reality
 - Script builds images locally on VPS (slow, uses VPS resources)
 - No container registry integration
-- Argo CD is installed but not configured for GitOps
 - Every "deploy" re-runs installation steps
 
 ### Recommended Future Work
 1. **Push images to registry** instead of building on VPS
-2. **Either use Argo CD properly** (GitOps) or **remove it**
-3. **Split script** into:
-   - `setup-k3s.sh` - One-time VPS setup
-   - `deploy.sh` - Actual deployment (just kubectl apply)
-4. **Add CI/CD** - Build images in GitHub Actions, deploy via kubectl or Argo CD
+2. **Split script** into:
+    - `setup-k3s.sh` - One-time VPS setup
+    - `deploy.sh` - Actual deployment (just kubectl apply)
+3. **Add CI/CD** - Build images in GitHub Actions, deploy via kubectl
