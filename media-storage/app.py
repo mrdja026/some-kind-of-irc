@@ -2,12 +2,11 @@ import io
 import os
 import re
 from uuid import uuid4
-from urllib.parse import quote
 from typing import Optional
 
 import boto3
 import requests
-from flask import Flask, jsonify, redirect, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from botocore.exceptions import EndpointConnectionError, ClientError
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -90,7 +89,6 @@ display_max_width = _get_int_env("MEDIA_DISPLAY_MAX_WIDTH", 1920)
 display_max_height = _get_int_env("MEDIA_DISPLAY_MAX_HEIGHT", 1080)
 
 minio_endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
-minio_public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT", minio_endpoint)
 minio_bucket = os.getenv("MINIO_BUCKET", "media")
 claims_bucket = os.getenv("MINIO_CLAIMS_BUCKET", "synt-data")
 claims_prefix = os.getenv("MINIO_CLAIMS_PREFIX", "").strip("/")
@@ -389,9 +387,38 @@ def get_claim(filename: str):
 
 @app.get("/media/<path:key>")
 def get_media(key: str):
-    encoded_key = quote(key)
-    url = f"{minio_public_endpoint.rstrip('/')}/{minio_bucket}/{encoded_key}"
-    return redirect(url, code=302)
+    try:
+        response = s3_client.get_object(Bucket=minio_bucket, Key=key)
+    except EndpointConnectionError:
+        return jsonify({"detail": "Storage unavailable"}), 503
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"NoSuchKey", "404", "NotFound"}:
+            return jsonify({"detail": "Media not found"}), 404
+        return jsonify({"detail": "Storage bucket error"}), 503
+
+    body = response.get("Body")
+    if body is None:
+        return jsonify({"detail": "Media unavailable"}), 502
+
+    try:
+        data = body.read()
+    except OSError:
+        return jsonify({"detail": "Failed to read media"}), 502
+
+    if not data:
+        return jsonify({"detail": "Media unavailable"}), 502
+
+    content_type = response.get("ContentType") or "application/octet-stream"
+    headers = {
+        "Cache-Control": "public, max-age=3600",
+    }
+    if "ETag" in response:
+        headers["ETag"] = response["ETag"]
+    if "ContentLength" in response:
+        headers["Content-Length"] = str(response["ContentLength"])
+
+    return app.response_class(data, mimetype=content_type, headers=headers)
 
 
 if __name__ == "__main__":
