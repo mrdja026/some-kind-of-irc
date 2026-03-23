@@ -1,5 +1,6 @@
 import io
 import os
+import re
 from uuid import uuid4
 from urllib.parse import quote
 from typing import Optional
@@ -91,6 +92,8 @@ display_max_height = _get_int_env("MEDIA_DISPLAY_MAX_HEIGHT", 1080)
 minio_endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
 minio_public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT", minio_endpoint)
 minio_bucket = os.getenv("MINIO_BUCKET", "media")
+claims_bucket = os.getenv("MINIO_CLAIMS_BUCKET", "synt-data")
+claims_prefix = os.getenv("MINIO_CLAIMS_PREFIX", "").strip("/")
 minio_region = os.getenv("MINIO_REGION", "us-east-1")
 minio_access_key = os.getenv("MINIO_ACCESS_KEY")
 minio_secret_key = os.getenv("MINIO_SECRET_KEY")
@@ -174,6 +177,28 @@ def _ensure_bucket_exists():
         print(f"Bucket '{minio_bucket}' created and policy applied.")
     else:
         print(f"Bucket '{minio_bucket}' found; policy ensured.")
+
+
+_claim_filename_re = re.compile(r"^CLM-2026-(\d{4})\.json$")
+
+
+def _parse_claim_index(filename: str) -> Optional[int]:
+    match = _claim_filename_re.match(filename)
+    if not match:
+        return None
+    try:
+        index = int(match.group(1))
+    except ValueError:
+        return None
+    if 1 <= index <= 100:
+        return index
+    return None
+
+
+def _build_claim_key(filename: str) -> str:
+    if not claims_prefix:
+        return filename
+    return f"{claims_prefix}/{filename}"
 
 
 @app.get("/health")
@@ -313,6 +338,53 @@ def upload_file():
             "size": len(display_bytes),
         }
     )
+
+
+@app.get("/claims/<path:filename>")
+def get_claim(filename: str):
+    _, error = _verify_session()
+    if error == "auth_unavailable":
+        return jsonify({"detail": "Auth service unavailable"}), 503
+    if error:
+        return jsonify({"detail": "Unauthorized"}), 401
+
+    if _parse_claim_index(filename) is None:
+        return jsonify({"detail": "Invalid claim filename"}), 400
+
+    try:
+        s3_client.head_bucket(Bucket=claims_bucket)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"NoSuchBucket", "404", "NotFound"}:
+            return jsonify({"detail": "Claims bucket not found"}), 503
+        return jsonify({"detail": "Storage bucket error"}), 503
+
+    claim_key = _build_claim_key(filename)
+
+    try:
+        response = s3_client.get_object(Bucket=claims_bucket, Key=claim_key)
+    except EndpointConnectionError:
+        return jsonify({"detail": "Storage unavailable"}), 503
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"NoSuchKey", "404", "NotFound"}:
+            return jsonify({"detail": "Claim not found"}), 404
+        return jsonify({"detail": "Storage bucket error"}), 503
+
+    try:
+        raw_payload = response["Body"].read()
+    except OSError:
+        return jsonify({"detail": "Failed to read claim"}), 502
+
+    if not raw_payload:
+        return jsonify({"detail": "Empty claim payload"}), 502
+
+    try:
+        claim_payload = json.loads(raw_payload)
+    except ValueError:
+        return jsonify({"detail": "Invalid claim JSON"}), 502
+
+    return jsonify({"filename": filename, "claim": claim_payload})
 
 
 @app.get("/media/<path:key>")

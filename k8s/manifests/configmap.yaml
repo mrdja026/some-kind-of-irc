@@ -48,6 +48,8 @@ data:
   # Example: http://203.0.113.10:8080/minio
   MINIO_PUBLIC_ENDPOINT: "http://CHANGE_ME:8080/minio"
   MINIO_BUCKET: "media"
+  MINIO_CLAIMS_BUCKET: "synt-data"
+  MINIO_CLAIMS_PREFIX: ""
   MINIO_ACCESS_KEY: "minioadmin"
   # REQUIRED: Base URL that external clients use to reach media-storage through the ingress.
   # Example: http://203.0.113.10:8080

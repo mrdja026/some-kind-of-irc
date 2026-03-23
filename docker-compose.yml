@@ -163,6 +163,8 @@ services:
       MINIO_ENDPOINT: "${MINIO_ENDPOINT:-http://minio:9000}"
       MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-http://localhost:8080/minio}"
       MINIO_BUCKET: "${MINIO_BUCKET:-media}"
+      MINIO_CLAIMS_BUCKET: "${MINIO_CLAIMS_BUCKET:-synt-data}"
+      MINIO_CLAIMS_PREFIX: "${MINIO_CLAIMS_PREFIX:-}"
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       BACKEND_VERIFY_URL: "${BACKEND_VERIFY_URL:-http://backend:8002/auth/me}"
