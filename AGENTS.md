@@ -46,6 +46,14 @@ After the coding agent does it job check the changes with the git diff short and
 **Allwas** ground research in search provided by the agent google/bing/fetch
 **Allways** describe tradeofs and propose them for simplicity
 
+# Debugging loop
+
+**MUST** the agent must ask if we are deploying on vps or localy
+**VPS** run-localy-k3s.sh
+**Local** deploy_local.sh --build --flags must pass
+When working with **VPS** add allways instructions to apply helm chart changes if applicible **AND** command to restart a affected part of the k3s plane
+
+
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
 or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 <!-- OPENSPEC:END -->
