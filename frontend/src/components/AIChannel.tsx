@@ -39,6 +39,17 @@ type ConversationEntry = {
   claimPretty?: string
 }
 
+type ClaimReportNode = {
+  label?: string
+  value?: string
+  children?: ClaimReportNode[]
+}
+
+type ClaimReportSection = {
+  title: string
+  nodes: ClaimReportNode[]
+}
+
 const AI_OPTIONS = [
   {
     id: '1',
@@ -171,6 +182,203 @@ export function AIChannel({
       return String(payload)
     }
   }
+
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+
+  const formatLabel = (value: string) =>
+    value
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase())
+
+  const formatDateValue = (value: string) => {
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+    const hasTime = value.includes('T') || value.includes(':')
+    return hasTime ? parsed.toLocaleString() : parsed.toLocaleDateString()
+  }
+
+  const formatClaimValue = (value: unknown, keyPath?: string) => {
+    if (value === null || value === undefined) {
+      return 'Not reported'
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'Yes' : 'No'
+    }
+    if (typeof value === 'number') {
+      if (keyPath?.toLowerCase().endsWith('_eur')) {
+        return `€${value.toLocaleString('en-US')}`
+      }
+      return value.toLocaleString('en-US')
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (!trimmed) {
+        return 'Not reported'
+      }
+      const normalizedKey = keyPath?.toLowerCase() ?? ''
+      if (normalizedKey.includes('date') || normalizedKey.includes('timestamp') || normalizedKey.endsWith('_at')) {
+        return formatDateValue(trimmed)
+      }
+      return trimmed
+    }
+    return JSON.stringify(value)
+  }
+
+  const MAX_REPORT_DEPTH = 5
+  const MAX_ARRAY_ITEMS = 50
+
+  const buildClaimNode = (
+    label: string | undefined,
+    value: unknown,
+    depth: number,
+    keyPath: string,
+  ): ClaimReportNode => {
+    if (value === null || value === undefined) {
+      return { label, value: 'Not reported' }
+    }
+
+    if (depth >= MAX_REPORT_DEPTH) {
+      return { label, value: formatClaimValue(value, keyPath) }
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return { label, value: 'No entries recorded.' }
+      }
+      const children = value.slice(0, MAX_ARRAY_ITEMS).map((item, index) => {
+        const needsLabel = isRecord(item) || Array.isArray(item)
+        const itemLabel = needsLabel ? `Item ${index + 1}` : undefined
+        return buildClaimNode(itemLabel, item, depth + 1, `${keyPath}[${index}]`)
+      })
+      if (value.length > MAX_ARRAY_ITEMS) {
+        children.push({ value: `...${value.length - MAX_ARRAY_ITEMS} more items` })
+      }
+      return { label, children }
+    }
+
+    if (isRecord(value)) {
+      const entries = Object.entries(value)
+      if (!entries.length) {
+        return { label, value: 'No entries recorded.' }
+      }
+      const children = entries.map(([key, nestedValue]) =>
+        buildClaimNode(formatLabel(key), nestedValue, depth + 1, `${keyPath}.${key}`),
+      )
+      return { label, children }
+    }
+
+    return { label, value: formatClaimValue(value, keyPath) }
+  }
+
+  const buildSectionNodes = (
+    value: unknown,
+    keyPath: string,
+    itemLabel?: string,
+  ): ClaimReportNode[] => {
+    if (value === null || value === undefined) {
+      return [{ value: 'Not reported' }]
+    }
+
+    if (Array.isArray(value)) {
+      if (!value.length) {
+        return [{ value: 'No entries recorded.' }]
+      }
+      return value.slice(0, MAX_ARRAY_ITEMS).map((item, index) => {
+        const needsLabel = isRecord(item) || Array.isArray(item)
+        const labelPrefix = itemLabel ?? 'Item'
+        const label = needsLabel ? `${labelPrefix} ${index + 1}` : undefined
+        return buildClaimNode(label, item, 1, `${keyPath}[${index}]`)
+      })
+    }
+
+    if (isRecord(value)) {
+      return Object.entries(value).map(([key, nestedValue]) =>
+        buildClaimNode(formatLabel(key), nestedValue, 1, `${keyPath}.${key}`),
+      )
+    }
+
+    return [{ value: formatClaimValue(value, keyPath) }]
+  }
+
+  const buildClaimReport = (payload: unknown): ClaimReportSection[] => {
+    if (!isRecord(payload)) {
+      return [
+        {
+          title: 'Collective Summary',
+          nodes: [{ value: 'Claim dossier is unavailable or malformed.' }],
+        },
+      ]
+    }
+
+    const record = payload
+    const usedKeys = new Set<string>()
+    const sections: ClaimReportSection[] = []
+
+    const dossierKeys = [
+      'claim_id',
+      'policy_id',
+      'status',
+      'claim_type',
+      'loss_date',
+      'reported_date',
+    ]
+
+    dossierKeys.forEach((key) => usedKeys.add(key))
+
+    sections.push({
+      title: "People's Dossier",
+      nodes: dossierKeys.map((key) => buildClaimNode(formatLabel(key), record[key], 1, key)),
+    })
+
+    const orderedSections: Array<{ title: string; key: string; itemLabel?: string }> = [
+      { title: 'Incident & Intake', key: 'claim_intake' },
+      { title: 'Insured & Property', key: 'insured' },
+      { title: 'Policy & Limits', key: 'policy' },
+      { title: 'Coverage Review', key: 'coverage_review' },
+      { title: 'Resolution & Payment', key: 'resolution' },
+      { title: 'Document Register', key: 'documents', itemLabel: 'Document' },
+      { title: 'Adjuster Notes', key: 'adjuster_notes', itemLabel: 'Note' },
+      { title: 'Collective Questions', key: 'conversation_seed_questions' },
+    ]
+
+    orderedSections.forEach((section) => {
+      usedKeys.add(section.key)
+      sections.push({
+        title: section.title,
+        nodes: buildSectionNodes(record[section.key], section.key, section.itemLabel),
+      })
+    })
+
+    const additionalNodes = Object.entries(record)
+      .filter(([key]) => !usedKeys.has(key))
+      .map(([key, value]) => buildClaimNode(formatLabel(key), value, 1, key))
+
+    if (additionalNodes.length) {
+      sections.push({ title: 'Additional Signals', nodes: additionalNodes })
+    }
+
+    return sections
+  }
+
+  const renderClaimNodes = (nodes: ClaimReportNode[], depth = 0) => (
+    <ul className={`claim-report-list ${depth > 0 ? 'claim-report-list--nested' : ''}`}>
+      {nodes.map((node, nodeIndex) => (
+        <li key={`${node.label || 'value'}-${nodeIndex}`}>
+          {node.label && (
+            <span className="claim-report-label">
+              {node.label}
+              {node.value ? ': ' : ''}
+            </span>
+          )}
+          {node.value && <span className="claim-report-value">{node.value}</span>}
+          {node.children && renderClaimNodes(node.children, depth + 1)}
+        </li>
+      ))}
+    </ul>
+  )
 
   const handleReset = useCallback(() => {
     setGmailStage('choice')
@@ -723,6 +931,7 @@ export function AIChannel({
             : 'bg-amber-200 text-amber-800'
           const responseTextClass = isClaimMessage ? 'text-red-900' : 'text-amber-900'
           const ResponseIcon = isClaimMessage ? Flag : Mail
+          const claimReport = isClaimMessage ? buildClaimReport(response.claim) : []
 
           return (
             <div key={index} className="mb-4 md:mb-6">
@@ -771,14 +980,33 @@ export function AIChannel({
                     )}
                     {response.response}
 
-                    {isClaimMessage && response.claimPretty && (
-                      <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-3">
-                        <div className="text-[10px] uppercase tracking-widest text-red-700 mb-2">
-                          Collective Record
+                    {isClaimMessage && (
+                      <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-4 claim-report">
+                        <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-3">
+                          Collective Report
                         </div>
-                        <pre className="text-xs md:text-sm font-mono text-red-900 whitespace-pre-wrap break-words">
-                          {response.claimPretty}
-                        </pre>
+                        <div className="space-y-4">
+                          {claimReport.map((section, sectionIndex) => (
+                            <div key={`${section.title}-${sectionIndex}`}>
+                              <div className="claim-report-title text-red-800 text-xs">
+                                {section.title}
+                              </div>
+                              <div className="mt-2 text-sm md:text-base">
+                                {renderClaimNodes(section.nodes)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {response.claimPretty && (
+                          <details className="claim-report-details mt-4">
+                            <summary className="text-xs uppercase tracking-widest text-red-700">
+                              Full dossier (raw JSON)
+                            </summary>
+                            <pre className="mt-2 text-xs font-mono text-red-900 whitespace-pre-wrap break-words">
+                              {response.claimPretty}
+                            </pre>
+                          </details>
+                        )}
                       </div>
                     )}
                     

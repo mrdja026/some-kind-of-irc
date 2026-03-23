@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Oswald:wght@400;600&family=Russo+One&family=Source+Sans+3:wght@400;600;700&display=swap");
 @import "tailwindcss";
 
 :root {
@@ -349,4 +349,46 @@ code {
 
 body.drawer-open {
   overflow: hidden;
+}
+
+.claim-report {
+  font-family: "Oswald", "Libre Baskerville", serif;
+  letter-spacing: 0.01em;
+}
+
+.claim-report-title {
+  font-family: "Russo One", "Oswald", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.claim-report-list {
+  list-style: square;
+  padding-left: 1.25rem;
+  margin: 0;
+}
+
+.claim-report-list--nested {
+  list-style: circle;
+  padding-left: 1.25rem;
+  margin-top: 0.35rem;
+}
+
+.claim-report-list li {
+  margin-bottom: 0.35rem;
+}
+
+.claim-report-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78em;
+}
+
+.claim-report-value {
+  font-family: "Oswald", "Source Sans 3", sans-serif;
+}
+
+.claim-report-details summary {
+  cursor: pointer;
 }

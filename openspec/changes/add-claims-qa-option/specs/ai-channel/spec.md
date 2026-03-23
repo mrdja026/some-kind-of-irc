@@ -24,8 +24,9 @@ The backend SHALL provide a claim retrieval endpoint that returns one random cla
 - **THEN** the endpoint returns an error response that the client can display.
 
 ### Requirement: Socialist claim presentation in chat
-The AI channel SHALL render the claim response inside the chat as an assistant message styled with socialist-themed copy and visuals, including a banner title (for example, "People's Claim Archive") and a preformatted JSON block. The presentation SHALL identify the claim filename.
+The AI channel SHALL render the claim response inside the chat as an assistant message styled with socialist-themed copy and visuals, including a banner title (for example, "People's Claim Archive") and a bullet-list report derived from the claim JSON. Arrays SHALL render as list items and objects SHALL render as nested bullet sections. The presentation SHALL identify the claim filename and MAY include a collapsible raw JSON section for detail.
 
 #### Scenario: Claim rendered in chat
 - **WHEN** a claim response is received
-- **THEN** the chat shows a socialist-themed claim card with the filename and pretty-printed JSON.
+- **THEN** the chat shows a socialist-themed claim card with the filename and a bullet-list report.
+- **AND** the raw JSON is available in a collapsible details section.
