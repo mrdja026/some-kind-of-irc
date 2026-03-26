@@ -27,6 +27,8 @@ PIL_FORMATS = {
     "image/webp": ("WEBP", {"quality": 85, "method": 6}),
 }
 
+MEDIA_EXTENSION_FALLBACKS = ("jpg", "jpeg", "png")
+
 
 def _get_bool(value: Optional[str], default: bool) -> bool:
     if value is None:
@@ -142,6 +144,38 @@ def _verify_session():
 
 def _build_public_url(key: str) -> str:
     return f"{public_base_url.rstrip('/')}/media/{key}"
+
+
+def _get_media_object(key: str):
+    try:
+        return s3_client.get_object(Bucket=minio_bucket, Key=key)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code not in {"NoSuchKey", "404", "NotFound"}:
+            raise
+        not_found_exc = exc
+
+    if "." not in key:
+        raise not_found_exc
+
+    base, ext = key.rsplit(".", 1)
+    ext = ext.lower()
+    if ext not in MEDIA_EXTENSION_FALLBACKS:
+        raise not_found_exc
+
+    for candidate_ext in MEDIA_EXTENSION_FALLBACKS:
+        if candidate_ext == ext:
+            continue
+        candidate_key = f"{base}.{candidate_ext}"
+        try:
+            return s3_client.get_object(Bucket=minio_bucket, Key=candidate_key)
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"NoSuchKey", "404", "NotFound"}:
+                continue
+            raise
+
+    raise not_found_exc
 
 
 def _ensure_bucket_exists():
@@ -388,7 +422,7 @@ def get_claim(filename: str):
 @app.get("/media/<path:key>")
 def get_media(key: str):
     try:
-        response = s3_client.get_object(Bucket=minio_bucket, Key=key)
+        response = _get_media_object(key)
     except EndpointConnectionError:
         return jsonify({"detail": "Storage unavailable"}), 503
     except ClientError as exc:

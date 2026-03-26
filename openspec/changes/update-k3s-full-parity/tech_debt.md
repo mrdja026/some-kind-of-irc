@@ -90,6 +90,11 @@ Services use different health check endpoints:
 
 **Recommendation**: Standardize on `/healthz` for new services.
 
+### Media Extension Fallback
+**Location**: `media-storage/app.py`
+**Trade-off**: When a media key is missing and ends with `.jpg`, `.jpeg`, or `.png`, the service tries alternate extensions. If multiple variants exist, the first match may not be the originally requested format.
+**Recommendation**: Persist and use the exact `url` returned from uploads to avoid ambiguity.
+
 ## Deferred Work
 
 - [ ] Update Helm chart or mark as deprecated
