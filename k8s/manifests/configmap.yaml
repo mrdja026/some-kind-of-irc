@@ -22,8 +22,8 @@ data:
   DB_NAME: "app_db"
   DB_USER: "app_user"
 
-  # CORS
-  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269,http://46.225.9.4,http://46.225.9.4:4269"
+  # CORS — override via `kubectl patch` or Helm values for non-localhost deployments
+  ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269"
 
   # Upload limits
   MAX_UPLOAD_MB: "20"
@@ -47,10 +47,11 @@ data:
   # MinIO object storage
   MINIO_ENDPOINT: "http://minio:9000"
   # The ingress exposes MinIO at /minio and media-storage at /media.
-  MINIO_PUBLIC_ENDPOINT: "http://46.225.9.4/minio"
+  # Override these for non-localhost deployments via kubectl patch or Helm values.
+  MINIO_PUBLIC_ENDPOINT: "http://localhost/minio"
   MINIO_BUCKET: "media"
   MINIO_CLAIMS_BUCKET: "synt-data"
-  MINIO_CLAIMS_PREFIX: ""
+  MINIO_CLAIMS_PREFIX: "synthetic_claims"
   MINIO_ACCESS_KEY: "minioadmin"
   # Base URL that external clients use to reach media-storage through the ingress.
-  PUBLIC_BASE_URL: "http://46.225.9.4"
+  PUBLIC_BASE_URL: "http://localhost"

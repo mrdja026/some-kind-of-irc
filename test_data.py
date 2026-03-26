@@ -147,10 +147,11 @@ def make_documents(claim_type: str, reported_date: str):
     return docs
 
 
-def make_adjuster_notes(claim_type: str, cause: str, status: str):
+def make_adjuster_notes(claim_type: str, cause: str, status: str, reported_date: str):
+    base_dt = datetime.fromisoformat(reported_date)
     notes = [
         {
-            "timestamp": "2026-03-01T09:00:00Z",
+            "timestamp": base_dt.isoformat() + "Z",
             "author": random.choice(ADJUSTERS),
             "note": f"Initial review completed. Cause of loss reported as {cause}."
         }
@@ -158,14 +159,14 @@ def make_adjuster_notes(claim_type: str, cause: str, status: str):
 
     if status in {"investigating", "coverage_review", "paid", "partially_paid", "denied", "closed_no_payment", "reopened"}:
         notes.append({
-            "timestamp": "2026-03-02T13:15:00Z",
+            "timestamp": (base_dt + timedelta(days=1, hours=4, minutes=15)).isoformat() + "Z",
             "author": random.choice(ADJUSTERS),
             "note": f"Inspection performed for {claim_type}. Photos and supporting documents reviewed."
         })
 
     if status == "denied":
         notes.append({
-            "timestamp": "2026-03-03T16:30:00Z",
+            "timestamp": (base_dt + timedelta(days=2, hours=7, minutes=30)).isoformat() + "Z",
             "author": random.choice(ADJUSTERS),
             "note": "Evidence suggests exclusion may apply due to wear and tear or long-term unresolved condition."
         })
@@ -199,14 +200,16 @@ def make_coverage_review(status: str, claim_type: str, deductible: int):
     }
 
 
-def make_resolution(status: str, coverage_review: dict):
+def make_resolution(status: str, coverage_review: dict, reported_date: str):
     gross = coverage_review["approved_repairs_eur"] + coverage_review["approved_contents_eur"]
     deductible = coverage_review["applied_deductible_eur"]
     net = max(gross - deductible, 0)
+    base_dt = datetime.fromisoformat(reported_date)
+    resolution_date = (base_dt + timedelta(days=4)).strftime("%Y-%m-%d")
 
     if status == "paid":
         return {
-            "resolution_date": "2026-03-05",
+            "resolution_date": resolution_date,
             "outcome": "paid",
             "gross_settlement_eur": gross,
             "deductible_eur": deductible,
@@ -216,10 +219,10 @@ def make_resolution(status: str, coverage_review: dict):
         }
 
     if status == "partially_paid":
-        partial_gross = max(gross // 2, 100)
-        partial_net = max(partial_gross - deductible, 0)
+        partial_gross = max(gross // 2, deductible + 100)
+        partial_net = partial_gross - deductible
         return {
-            "resolution_date": "2026-03-05",
+            "resolution_date": resolution_date,
             "outcome": "partially_paid",
             "gross_settlement_eur": partial_gross,
             "deductible_eur": deductible,
@@ -230,7 +233,7 @@ def make_resolution(status: str, coverage_review: dict):
 
     if status == "denied":
         return {
-            "resolution_date": "2026-03-05",
+            "resolution_date": resolution_date,
             "outcome": "denied",
             "gross_settlement_eur": 0,
             "deductible_eur": 0,
@@ -241,7 +244,7 @@ def make_resolution(status: str, coverage_review: dict):
 
     if status == "closed_no_payment":
         return {
-            "resolution_date": "2026-03-05",
+            "resolution_date": resolution_date,
             "outcome": "closed_no_payment",
             "gross_settlement_eur": 0,
             "deductible_eur": 0,
@@ -335,11 +338,11 @@ def generate_claim(idx: int) -> dict:
             "injuries_reported": False
         },
         "documents": make_documents(claim_type, reported_date),
-        "adjuster_notes": make_adjuster_notes(claim_type, cause, status),
+        "adjuster_notes": make_adjuster_notes(claim_type, cause, status, reported_date),
     }
 
     coverage_review = make_coverage_review(status, claim_type, deductible)
-    resolution = make_resolution(status, coverage_review)
+    resolution = make_resolution(status, coverage_review, reported_date)
 
     claim["coverage_review"] = coverage_review
     claim["resolution"] = resolution
@@ -353,6 +356,9 @@ def export_claims_json(output_dir: str = "synthetic_claims", count: int = 10, se
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    for old_file in out_path.glob("CLM-*.json"):
+        old_file.unlink()
+
     claims = []
     for i in range(1, count + 1):
         claim = generate_claim(i)
@@ -361,9 +367,6 @@ def export_claims_json(output_dir: str = "synthetic_claims", count: int = 10, se
         file_path = out_path / f"{claim['claim_id']}.json"
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(claim, f, indent=2, ensure_ascii=False)
-
-    with open(out_path / "all_claims.json", "w", encoding="utf-8") as f:
-        json.dump(claims, f, indent=2, ensure_ascii=False)
 
     return claims
 

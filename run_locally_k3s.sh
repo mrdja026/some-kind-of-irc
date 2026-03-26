@@ -146,7 +146,7 @@ create_minio_buckets() {
     local claims_bucket="${MINIO_CLAIMS_BUCKET:-synt-data}"
     echo -e "${GREEN}Creating MinIO buckets (${media_bucket}, ${claims_bucket})...${NC}"
 
-    kubectl run minio-bucket-setup -n irc-app \
+    if kubectl run minio-bucket-setup -n irc-app \
         --image=minio/mc:latest \
         --restart=Never \
         --rm \
@@ -156,11 +156,11 @@ create_minio_buckets() {
             mc mb myminio/${media_bucket} --ignore-existing && \
             mc anonymous set public myminio/${media_bucket} && \
             mc mb myminio/${claims_bucket} --ignore-existing
-        " 2>/dev/null || {
+        " 2>/dev/null; then
+        echo -e "${GREEN}✓ MinIO buckets ready${NC}"
+    else
         echo -e "${YELLOW}Warning: MinIO bucket creation may have failed or bucket already exists${NC}"
-    }
-
-    echo -e "${GREEN}✓ MinIO buckets ready${NC}"
+    fi
 }
 
 echo -e "${GREEN}=== K3s Strangler Pattern Local Development ===${NC}"
