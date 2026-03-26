@@ -68,13 +68,15 @@ Ready to deploy? The script is well-documented and handles everything automatica
 - **MinIO console access** from a host machine requires `kubectl port-forward` + SSH tunnel (console is not exposed publicly).
 - **Seed synthetic claims** if needed (bucket is created but seeding is manual).
 - **Fix legacy image URLs** if older messages still reference `http://CHANGE_ME:8080/...`.
-- **HTTPS** requires a domain; self-signed certs work but show browser warnings.
+- **HTTP on VPS** works out of the box via `run_locally_k3s.sh` (default `PUBLIC_BASE_URL` is `http://<VPS_IP>`).
+- **HTTPS** requires a domain or self-signed cert; if the frontend is served over HTTPS but `PUBLIC_BASE_URL` is HTTP, browsers block mixed content (login/upload fail). Set `PUBLIC_BASE_URL=https://<VPS_IP>` and provide TLS if you want HTTPS.
 
 ## What Needs Testing After Deploy
-- [ ] Image upload + display from `/media/uploads/.../display.jpg`
+- [x] Image upload + display from `/media/uploads/.../display.jpg` (verified on VPS over HTTP, 2026-03-26)
 - [ ] AI access for allowlisted users
 - [ ] MinIO access via `/minio/*` (S3 API)
-- [ ] WebSocket chat connectivity (`/ws/*`)
+- [x] WebSocket chat connectivity (`/ws/*`) (verified on VPS over HTTP, 2026-03-26)
+- [x] Data-processor upload/processing via `/data-processor/*` (verified on VPS over HTTP, 2026-03-26)
 
 ---
 
