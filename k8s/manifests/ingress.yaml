@@ -53,14 +53,14 @@ spec:
                 name: ai-service-adk
                 port:
                   number: 8004
-          # Route /media/upload to monolith (special case)
+          # Route /media/upload to media-storage
           - path: /media/upload
             pathType: Exact
             backend:
               service:
-                name: monolith
+                name: media-storage
                 port:
-                  number: 8002
+                  number: 9101
           # Route /media/* to media-storage
           - path: /media
             pathType: Prefix
