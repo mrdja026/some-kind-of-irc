@@ -5,13 +5,14 @@ import {
   fetchRandomClaim,
   fetchGmailMessages,
   generateCalendarQuestion,
+  generateClaimAnswer,
   generateGmailQuestions,
   generateGmailSummary,
   generatePdf,
   getAIHealth,
   getAIStatus,
 } from '../api'
-import type { CalendarEventPayload } from '../types'
+import type { CalendarEventPayload, ClaimQaHistoryEntry } from '../types'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 
@@ -31,12 +32,14 @@ type ConversationEntry = {
   query: string
   response: string
   agent: string
-  mode?: 'agent_message' | 'claim_message'
+  mode?: 'agent_message' | 'claim_message' | 'claim_answer'
   emails?: any[]
   pdfUrl?: string
   claim?: unknown
   claimFilename?: string
   claimPretty?: string
+  reasoning?: string
+  followupReasoning?: string
 }
 
 type ClaimReportNode = {
@@ -111,6 +114,11 @@ export function AIChannel({
   const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
+  const [claimPayload, setClaimPayload] = useState<{ claim: unknown; filename?: string } | null>(null)
+  const [claimHistory, setClaimHistory] = useState<ClaimQaHistoryEntry[]>([])
+  const [claimQuestionCount, setClaimQuestionCount] = useState(0)
+  const [claimAskedQuestions, setClaimAskedQuestions] = useState<string[]>([])
+  const [claimPendingFollowup, setClaimPendingFollowup] = useState<string | null>(null)
 
   const {
     data: aiHealth,
@@ -390,6 +398,11 @@ export function AIChannel({
     setCalendarAnswers([])
     setCalendarQuestionsAsked(0)
     setCalendarEventDraft(null)
+    setClaimPayload(null)
+    setClaimHistory([])
+    setClaimQuestionCount(0)
+    setClaimAskedQuestions([])
+    setClaimPendingFollowup(null)
     setStreamError(null)
     setActiveQuestion(null)
     setResponses([])
@@ -456,6 +469,11 @@ export function AIChannel({
         const rallyingCall =
           `Comrade, claim ${filename} has been delivered for collective review. ` +
           'Ask your questions below to serve the shared record.'
+        setClaimPayload({ claim, filename })
+        setClaimHistory([])
+        setClaimQuestionCount(0)
+        setClaimAskedQuestions([])
+        setClaimPendingFollowup(null)
         setResponses([
           {
             id: Date.now(),
@@ -515,6 +533,91 @@ export function AIChannel({
 
     try {
       if (gmailStage === 'claims') {
+        if (!claimPayload) {
+          setStreamError('No claim loaded. Start over to fetch a claim.')
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        if (claimQuestionCount >= 5) {
+          setStreamError('Maximum of 5 questions reached for this claim.')
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        setStreamProgress('Analyzing claim details...')
+        const nextCount = claimQuestionCount + 1
+        const questionText = claimPendingFollowup
+          ? `${claimPendingFollowup}\nUser response: ${trimmedAnswer}`
+          : trimmedAnswer
+        const askedQuestions = Array.from(
+          new Set(
+            [
+              ...claimAskedQuestions,
+              claimPendingFollowup || '',
+            ].map((item) => item.trim()).filter(Boolean),
+          ),
+        )
+        const result = await generateClaimAnswer(
+          claimPayload.claim,
+          questionText,
+          claimHistory,
+          nextCount,
+          askedQuestions,
+        )
+
+        setClaimQuestionCount(nextCount)
+        setClaimHistory((prev) => [...prev, { question: questionText, answer: result.answer }])
+        setClaimPendingFollowup(null)
+
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            query: '',
+            response: result.answer,
+            agent: 'Claims Q&A',
+            mode: 'claim_answer',
+            reasoning: result.reasoning,
+          },
+        ])
+
+        if (result.next_question && !result.done) {
+          const followupId = Date.now() + 2
+          const followupQuestion = result.next_question.trim()
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: followupId,
+              query: '',
+              response: followupQuestion,
+              agent: 'Claims Q&A',
+              mode: 'claim_answer',
+              followupReasoning: result.followup_reasoning || undefined,
+            },
+          ])
+          setClaimAskedQuestions((prev) =>
+            prev.includes(followupQuestion) ? prev : [...prev, followupQuestion],
+          )
+          setClaimPendingFollowup(followupQuestion)
+          setActiveQuestion(followupQuestion)
+        } else {
+          let fallbackPrompt = 'Ask another claim question...'
+          if (nextCount >= 5) {
+            fallbackPrompt = 'Question limit reached for this claim. Start over to load a new one.'
+          } else if (claimPayload.filename) {
+            fallbackPrompt = `Ask about ${claimPayload.filename}...`
+          }
+          if (result.done) {
+            fallbackPrompt = 'Conversation complete. Ask another claim question if needed.'
+          }
+          setActiveQuestion(fallbackPrompt)
+          setClaimPendingFollowup(null)
+        }
+
+        setStreamProgress(null)
         setIsSubmitting(false)
         setQuery('')
         return
@@ -765,7 +868,11 @@ export function AIChannel({
         return
       }
     } catch (err) {
-      setStreamError('Gmail agent failed. Please try again.')
+      const message =
+        gmailStage === 'claims'
+          ? 'Claims Q&A failed. Please try again.'
+          : 'Gmail agent failed. Please try again.'
+      setStreamError(message)
       setStreamProgress(null)
       console.error(err)
     } finally {
@@ -782,6 +889,7 @@ export function AIChannel({
   const aiUnavailable = Boolean(healthMessage) || Boolean(aiAccessMessage) || aiStatus?.available === false
   const aiUnavailableMessage =
     aiAccessMessage || healthMessage || 'AI service is not configured yet. Please contact administrator.'
+  const claimsQuestionLimitReached = isClaimsMode && claimQuestionCount >= 5
   const assistantLabel = isClaimsMode
     ? 'Claims Q&A'
     : isCalendarMode
@@ -796,7 +904,8 @@ export function AIChannel({
   const assistantIcon = isClaimsMode ? Flag : isCalendarMode ? Calendar : Sparkles
   const assistantIconClass = isClaimsMode ? 'text-red-600' : 'text-amber-600'
   const AssistantIcon = assistantIcon
-  const inputDisabled = isSubmitting || (!isClaimsMode && aiUnavailable)
+  const inputDisabled =
+    isSubmitting || (!isClaimsMode && aiUnavailable) || claimsQuestionLimitReached
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
@@ -920,18 +1029,20 @@ export function AIChannel({
         {/* Conversation */}
         {responses.map((response, index) => {
           const isClaimMessage = response.mode === 'claim_message'
-          const responseCardClass = isClaimMessage
+          const isClaimAnswer = response.mode === 'claim_answer'
+          const isClaimVariant = isClaimMessage || isClaimAnswer
+          const responseCardClass = isClaimVariant
             ? 'bg-red-50 border-red-200'
             : 'bg-amber-50 border-amber-200'
-          const responseAvatarClass = isClaimMessage ? 'bg-red-200' : 'bg-amber-200'
-          const responseIconClass = isClaimMessage ? 'text-red-700' : 'text-amber-700'
-          const responseTitleClass = isClaimMessage ? 'text-red-800' : 'text-amber-800'
-          const responseBadgeClass = isClaimMessage
+          const responseAvatarClass = isClaimVariant ? 'bg-red-200' : 'bg-amber-200'
+          const responseIconClass = isClaimVariant ? 'text-red-700' : 'text-amber-700'
+          const responseTitleClass = isClaimVariant ? 'text-red-800' : 'text-amber-800'
+          const responseBadgeClass = isClaimVariant
             ? 'bg-red-200 text-red-800'
             : 'bg-amber-200 text-amber-800'
-          const responseTextClass = isClaimMessage ? 'text-red-900' : 'text-amber-900'
-          const ResponseIcon = isClaimMessage ? Flag : Mail
-          const claimReport = isClaimMessage ? buildClaimReport(response.claim) : []
+          const responseTextClass = isClaimVariant ? 'text-red-900' : 'text-amber-900'
+          const ResponseIcon = isClaimVariant ? Flag : Mail
+          const claimReport = isClaimMessage && response.claim ? buildClaimReport(response.claim) : []
 
           return (
             <div key={index} className="mb-4 md:mb-6">
@@ -980,7 +1091,23 @@ export function AIChannel({
                     )}
                     {response.response}
 
-                    {isClaimMessage && (
+                    {response.reasoning && (
+                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
+                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Reasoning</div>
+                        <div className="whitespace-pre-wrap break-words">{response.reasoning}</div>
+                      </div>
+                    )}
+
+                    {response.followupReasoning && (
+                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
+                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Follow-up reasoning</div>
+                        <div className="whitespace-pre-wrap break-words">
+                          {response.followupReasoning}
+                        </div>
+                      </div>
+                    )}
+
+                    {isClaimMessage && response.claim && (
                       <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-4 claim-report">
                         <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-3">
                           Collective Report

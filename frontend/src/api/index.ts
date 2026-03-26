@@ -6,6 +6,8 @@ import type {
   CalendarEventPayload,
   InferenceLogEvent,
   ClaimResponse,
+  ClaimQaHistoryEntry,
+  ClaimQaResponse,
 } from '../types';
 
 const API_BASE_URL =
@@ -105,14 +107,40 @@ export const register = async (username: string, password: string): Promise<void
   }
 };
 
+export class AuthError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'AuthError';
+    this.status = status;
+  }
+}
+
 export const getCurrentUser = async (): Promise<User> => {
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     credentials: 'include',
   });
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError('Session expired', response.status);
+    }
     throw new Error('Failed to get current user');
   }
   return response.json();
+};
+
+export const refreshSession = async (): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError('Session expired', response.status);
+    }
+    throw new Error('Failed to refresh session');
+  }
 };
 
 export const getUserById = async (userId: number): Promise<User> => {
@@ -230,6 +258,32 @@ export const fetchRandomClaim = async (): Promise<ClaimResponse> => {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to fetch claim' }));
     throw new Error(error.detail || 'Failed to fetch claim');
+  }
+  return response.json();
+};
+
+export const generateClaimAnswer = async (
+  claim: unknown,
+  question: string,
+  history: ClaimQaHistoryEntry[] = [],
+  questionCount = 0,
+  askedQuestions: string[] = [],
+): Promise<ClaimQaResponse> => {
+  const response = await fetch(`${API_BASE_URL}/ai/claims/qa`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      claim,
+      question,
+      history,
+      question_count: questionCount,
+      asked_questions: askedQuestions,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to answer claim question' }));
+    throw new Error(error.detail || 'Failed to answer claim question');
   }
   return response.json();
 };

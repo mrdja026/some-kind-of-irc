@@ -1,4 +1,4 @@
-"""API endpoint for reading Gmail inference events from Redis stream."""
+"""API endpoint for reading AI inference events from Redis stream."""
 
 import json
 import logging
@@ -54,15 +54,7 @@ class InferenceLogsResponse(BaseModel):
     total: int
 
 
-GMAIL_EVENT_KINDS = frozenset({
-    "gmail_questions",
-    "gmail_summary",
-    "gmail_step_questions",
-    "gmail_step_summary_action",
-    "gmail_step_summary_insight",
-    "gmail_step_classification",
-    "gmail_step_judge",
-})
+AI_EVENT_KINDS = None
 
 
 @router.get("/logs", response_model=InferenceLogsResponse)
@@ -70,9 +62,9 @@ async def get_inference_logs(
     limit: int = Query(default=100, ge=1, le=500),
     current_user: User = Depends(get_current_user),
 ) -> InferenceLogsResponse:
-    """Read Gmail inference events from Redis stream.
+    """Read AI inference events from Redis stream.
 
-    Returns the most recent inference log events, filtered for Gmail-related events.
+    Returns the most recent inference log events for the current user.
     """
     try:
         client = _get_redis_log()
@@ -89,7 +81,7 @@ async def get_inference_logs(
 
             for msg_id, fields in rows:
                 kind = fields.get("kind", "")
-                if kind not in GMAIL_EVENT_KINDS:
+                if AI_EVENT_KINDS is not None and kind not in AI_EVENT_KINDS:
                     continue
 
                 # Scope results to the requesting user
@@ -112,7 +104,9 @@ async def get_inference_logs(
                     username=row_username or None,
                     request_id=fields.get("request_id") or None,
                     correlation_id=fields.get("correlation_id") or None,
-                    payload=payload if isinstance(payload, dict) else {"value": payload},
+                    payload=payload
+                    if isinstance(payload, dict)
+                    else {"value": payload},
                 )
                 events.append(event)
 

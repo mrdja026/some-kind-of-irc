@@ -3,6 +3,7 @@ import { Link, useNavigate, redirect } from '@tanstack/react-router'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query'
 import {
+  AuthError,
   getCurrentUser,
   getChannels,
   getDirectMessages,
@@ -15,6 +16,7 @@ import {
   searchChannels,
   createChannel,
   getGmailAuthUrl,
+  refreshSession,
 } from '../api'
 import {
   getCurrentUserServer,
@@ -674,10 +676,34 @@ function ChatPage() {
 
   // Handle user not authenticated
   useEffect(() => {
-    if (userError) {
+    if (userError instanceof AuthError) {
       navigate({ to: '/login' })
     }
   }, [userError, navigate])
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
+    const refreshNow = () => {
+      refreshSession().catch((error) => {
+        if (error instanceof AuthError) {
+          navigate({ to: '/login' })
+        }
+      })
+    }
+
+    refreshNow()
+    const intervalId = window.setInterval(refreshNow, 5 * 60 * 1000)
+    const handleFocus = () => refreshNow()
+    window.addEventListener('focus', handleFocus)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [user, navigate])
 
   // Handle channel selection
   const handleChannelSelect = async (channel: Channel) => {

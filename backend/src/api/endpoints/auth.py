@@ -25,6 +25,7 @@ from src.services.gmail_service import fetch_latest_emails
 from src.services.calendar_service import create_calendar_event
 from src.services.irc_logger import log_nick_user
 from src.services.event_publisher import publish_user_registered
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -481,6 +482,35 @@ async def create_calendar_event_endpoint(
 @router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+class RefreshResponse(BaseModel):
+    message: str
+    expires_in: int
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh_access_token(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+):
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    user_username = cast(str, current_user.username)
+    access_token = create_access_token(
+        data={"sub": user_username}, expires_delta=access_token_expires
+    )
+    response.set_cookie(
+        key="access_token",
+        value=f"Bearer {access_token}",
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=int(access_token_expires.total_seconds()),
+    )
+    return RefreshResponse(
+        message="Session refreshed",
+        expires_in=int(access_token_expires.total_seconds()),
+    )
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)

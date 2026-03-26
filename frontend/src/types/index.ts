@@ -76,6 +76,30 @@ export type ClaimResponse = {
   claim: unknown;
 };
 
+export type ClaimQaHistoryEntry = {
+  question: string;
+  answer: string;
+};
+
+export type ClaimQaFlags = {
+  summary_ok?: boolean;
+  timeline_ok?: boolean;
+  status_ok?: boolean;
+  status?: string | null;
+  is_off?: boolean;
+  issues?: unknown[];
+  claim_valid?: boolean;
+};
+
+export type ClaimQaResponse = {
+  answer: string;
+  reasoning: string;
+  done?: boolean;
+  next_question?: string | null;
+  followup_reasoning?: string | null;
+  flags?: ClaimQaFlags;
+};
+
 // Data Processor types
 export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom';
 

@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     DATABASE_URL: str = _build_database_url()
     MEDIA_STORAGE_URL: str = "http://localhost:9101"
+    AI_SERVICE_ADK_URL: str = "http://ai-service-adk:8004"
 
     # Data Processor Microservice Configuration
     DATA_PROCESSOR_URL: str = "http://data-processor:8003"

@@ -40,7 +40,7 @@ After the coding agent does it job check the changes with the git diff short and
 **MUST** Every coding task must be completed with @deploy_local.sh --build working
 
 
-# Building loop
+# Planning loop
 
 **Allways** ask questions when building for ambiguities and tradofs
 **Allwas** ground research in search provided by the agent google/bing/fetch
