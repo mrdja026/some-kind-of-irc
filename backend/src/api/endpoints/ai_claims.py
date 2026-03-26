@@ -23,6 +23,7 @@ class ClaimQaRequest(BaseModel):
     history: List[ClaimQaHistoryEntry] = []
     question_count: int = Field(0, ge=0, le=5)
     asked_questions: List[str] = []
+    tool_history: List[dict] = []
 
 
 class ClaimQaResponse(BaseModel):
@@ -31,6 +32,8 @@ class ClaimQaResponse(BaseModel):
     done: bool = False
     next_question: Optional[str] = None
     followup_reasoning: Optional[str] = None
+    tool_calls: Optional[List[dict]] = None
+    tool_history: Optional[List[dict]] = None
     flags: Optional[dict] = None
 
 

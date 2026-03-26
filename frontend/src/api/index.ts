@@ -8,6 +8,7 @@ import type {
   ClaimResponse,
   ClaimQaHistoryEntry,
   ClaimQaResponse,
+  ClaimToolCall,
 } from '../types';
 
 const API_BASE_URL =
@@ -268,6 +269,7 @@ export const generateClaimAnswer = async (
   history: ClaimQaHistoryEntry[] = [],
   questionCount = 0,
   askedQuestions: string[] = [],
+  toolHistory: ClaimToolCall[] = [],
 ): Promise<ClaimQaResponse> => {
   const response = await fetch(`${API_BASE_URL}/ai/claims/qa`, {
     method: 'POST',
@@ -279,6 +281,7 @@ export const generateClaimAnswer = async (
       history,
       question_count: questionCount,
       asked_questions: askedQuestions,
+      tool_history: toolHistory,
     }),
   });
   if (!response.ok) {

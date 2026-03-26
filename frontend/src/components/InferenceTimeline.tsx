@@ -333,6 +333,28 @@ function TimelineEvent({ event, isExpanded, onToggle }: TimelineEventProps) {
               </div>
             )}
 
+            {payload?.findings && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                  Findings
+                </h4>
+                <pre className="text-xs bg-white/50 p-2 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                  {JSON.stringify(payload.findings, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {payload?.tool_calls && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                  Tool calls
+                </h4>
+                <pre className="text-xs bg-white/50 p-2 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                  {JSON.stringify(payload.tool_calls, null, 2)}
+                </pre>
+              </div>
+            )}
+
             {payload?.output && (
               <div>
                 <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">

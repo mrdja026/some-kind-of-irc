@@ -12,7 +12,7 @@ import {
   getAIHealth,
   getAIStatus,
 } from '../api'
-import type { CalendarEventPayload, ClaimQaHistoryEntry } from '../types'
+import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall } from '../types'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 
@@ -40,6 +40,7 @@ type ConversationEntry = {
   claimPretty?: string
   reasoning?: string
   followupReasoning?: string
+  toolCalls?: ClaimToolCall[]
 }
 
 type ClaimReportNode = {
@@ -119,6 +120,7 @@ export function AIChannel({
   const [claimQuestionCount, setClaimQuestionCount] = useState(0)
   const [claimAskedQuestions, setClaimAskedQuestions] = useState<string[]>([])
   const [claimPendingFollowup, setClaimPendingFollowup] = useState<string | null>(null)
+  const [claimToolHistory, setClaimToolHistory] = useState<ClaimToolCall[]>([])
 
   const {
     data: aiHealth,
@@ -403,6 +405,7 @@ export function AIChannel({
     setClaimQuestionCount(0)
     setClaimAskedQuestions([])
     setClaimPendingFollowup(null)
+    setClaimToolHistory([])
     setStreamError(null)
     setActiveQuestion(null)
     setResponses([])
@@ -474,6 +477,7 @@ export function AIChannel({
         setClaimQuestionCount(0)
         setClaimAskedQuestions([])
         setClaimPendingFollowup(null)
+        setClaimToolHistory([])
         setResponses([
           {
             id: Date.now(),
@@ -566,10 +570,16 @@ export function AIChannel({
           claimHistory,
           nextCount,
           askedQuestions,
+          claimToolHistory,
         )
 
         setClaimQuestionCount(nextCount)
         setClaimHistory((prev) => [...prev, { question: questionText, answer: result.answer }])
+        setClaimToolHistory(
+          result.tool_history
+            ? result.tool_history
+            : [...claimToolHistory, ...(result.tool_calls || [])],
+        )
         setClaimPendingFollowup(null)
 
         setResponses((prev) => [
@@ -581,6 +591,7 @@ export function AIChannel({
             agent: 'Claims Q&A',
             mode: 'claim_answer',
             reasoning: result.reasoning,
+            toolCalls: result.tool_calls || undefined,
           },
         ])
 
@@ -1103,6 +1114,24 @@ export function AIChannel({
                         <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Follow-up reasoning</div>
                         <div className="whitespace-pre-wrap break-words">
                           {response.followupReasoning}
+                        </div>
+                      </div>
+                    )}
+
+                    {response.toolCalls && response.toolCalls.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
+                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Tool calls</div>
+                        <div className="space-y-2">
+                          {response.toolCalls.map((call, callIndex) => (
+                            <div key={`${response.id}-tool-${callIndex}`}>
+                              <div className="text-[10px] uppercase tracking-wider text-red-700">
+                                {call.name}
+                              </div>
+                              <pre className="mt-1 rounded border border-red-200/70 bg-white/60 p-2 text-[11px] text-red-900 whitespace-pre-wrap break-words">
+                                {JSON.stringify(call.result, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}

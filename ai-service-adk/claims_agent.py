@@ -120,6 +120,79 @@ def _extract_followup_question(text: str) -> Optional[str]:
     return _normalize_question_text(stripped)
 
 
+def _filter_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        result = call.get("result")
+        if result is None:
+            continue
+        if isinstance(result, dict) and result.get("error"):
+            continue
+        filtered.append(call)
+    return filtered
+
+
+def _get_latest_tool_result(
+    tool_history: List[Dict[str, Any]],
+    tool_name: str,
+) -> Dict[str, Any]:
+    for call in reversed(tool_history):
+        if call.get("name") == tool_name:
+            result = call.get("result")
+            if isinstance(result, dict):
+                return result
+    return {}
+
+
+def is_followup_question_valid(
+    question: Optional[str],
+    history: List[Dict[str, str]],
+    asked_questions: List[str],
+    tool_history: List[Dict[str, Any]],
+) -> bool:
+    normalized = _normalize_question_text(question or "")
+    if not normalized:
+        return False
+
+    used_questions = set()
+    for entry in history:
+        q = entry.get("question") if isinstance(entry, dict) else None
+        normalized_q = _normalize_question_text(q or "")
+        if normalized_q:
+            used_questions.add(normalized_q)
+
+    for asked in asked_questions:
+        normalized_asked = _normalize_question_text(asked or "")
+        if normalized_asked:
+            used_questions.add(normalized_asked)
+
+    if normalized in used_questions:
+        return False
+
+    lower = normalized.lower()
+    if "wronged" in lower or "blame" in lower or "fault" in lower:
+        return False
+
+    status_result = _get_latest_tool_result(tool_history, "status_check")
+    status_ok = status_result.get("status_ok")
+    status_value = status_result.get("status")
+    if "status" in lower and status_ok and status_value:
+        steer_terms = [
+            "timeline",
+            "documents",
+            "coverage",
+            "payments",
+            "focus",
+            "which part",
+        ]
+        if not any(term in lower for term in steer_terms):
+            return False
+
+    return True
+
+
 def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
@@ -142,6 +215,16 @@ def _parse_date(value: Optional[str]) -> Optional[datetime]:
         return None
     try:
         return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(cleaned)
     except ValueError:
         return None
 
@@ -206,6 +289,214 @@ def status_check(payload: Dict[str, Any]) -> Dict[str, Any]:
         "status_ok": status_ok,
         "issues": issues,
     }
+
+
+def timeline_check(payload: Dict[str, Any]) -> Dict[str, Any]:
+    issues: List[Dict[str, str]] = []
+    timeline_ok = True
+
+    loss_date = _parse_date(payload.get("loss_date"))
+    reported_date = _parse_date(payload.get("reported_date"))
+    if not loss_date or not reported_date:
+        timeline_ok = False
+        issues.append(
+            {
+                "code": "invalid_dates",
+                "field": "loss_date/reported_date",
+                "message": "Loss date or reported date is missing or invalid.",
+            }
+        )
+    elif loss_date > reported_date:
+        timeline_ok = False
+        issues.append(
+            {
+                "code": "loss_after_report",
+                "field": "loss_date",
+                "message": "Loss date occurs after the reported date.",
+            }
+        )
+
+    resolution_date = _parse_date(
+        _get_nested_value(payload, ["resolution", "resolution_date"])
+    )
+    if resolution_date and reported_date and resolution_date < reported_date:
+        timeline_ok = False
+        issues.append(
+            {
+                "code": "resolution_before_report",
+                "field": "resolution.resolution_date",
+                "message": "Resolution date occurs before the reported date.",
+            }
+        )
+
+    policy_effective = _parse_date(
+        _get_nested_value(payload, ["policy", "effective_date"])
+    )
+    policy_expiration = _parse_date(
+        _get_nested_value(payload, ["policy", "expiration_date"])
+    )
+    if loss_date and policy_effective and loss_date < policy_effective:
+        timeline_ok = False
+        issues.append(
+            {
+                "code": "loss_before_policy",
+                "field": "policy.effective_date",
+                "message": "Loss date occurs before policy effective date.",
+            }
+        )
+    if loss_date and policy_expiration and loss_date > policy_expiration:
+        timeline_ok = False
+        issues.append(
+            {
+                "code": "loss_after_policy",
+                "field": "policy.expiration_date",
+                "message": "Loss date occurs after policy expiration date.",
+            }
+        )
+
+    return {
+        "timeline_ok": timeline_ok,
+        "issues": issues,
+        "loss_date": payload.get("loss_date"),
+        "reported_date": payload.get("reported_date"),
+        "resolution_date": _get_nested_value(
+            payload, ["resolution", "resolution_date"]
+        ),
+    }
+
+
+def coverage_snapshot(payload: Dict[str, Any]) -> Dict[str, Any]:
+    policy = payload.get("policy") or {}
+    coverage_limits = policy.get("coverage_limits") or {}
+    coverage_review = payload.get("coverage_review") or {}
+
+    return {
+        "coverage_limits": coverage_limits,
+        "deductible_eur": policy.get("deductible_eur"),
+        "product": policy.get("product"),
+        "endorsements": policy.get("endorsements") or [],
+        "exclusions": policy.get("exclusions") or [],
+        "coverage_decision": coverage_review.get("decision"),
+        "approved_repairs_eur": coverage_review.get("approved_repairs_eur"),
+        "approved_contents_eur": coverage_review.get("approved_contents_eur"),
+        "applied_deductible_eur": coverage_review.get("applied_deductible_eur"),
+    }
+
+
+def documents_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    documents = payload.get("documents") or []
+    doc_types: List[str] = []
+    titles: List[str] = []
+    created_at_values: List[datetime] = []
+
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+        doc_type = doc.get("doc_type")
+        if isinstance(doc_type, str):
+            doc_types.append(doc_type)
+        title = doc.get("title")
+        if isinstance(title, str):
+            titles.append(title)
+        created_at = _parse_datetime(doc.get("created_at"))
+        if created_at:
+            created_at_values.append(created_at)
+
+    first_created = min(created_at_values) if created_at_values else None
+    last_created = max(created_at_values) if created_at_values else None
+
+    return {
+        "document_count": len(documents),
+        "document_types": sorted(set(doc_types)),
+        "sample_titles": titles[:5],
+        "first_created_at": first_created.isoformat() if first_created else None,
+        "last_created_at": last_created.isoformat() if last_created else None,
+    }
+
+
+def financials_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    resolution = payload.get("resolution") or {}
+    coverage_review = payload.get("coverage_review") or {}
+    gross = resolution.get("gross_settlement_eur")
+    deductible = resolution.get("deductible_eur")
+    net = resolution.get("net_payment_eur")
+    expected_net = None
+    net_matches = None
+    if all(isinstance(value, (int, float)) for value in [gross, deductible, net]):
+        expected_net = gross - deductible
+        net_matches = expected_net == net
+
+    return {
+        "resolution_outcome": resolution.get("outcome"),
+        "gross_settlement_eur": gross,
+        "deductible_eur": deductible,
+        "net_payment_eur": net,
+        "expected_net_eur": expected_net,
+        "net_matches": net_matches,
+        "payment_method": resolution.get("payment_method"),
+        "coverage_decision": coverage_review.get("decision"),
+        "approved_repairs_eur": coverage_review.get("approved_repairs_eur"),
+        "approved_contents_eur": coverage_review.get("approved_contents_eur"),
+    }
+
+
+def notes_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    notes = payload.get("adjuster_notes") or []
+    latest_note = None
+    latest_time: Optional[datetime] = None
+
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        timestamp = _parse_datetime(note.get("timestamp"))
+        if timestamp and (latest_time is None or timestamp > latest_time):
+            latest_time = timestamp
+            latest_note = note
+
+    summary = None
+    if isinstance(latest_note, dict):
+        summary = {
+            "author": latest_note.get("author"),
+            "note": latest_note.get("note"),
+            "timestamp": latest_note.get("timestamp"),
+        }
+
+    return {
+        "note_count": len(notes),
+        "latest_note": summary,
+    }
+
+
+TOOL_REGISTRY = {
+    "status_check": status_check,
+    "timeline_check": timeline_check,
+    "coverage_snapshot": coverage_snapshot,
+    "documents_summary": documents_summary,
+    "financials_summary": financials_summary,
+    "notes_summary": notes_summary,
+}
+
+
+def build_tool_calls(
+    payload: Dict[str, Any],
+    tool_names: List[str],
+    stage: str,
+    attempt: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    for name in tool_names:
+        tool = TOOL_REGISTRY.get(name)
+        if tool is None:
+            continue
+        try:
+            result = tool(payload)
+        except Exception as exc:
+            result = {"error": str(exc)}
+        entry: Dict[str, Any] = {"name": name, "result": result, "stage": stage}
+        if attempt is not None:
+            entry["attempt"] = attempt
+        calls.append(entry)
+    return calls
 
 
 def truth_check_claim(payload: Any) -> Dict[str, Any]:
@@ -519,11 +810,20 @@ class ClaimsAgentADK:
         question: str,
         history: List[Dict[str, str]],
         tool_output: Dict[str, Any],
+        tool_calls: List[Dict[str, Any]],
+        tool_history: List[Dict[str, Any]],
         variant: str,
     ) -> Tuple[str, Dict[str, Any]]:
         claim_json = json.dumps(payload, ensure_ascii=True, indent=2)
         history_json = json.dumps(history, ensure_ascii=True)
-        tool_json = json.dumps(tool_output, ensure_ascii=True)
+        tool_json = json.dumps(
+            {
+                "truth_check": tool_output,
+                "tool_calls": _filter_tool_calls(tool_calls),
+                "tool_history": _filter_tool_calls(tool_history),
+            },
+            ensure_ascii=True,
+        )
 
         if variant == "A":
             style = (
@@ -538,12 +838,13 @@ class ClaimsAgentADK:
 
         instruction = (
             "You are a claims analyst. Use only the provided claim JSON and tool outputs. "
+            "Leverage tool history when it helps ground the answer. "
             "Do not use outside knowledge or assumptions."
         )
 
         user_message = (
             f"Claim JSON:\n{claim_json}\n\n"
-            f"Tool outputs:\n{tool_json}\n\n"
+            f"Tool context:\n{tool_json}\n\n"
             f"Conversation history (Q/A):\n{history_json}\n\n"
             f"Question: {question}\n\n"
             f"{style}"
@@ -570,10 +871,19 @@ class ClaimsAgentADK:
         self,
         question: str,
         tool_output: Dict[str, Any],
+        tool_calls: List[Dict[str, Any]],
+        tool_history: List[Dict[str, Any]],
         answer_a: str,
         answer_b: str,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        tool_json = json.dumps(tool_output, ensure_ascii=True)
+        tool_json = json.dumps(
+            {
+                "truth_check": tool_output,
+                "tool_calls": _filter_tool_calls(tool_calls),
+                "tool_history": _filter_tool_calls(tool_history),
+            },
+            ensure_ascii=True,
+        )
         instruction = (
             "You are a claims QA judge. Use the rubric below and select the best response.\n"
             "Rubric:\n"
@@ -582,14 +892,15 @@ class ClaimsAgentADK:
             "3) Notes issues when tool outputs show discrepancies.\n"
             "4) Clear and concise.\n\n"
             'Return ONLY JSON: {"winner": 1|2, "reasoning": "...", "done": true|false}. '
-            "Set done=true only when the question is fully answered and no follow-up is needed. "
+            "Set done=true only when the question is fully answered and it is about the claim. "
             "Set done=false when a follow-up would clarify or deepen the answer. "
+            "If the question is off-topic or unrelated to the claim data, set done=false. "
             "Reasoning must be 1-2 sentences."
         )
 
         user_message = (
             f"Question: {question}\n\n"
-            f"Tool outputs:\n{tool_json}\n\n"
+            f"Tool context:\n{tool_json}\n\n"
             f"Response 1:\n{answer_a}\n\n"
             f"Response 2:\n{answer_b}\n"
         )
@@ -628,12 +939,23 @@ class ClaimsAgentADK:
         history: List[Dict[str, str]],
         asked_questions: List[str],
         tool_output: Dict[str, Any],
+        tool_calls: List[Dict[str, Any]],
+        tool_history: List[Dict[str, Any]],
+        attempt: int,
+        max_attempts: int,
         variant: str,
     ) -> Tuple[Optional[str], Dict[str, Any], str]:
         claim_json = json.dumps(payload, ensure_ascii=True, indent=2)
         history_json = json.dumps(history, ensure_ascii=True)
         asked_json = json.dumps(asked_questions, ensure_ascii=True)
-        tool_json = json.dumps(tool_output, ensure_ascii=True)
+        tool_json = json.dumps(
+            {
+                "truth_check": tool_output,
+                "tool_calls": _filter_tool_calls(tool_calls),
+                "tool_history": _filter_tool_calls(tool_history),
+            },
+            ensure_ascii=True,
+        )
 
         if variant == "A":
             focus = (
@@ -646,19 +968,39 @@ class ClaimsAgentADK:
                 "Prefer questions about amounts, coverage limits, or key documents."
             )
 
+        off_domain_rule = (
+            "If the user's question is not about the claim data, you MUST ask a steering question "
+            "that brings them back to claim context (status, timeline, documents, coverage, or payments). "
+            "Do not return NONE in that case."
+        )
+
+        if attempt >= max_attempts:
+            requirement = (
+                "You MUST output a follow-up question. "
+                "If the user is off-topic, steer back to the claim with a neutral choice question "
+                "(status, timeline, documents, coverage, or payments). "
+                f"{off_domain_rule}"
+            )
+        else:
+            requirement = (
+                "Return ONLY the question text, or 'NONE' if no follow-up is needed. "
+                f"{off_domain_rule}"
+            )
+
         instruction = (
             "You generate ONE follow-up question for a claim Q&A. "
-            "Use the claim JSON, tool outputs, history, and asked questions. "
+            "Use the claim JSON, tool outputs, tool history, history, and asked questions. "
             "Do not ask for fields already present in the claim JSON unless clarification is needed. "
             "Avoid repeating any prior questions. "
             "Avoid moral or blame framing (no 'who is wronged' questions). "
             "Use neutral factual wording. "
-            "Return ONLY the question text, or 'NONE' if no follow-up is needed."
+            f"Attempt {attempt} of {max_attempts}. "
+            f"{requirement}"
         )
 
         user_message = (
             f"Claim JSON:\n{claim_json}\n\n"
-            f"Tool outputs:\n{tool_json}\n\n"
+            f"Tool context:\n{tool_json}\n\n"
             f"Conversation history (Q/A):\n{history_json}\n\n"
             f"Asked questions:\n{asked_json}\n\n"
             f"Current question: {question}\n\n"
@@ -688,10 +1030,20 @@ class ClaimsAgentADK:
         history: List[Dict[str, str]],
         asked_questions: List[str],
         tool_output: Dict[str, Any],
+        tool_calls: List[Dict[str, Any]],
+        tool_history: List[Dict[str, Any]],
+        attempt: int,
         candidate_a: Optional[str],
         candidate_b: Optional[str],
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        tool_json = json.dumps(tool_output, ensure_ascii=True)
+        tool_json = json.dumps(
+            {
+                "truth_check": tool_output,
+                "tool_calls": _filter_tool_calls(tool_calls),
+                "tool_history": _filter_tool_calls(tool_history),
+            },
+            ensure_ascii=True,
+        )
         history_json = json.dumps(history, ensure_ascii=True)
         asked_json = json.dumps(asked_questions, ensure_ascii=True)
         instruction = (
@@ -702,14 +1054,16 @@ class ClaimsAgentADK:
             "3) Grounded in claim JSON and tool outputs.\n"
             "4) Neutral factual wording.\n\n"
             'Return ONLY JSON: {"winner": 1|2, "reasoning": "...", "question": "..."}. '
-            "If both are poor or empty, set question to empty string."
+            "If the user question is off-topic, you MUST return a steering follow-up question. "
+            "If both are poor or empty and it is on-topic, set question to empty string."
         )
 
         user_message = (
             f"Current question: {question}\n\n"
-            f"Tool outputs:\n{tool_json}\n\n"
+            f"Tool context:\n{tool_json}\n\n"
             f"Conversation history (Q/A):\n{history_json}\n\n"
             f"Asked questions:\n{asked_json}\n\n"
+            f"Attempt {attempt}.\n\n"
             f"Follow-up 1: {candidate_a or 'NONE'}\n"
             f"Follow-up 2: {candidate_b or 'NONE'}\n"
         )
