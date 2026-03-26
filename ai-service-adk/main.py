@@ -393,6 +393,27 @@ async def generate_claims_answer(
     tool_history.extend(truth_tool_calls)
     response_tool_calls.extend(truth_tool_calls)
 
+    # Dedicated log per tool invocation
+    await append_ai_session_event(
+        kind="tool_invoked",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        payload={
+            "route": "/ai/claims/qa",
+            "tool_name": "truth_check",
+            "stage": "truth_check",
+            "result_summary": {
+                "status": tool_output.get("status"),
+                "status_ok": tool_output.get("status_ok"),
+                "summary_ok": tool_output.get("summary_ok"),
+                "timeline_ok": tool_output.get("timeline_ok"),
+                "issue_count": len(tool_output.get("issues", [])),
+            },
+            "inference_time_ms": tool_elapsed_ms,
+        },
+    )
+
     await append_ai_session_event(
         kind="claims_truth_check",
         username=username,
@@ -435,6 +456,21 @@ async def generate_claims_answer(
     tool_history.extend(candidate_a_tools)
     response_tool_calls.extend(candidate_a_tools)
 
+    # Dedicated log per tool invocation — candidate_a stage
+    for _tc in candidate_a_tools:
+        await append_ai_session_event(
+            kind="tool_invoked",
+            username=username,
+            correlation_id=correlation_id,
+            request_id=rid,
+            payload={
+                "route": "/ai/claims/qa",
+                "tool_name": _tc["name"],
+                "stage": "candidate_a",
+                "result_summary": _tc.get("result"),
+            },
+        )
+
     answer_a, metrics_a = await claims_agent.generate_candidate_answer(
         payload=request.claim,
         question=request.question,
@@ -469,6 +505,21 @@ async def generate_claims_answer(
     tool_history.extend(candidate_b_tools)
     response_tool_calls.extend(candidate_b_tools)
 
+    # Dedicated log per tool invocation — candidate_b stage
+    for _tc in candidate_b_tools:
+        await append_ai_session_event(
+            kind="tool_invoked",
+            username=username,
+            correlation_id=correlation_id,
+            request_id=rid,
+            payload={
+                "route": "/ai/claims/qa",
+                "tool_name": _tc["name"],
+                "stage": "candidate_b",
+                "result_summary": _tc.get("result"),
+            },
+        )
+
     answer_b, metrics_b = await claims_agent.generate_candidate_answer(
         payload=request.claim,
         question=request.question,
@@ -502,6 +553,21 @@ async def generate_claims_answer(
     )
     tool_history.extend(judge_tools)
     response_tool_calls.extend(judge_tools)
+
+    # Dedicated log per tool invocation — judge stage
+    for _tc in judge_tools:
+        await append_ai_session_event(
+            kind="tool_invoked",
+            username=username,
+            correlation_id=correlation_id,
+            request_id=rid,
+            payload={
+                "route": "/ai/claims/qa",
+                "tool_name": _tc["name"],
+                "stage": "judge",
+                "result_summary": _tc.get("result"),
+            },
+        )
 
     judge_result, judge_metrics = await claims_agent.judge_answers(
         question=request.question,
@@ -567,6 +633,22 @@ async def generate_claims_answer(
             tool_history.extend(followup_tools_a)
             response_tool_calls.extend(followup_tools_a)
 
+            # Dedicated log per tool invocation — followup_candidate_a
+            for _tc in followup_tools_a:
+                await append_ai_session_event(
+                    kind="tool_invoked",
+                    username=username,
+                    correlation_id=correlation_id,
+                    request_id=rid,
+                    payload={
+                        "route": "/ai/claims/qa",
+                        "tool_name": _tc["name"],
+                        "stage": "followup_candidate_a",
+                        "attempt": attempt,
+                        "result_summary": _tc.get("result"),
+                    },
+                )
+
             (
                 followup_a,
                 followup_metrics_a,
@@ -610,6 +692,22 @@ async def generate_claims_answer(
             tool_history.extend(followup_tools_b)
             response_tool_calls.extend(followup_tools_b)
 
+            # Dedicated log per tool invocation — followup_candidate_b
+            for _tc in followup_tools_b:
+                await append_ai_session_event(
+                    kind="tool_invoked",
+                    username=username,
+                    correlation_id=correlation_id,
+                    request_id=rid,
+                    payload={
+                        "route": "/ai/claims/qa",
+                        "tool_name": _tc["name"],
+                        "stage": "followup_candidate_b",
+                        "attempt": attempt,
+                        "result_summary": _tc.get("result"),
+                    },
+                )
+
             (
                 followup_b,
                 followup_metrics_b,
@@ -652,6 +750,22 @@ async def generate_claims_answer(
             )
             tool_history.extend(followup_judge_tools)
             response_tool_calls.extend(followup_judge_tools)
+
+            # Dedicated log per tool invocation — followup_judge
+            for _tc in followup_judge_tools:
+                await append_ai_session_event(
+                    kind="tool_invoked",
+                    username=username,
+                    correlation_id=correlation_id,
+                    request_id=rid,
+                    payload={
+                        "route": "/ai/claims/qa",
+                        "tool_name": _tc["name"],
+                        "stage": "followup_judge",
+                        "attempt": attempt,
+                        "result_summary": _tc.get("result"),
+                    },
+                )
 
             (
                 followup_judge_result,

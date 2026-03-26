@@ -13,7 +13,7 @@ import {
   getAIStatus,
 } from '../api'
 import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall } from '../types'
-import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag } from 'lucide-react'
+import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag, ChevronDown, ChevronRight, Wrench, MessageSquare } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 
 interface AIChannelProps {
@@ -32,7 +32,7 @@ type ConversationEntry = {
   query: string
   response: string
   agent: string
-  mode?: 'agent_message' | 'claim_message' | 'claim_answer'
+  mode?: 'agent_message' | 'claim_message' | 'claim_answer' | 'claim_followup'
   emails?: any[]
   pdfUrl?: string
   claim?: unknown
@@ -74,6 +74,80 @@ const AI_OPTIONS = [
     description: "Review a random claim from the People's Archive",
   },
 ]
+
+/** Collapsible panel showing all tool invocations for a claim answer. */
+function ToolCallsPanel({ toolCalls, responseId }: { toolCalls: ClaimToolCall[]; responseId: number }) {
+  const [open, setOpen] = useState(false)
+
+  const formatToolName = (name: string) =>
+    name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+
+  // Group calls by stage so the panel is easy to scan
+  const grouped: Record<string, ClaimToolCall[]> = {}
+  toolCalls.forEach((tc) => {
+    const key = tc.stage || 'other'
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(tc)
+  })
+
+  return (
+    <div className="mt-3 rounded-lg border border-red-200/70 bg-white/60">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-red-50/50 rounded-lg transition-colors"
+      >
+        <Wrench size={11} className="text-red-600 flex-shrink-0" />
+        <span className="text-[10px] uppercase tracking-wider text-red-700 font-semibold flex-1">
+          Tool invocations ({toolCalls.length})
+        </span>
+        {open
+          ? <ChevronDown size={12} className="text-red-600" />
+          : <ChevronRight size={12} className="text-red-600" />
+        }
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          {Object.entries(grouped).map(([stage, calls]) => (
+            <div key={`${responseId}-stage-${stage}`}>
+              <div className="text-[9px] uppercase tracking-widest text-red-500 mb-1 border-b border-red-100 pb-0.5">
+                {stage.replace(/_/g, ' ')}
+              </div>
+              {calls.map((call, i) => {
+                const resultStr = (() => {
+                try { return JSON.stringify(call.result, null, 2) }
+                  catch { return String(call.result) }
+                })()
+                return (
+                  <div key={`${responseId}-${stage}-${i}`} className="mb-2">
+                    <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                      <span className="text-[11px] font-semibold text-red-800">
+                        {formatToolName(call.name)}
+                      </span>
+                      {call.attempt !== undefined && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-200/60 text-red-700 uppercase tracking-wide font-mono">
+                          attempt {call.attempt}
+                        </span>
+                      )}
+                    </div>
+                    <details>
+                      <summary className="cursor-pointer text-[10px] text-red-600 hover:text-red-800 select-none">
+                        View result
+                      </summary>
+                      <pre className="mt-1 rounded border border-red-200/60 bg-red-50/40 p-2 text-[10px] text-red-900 whitespace-pre-wrap break-words overflow-auto max-h-48">
+                        {resultStr}
+                      </pre>
+                    </details>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function AIChannel({
   channelId,
@@ -591,7 +665,7 @@ export function AIChannel({
             agent: 'Claims Q&A',
             mode: 'claim_answer',
             reasoning: result.reasoning,
-            toolCalls: result.tool_calls || undefined,
+            toolCalls: result.tool_calls?.length ? result.tool_calls : undefined,
           },
         ])
 
@@ -605,7 +679,7 @@ export function AIChannel({
               query: '',
               response: followupQuestion,
               agent: 'Claims Q&A',
-              mode: 'claim_answer',
+              mode: 'claim_followup',
               followupReasoning: result.followup_reasoning || undefined,
             },
           ])
@@ -1041,7 +1115,8 @@ export function AIChannel({
         {responses.map((response, index) => {
           const isClaimMessage = response.mode === 'claim_message'
           const isClaimAnswer = response.mode === 'claim_answer'
-          const isClaimVariant = isClaimMessage || isClaimAnswer
+          const isClaimFollowup = response.mode === 'claim_followup'
+          const isClaimVariant = isClaimMessage || isClaimAnswer || isClaimFollowup
           const responseCardClass = isClaimVariant
             ? 'bg-red-50 border-red-200'
             : 'bg-amber-50 border-amber-200'
@@ -1052,7 +1127,7 @@ export function AIChannel({
             ? 'bg-red-200 text-red-800'
             : 'bg-amber-200 text-amber-800'
           const responseTextClass = isClaimVariant ? 'text-red-900' : 'text-amber-900'
-          const ResponseIcon = isClaimVariant ? Flag : Mail
+          const ResponseIcon = isClaimFollowup ? MessageSquare : isClaimVariant ? Flag : Mail
           const claimReport = isClaimMessage && response.claim ? buildClaimReport(response.claim) : []
 
           return (
@@ -1074,7 +1149,11 @@ export function AIChannel({
 
             {/* AI response */}
             {response.response && (
-              <div className={`flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl border ${responseCardClass}`}>
+              <div className={`flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl border ${
+                isClaimFollowup
+                  ? 'bg-red-100/60 border-red-300 border-dashed'
+                  : responseCardClass
+              }`}>
                 <div
                   className={`w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 ${responseAvatarClass}`}
                 >
@@ -1085,10 +1164,39 @@ export function AIChannel({
                     <div className={`text-xs md:text-sm font-semibold ${responseTitleClass}`}>
                       {response.agent}
                     </div>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${responseBadgeClass}`}>
-                      AI
-                    </span>
+                    {isClaimFollowup ? (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-300 text-red-900 font-medium">
+                        Follow-up
+                      </span>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${responseBadgeClass}`}>
+                        AI
+                      </span>
+                    )}
                   </div>
+
+                  {/* Follow-up question display */}
+                  {isClaimFollowup ? (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">
+                        Next question for review
+                      </div>
+                      <div className="text-sm md:text-base font-medium text-red-900 break-words">
+                        {response.response}
+                      </div>
+                      {response.followupReasoning && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-red-600 hover:text-red-800 select-none flex items-center gap-1">
+                            <ChevronRight size={10} className="inline" />
+                            Why this question
+                          </summary>
+                          <div className="mt-1 pl-3 text-xs text-red-800 whitespace-pre-wrap break-words border-l-2 border-red-200">
+                            {response.followupReasoning}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  ) : (
                   <div className={`${responseTextClass} whitespace-pre-wrap text-sm md:text-base break-words`}>
                     {isClaimMessage && (
                       <div className="mb-3">
@@ -1109,34 +1217,12 @@ export function AIChannel({
                       </div>
                     )}
 
-                    {response.followupReasoning && (
-                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
-                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Follow-up reasoning</div>
-                        <div className="whitespace-pre-wrap break-words">
-                          {response.followupReasoning}
-                        </div>
-                      </div>
-                    )}
+                    {/* Tool calls — collapsible panel */}
+                    {response.toolCalls != null && response.toolCalls.length > 0
+                      ? <ToolCallsPanel toolCalls={response.toolCalls} responseId={response.id} />
+                      : null}
 
-                    {response.toolCalls && response.toolCalls.length > 0 && (
-                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
-                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Tool calls</div>
-                        <div className="space-y-2">
-                          {response.toolCalls.map((call, callIndex) => (
-                            <div key={`${response.id}-tool-${callIndex}`}>
-                              <div className="text-[10px] uppercase tracking-wider text-red-700">
-                                {call.name}
-                              </div>
-                              <pre className="mt-1 rounded border border-red-200/70 bg-white/60 p-2 text-[11px] text-red-900 whitespace-pre-wrap break-words">
-                                {JSON.stringify(call.result, null, 2)}
-                              </pre>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {isClaimMessage && response.claim && (
+                    {isClaimMessage && Boolean(response.claim) && (
                       <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-4 claim-report">
                         <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-3">
                           Collective Report
@@ -1213,6 +1299,7 @@ export function AIChannel({
                       </div>
                     )}
                   </div>
+                  )} {/* end isClaimFollowup else */}
                 </div>
               </div>
             )}

@@ -827,19 +827,25 @@ class ClaimsAgentADK:
 
         if variant == "A":
             style = (
-                "Answer in 2-4 concise sentences. Cite claim fields when possible. "
-                "If information is missing, say 'Not enough info in claim.'"
+                "Answer in 2-4 concise sentences. Cite specific claim field names and values. "
+                "Lead with the most important finding. "
+                "If a field is missing, note it precisely (e.g. 'resolution.outcome is not recorded'). "
+                "Do not say 'Not enough info' unless no relevant field exists at all."
             )
         else:
             style = (
-                "Answer in 2-4 bullet points with field references. "
-                "If information is missing, say 'Not enough info in claim.'"
+                "Answer using 2-4 bullet points. Each bullet must reference a specific field path "
+                "(e.g. policy.deductible_eur, resolution.outcome). "
+                "Flag any discrepancy found by the tool outputs. "
+                "If a field is absent, name it explicitly."
             )
 
         instruction = (
-            "You are a claims analyst. Use only the provided claim JSON and tool outputs. "
-            "Leverage tool history when it helps ground the answer. "
-            "Do not use outside knowledge or assumptions."
+            "You are a senior professional claims examiner conducting a structured file review. "
+            "Your goal is to advance the review by surfacing concrete facts, discrepancies, and "
+            "gaps directly from the claim JSON and tool outputs provided. "
+            "Cite field names explicitly. Never speculate or use outside knowledge. "
+            "Maintain a professional, precise, and constructive tone throughout."
         )
 
         user_message = (
@@ -887,14 +893,16 @@ class ClaimsAgentADK:
         instruction = (
             "You are a claims QA judge. Use the rubric below and select the best response.\n"
             "Rubric:\n"
-            "1) Grounded in claim JSON and tool outputs.\n"
-            "2) Directly answers the question.\n"
-            "3) Notes issues when tool outputs show discrepancies.\n"
-            "4) Clear and concise.\n\n"
+            "1) Grounded in claim JSON and tool outputs — cites specific fields.\n"
+            "2) Directly answers the question with no speculation.\n"
+            "3) Highlights discrepancies surfaced by tool outputs.\n"
+            "4) Professional, clear, and concise.\n\n"
             'Return ONLY JSON: {"winner": 1|2, "reasoning": "...", "done": true|false}. '
-            "Set done=true only when the question is fully answered and it is about the claim. "
-            "Set done=false when a follow-up would clarify or deepen the answer. "
-            "If the question is off-topic or unrelated to the claim data, set done=false. "
+            "Set done=true ONLY when the question is definitively and completely answered "
+            "with no remaining ambiguity, gaps, or discrepancies worth clarifying. "
+            "Set done=false whenever any detail, missing field, timeline gap, coverage conflict, "
+            "or financial discrepancy could still be explored. "
+            "Default to done=false — a rich claim review always benefits from follow-up. "
             "Reasoning must be 1-2 sentences."
         )
 
@@ -969,31 +977,42 @@ class ClaimsAgentADK:
             )
 
         off_domain_rule = (
-            "If the user's question is not about the claim data, you MUST ask a steering question "
-            "that brings them back to claim context (status, timeline, documents, coverage, or payments). "
-            "Do not return NONE in that case."
+            "If the user's question is not about the claim data, you MUST respond with a steering "
+            "question that brings them back to the claim review (status progression, timeline "
+            "accuracy, documents, coverage decision, or payment reconciliation). "
+            "Never return NONE in that case — the claim review must continue."
         )
 
-        if attempt >= max_attempts:
+        if attempt == 1:
+            requirement = (
+                "Generate ONE specific follow-up question that advances the claim review. "
+                "Prioritise unexamined areas: timeline gaps, missing fields, status progression, "
+                "coverage conflicts, or financial reconciliation. "
+                f"{off_domain_rule}"
+            )
+        elif attempt >= max_attempts:
             requirement = (
                 "You MUST output a follow-up question. "
-                "If the user is off-topic, steer back to the claim with a neutral choice question "
+                "If the user is off-topic, steer back to the claim with a concrete choice question "
                 "(status, timeline, documents, coverage, or payments). "
                 f"{off_domain_rule}"
             )
         else:
             requirement = (
-                "Return ONLY the question text, or 'NONE' if no follow-up is needed. "
+                "Return ONLY the question text. Return 'NONE' only if every significant aspect "
+                "of the claim has already been thoroughly covered in the conversation history. "
                 f"{off_domain_rule}"
             )
 
         instruction = (
-            "You generate ONE follow-up question for a claim Q&A. "
+            "You are a senior claims QA specialist generating follow-up questions for a structured "
+            "claim file review. Your mission is to keep the review moving forward toward a complete "
+            "understanding of the claim. "
             "Use the claim JSON, tool outputs, tool history, history, and asked questions. "
             "Do not ask for fields already present in the claim JSON unless clarification is needed. "
             "Avoid repeating any prior questions. "
             "Avoid moral or blame framing (no 'who is wronged' questions). "
-            "Use neutral factual wording. "
+            "Use neutral, professional, fact-seeking wording. "
             f"Attempt {attempt} of {max_attempts}. "
             f"{requirement}"
         )
@@ -1047,15 +1066,19 @@ class ClaimsAgentADK:
         history_json = json.dumps(history, ensure_ascii=True)
         asked_json = json.dumps(asked_questions, ensure_ascii=True)
         instruction = (
-            "You are a claims QA follow-up judge. Select the better follow-up question.\n"
+            "You are a claims QA follow-up judge conducting a professional claim file review. "
+            "Select the better follow-up question to advance the review.\n"
             "Criteria:\n"
             "1) Non-redundant with prior questions.\n"
-            "2) Clarifies missing or ambiguous details.\n"
-            "3) Grounded in claim JSON and tool outputs.\n"
-            "4) Neutral factual wording.\n\n"
+            "2) Advances the review toward a complete understanding of the claim.\n"
+            "3) Grounded in claim JSON and tool outputs — targets real gaps or discrepancies.\n"
+            "4) Neutral, professional, fact-seeking wording.\n"
+            "5) Steers off-topic conversations back to the claim review.\n\n"
             'Return ONLY JSON: {"winner": 1|2, "reasoning": "...", "question": "..."}. '
-            "If the user question is off-topic, you MUST return a steering follow-up question. "
-            "If both are poor or empty and it is on-topic, set question to empty string."
+            "If the user question is off-topic, you MUST return a steering question that refocuses "
+            "on the claim (status, timeline, documents, coverage, or payments). "
+            "Only set question to empty string if both candidates are truly redundant AND the "
+            "conversation already covers every significant aspect of the claim."
         )
 
         user_message = (
