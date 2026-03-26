@@ -50,3 +50,4 @@ frontend/package-lock.json
 
 # Synthetic test data
 synthetic_claims/
+__pycache__/
