@@ -58,6 +58,7 @@ Ready to deploy? The script is well-documented and handles everything automatica
 - MinIO buckets `media` and `synt-data` are created during deployment.
 - Upload limit raised to 20MB (ingress `proxy-body-size` + media-storage `MAX_UPLOAD_MB`).
 - Media downloads are served directly by media-storage (no dependency on `/minio` ingress).
+- Media uploads are routed directly to media-storage via `/media/upload` (monolith kept only for legacy clients).
 
 ## Manual Steps Still Required
 - **Free ports 80/443** before running the script (stop nginx/caddy or any service bound to those ports).

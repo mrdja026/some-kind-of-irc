@@ -77,6 +77,7 @@ CORS(
     app,
     resources={
         r"/upload": {"origins": allowed_origins, "methods": ["POST", "OPTIONS"]},
+        r"/media/upload": {"origins": allowed_origins, "methods": ["POST", "OPTIONS"]},
         r"/health": {"origins": allowed_origins, "methods": ["GET", "OPTIONS"]},
     },
     supports_credentials=True,
@@ -243,6 +244,7 @@ def health_check():
 
 
 @app.post("/upload")
+@app.post("/media/upload")
 def upload_file():
     try:
         _ensure_bucket_exists()
