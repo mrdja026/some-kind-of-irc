@@ -83,6 +83,49 @@ const KIND_COLORS: Record<string, { bg: string; border: string; text: string; la
     text: 'text-purple-800',
     label: 'LLM_JUDGE',
   },
+  claims_truth_check: {
+    bg: 'bg-red-50',
+    border: 'border-red-200',
+    text: 'text-red-800',
+    label: 'CLAIMS_CHECK',
+  },
+  claims_candidate: {
+    bg: 'bg-rose-50',
+    border: 'border-rose-200',
+    text: 'text-rose-800',
+    label: 'CLAIMS_CANDIDATE',
+  },
+  claims_followup_candidate: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    text: 'text-amber-800',
+    label: 'FOLLOWUP_CANDIDATE',
+  },
+  claims_judge: {
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+    text: 'text-purple-800',
+    label: 'CLAIMS_JUDGE',
+  },
+  claims_followup_judge: {
+    bg: 'bg-purple-50',
+    border: 'border-purple-200',
+    text: 'text-purple-800',
+    label: 'FOLLOWUP_JUDGE',
+  },
+  claims_followup: {
+    bg: 'bg-amber-50',
+    border: 'border-amber-200',
+    text: 'text-amber-800',
+    label: 'CLAIMS_FOLLOWUP',
+  },
+}
+
+const FALLBACK_KIND = {
+  bg: 'bg-gray-50',
+  border: 'border-gray-200',
+  text: 'text-gray-700',
+  label: 'INFERENCE',
 }
 
 function formatTime(isoString: string): string {
@@ -119,11 +162,7 @@ interface TimelineEventProps {
 }
 
 function TimelineEvent({ event, isExpanded, onToggle }: TimelineEventProps) {
-  const colors = KIND_COLORS[event.kind]
-  
-  if (!colors) {
-    return null
-  }
+  const colors = KIND_COLORS[event.kind] || FALLBACK_KIND
 
   const payload = event.payload as Record<string, unknown>
 
@@ -174,8 +213,56 @@ function TimelineEvent({ event, isExpanded, onToggle }: TimelineEventProps) {
           ? `${String(output.reasoning).slice(0, 100)}...`
           : 'Final judgment rendered'
       }
+      case 'claims_truth_check': {
+        const response = payload?.response as {
+          issues?: unknown[]
+          status?: string | null
+        } | undefined
+        const issueCount = response?.issues?.length || 0
+        if (response?.status) {
+          return `Status: ${response.status} • ${issueCount} issue(s) flagged`
+        }
+        return issueCount > 0
+          ? `${issueCount} issue(s) flagged`
+          : 'Truth check complete'
+      }
+      case 'claims_candidate': {
+        const response = payload?.response as { answer?: string } | undefined
+        return response?.answer
+          ? `${String(response.answer).slice(0, 100)}...`
+          : 'Candidate answer generated'
+      }
+      case 'claims_followup_candidate': {
+        const response = payload?.response as { question?: string } | undefined
+        return response?.question
+          ? `Follow-up candidate: ${String(response.question).slice(0, 100)}...`
+          : 'Follow-up candidate generated'
+      }
+      case 'claims_judge': {
+        const response = payload?.response as { reasoning?: string; winner?: number } | undefined
+        if (response?.reasoning) {
+          return `${String(response.reasoning).slice(0, 100)}...`
+        }
+        return response?.winner ? `Judge selected response ${response.winner}` : 'Judge completed'
+      }
+      case 'claims_followup_judge': {
+        const response = payload?.response as {
+          reasoning?: string
+          question?: string
+        } | undefined
+        if (response?.reasoning) {
+          return `${String(response.reasoning).slice(0, 100)}...`
+        }
+        return response?.question ? `Selected: ${response.question}` : 'Follow-up judged'
+      }
+      case 'claims_followup': {
+        const response = payload?.response as { next_question?: string } | undefined
+        return response?.next_question
+          ? `Follow-up: ${response.next_question}`
+          : 'No follow-up question'
+      }
       default:
-        return 'Processing step'
+        return event.kind ? `Event: ${event.kind}` : 'Processing step'
     }
   }
 
@@ -208,7 +295,7 @@ function TimelineEvent({ event, isExpanded, onToggle }: TimelineEventProps) {
             <span
               className={`text-xs font-semibold px-2 py-0.5 rounded ${colors.bg} ${colors.text} border ${colors.border}`}
             >
-              {colors.label}
+              {KIND_COLORS[event.kind]?.label || event.kind?.toUpperCase() || colors.label}
             </span>
             {getModel() && (
               <span className="text-xs text-gray-400">{getModel()}</span>
@@ -242,6 +329,28 @@ function TimelineEvent({ event, isExpanded, onToggle }: TimelineEventProps) {
                 </h4>
                 <pre className="text-xs bg-white/50 p-2 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
                   {JSON.stringify(payload.response, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {payload?.findings && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                  Findings
+                </h4>
+                <pre className="text-xs bg-white/50 p-2 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                  {JSON.stringify(payload.findings, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {payload?.tool_calls && (
+              <div>
+                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+                  Tool calls
+                </h4>
+                <pre className="text-xs bg-white/50 p-2 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                  {JSON.stringify(payload.tool_calls, null, 2)}
                 </pre>
               </div>
             )}
@@ -311,9 +420,7 @@ export function InferenceTimeline({ onClose }: InferenceTimelineProps) {
     })
   }
 
-  const gmailEvents = events.filter((e) =>
-    e.kind.startsWith('gmail_step_') || e.kind === 'gmail_questions' || e.kind === 'gmail_summary',
-  )
+  const timelineEvents = events
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow-lg border border-gray-200">
@@ -365,17 +472,17 @@ export function InferenceTimeline({ onClose }: InferenceTimelineProps) {
           </div>
         )}
 
-        {!loading && !error && gmailEvents && gmailEvents.length === 0 && (
+        {!loading && !error && timelineEvents && timelineEvents.length === 0 && (
           <div className="text-center py-12">
             <Clock size={48} className="mx-auto text-gray-300 mb-4" />
-            <p className="text-gray-500">No Gmail inference events found</p>
+            <p className="text-gray-500">No inference events found</p>
             <p className="text-sm text-gray-400 mt-2">
-              Run a Gmail summarization to see the timeline
+              Run a Gmail summary or Claims Q&A to see the timeline
             </p>
           </div>
         )}
 
-        {!loading && !error && gmailEvents && gmailEvents.length > 0 && (
+        {!loading && !error && timelineEvents && timelineEvents.length > 0 && (
           <div>
             <div className="mb-4 text-sm text-gray-500">
               {lastFetchTime && (
@@ -385,14 +492,14 @@ export function InferenceTimeline({ onClose }: InferenceTimelineProps) {
                 </>
               )}
               <span className="ml-2 text-gray-400">
-                ({gmailEvents.length} event{gmailEvents.length !== 1 ? 's' : ''})
+                ({timelineEvents.length} event{timelineEvents.length !== 1 ? 's' : ''})
               </span>
             </div>
 
             <div className="relative">
               <div className="absolute left-[7px] top-4 bottom-4 w-0.5 bg-gray-200" />
 
-              {gmailEvents.map((event) => (
+              {timelineEvents.map((event) => (
                 <div key={event.event_id} className="relative pl-6">
                   <div className="absolute left-0 top-4 w-4 h-4 rounded-full bg-white border-2 border-purple-400" />
                   <TimelineEvent

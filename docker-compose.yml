@@ -52,6 +52,7 @@ services:
       dockerfile: Dockerfile
     environment:
       MEDIA_STORAGE_URL: "${MEDIA_STORAGE_URL:-http://media-storage:9101}"
+      AI_SERVICE_ADK_URL: "${AI_SERVICE_ADK_URL:-http://ai-service-adk:8004}"
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:4269,http://127.0.0.1:4269,http://localhost:8080,http://127.0.0.1:8080}"
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL-}"
       VITE_PUBLIC_API_URL: "${VITE_PUBLIC_API_URL-}"

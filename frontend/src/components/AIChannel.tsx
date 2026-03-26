@@ -5,14 +5,15 @@ import {
   fetchRandomClaim,
   fetchGmailMessages,
   generateCalendarQuestion,
+  generateClaimAnswer,
   generateGmailQuestions,
   generateGmailSummary,
   generatePdf,
   getAIHealth,
   getAIStatus,
 } from '../api'
-import type { CalendarEventPayload } from '../types'
-import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag } from 'lucide-react'
+import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall } from '../types'
+import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag, ChevronDown, ChevronRight, Wrench, MessageSquare } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 
 interface AIChannelProps {
@@ -31,12 +32,15 @@ type ConversationEntry = {
   query: string
   response: string
   agent: string
-  mode?: 'agent_message' | 'claim_message'
+  mode?: 'agent_message' | 'claim_message' | 'claim_answer' | 'claim_followup'
   emails?: any[]
   pdfUrl?: string
   claim?: unknown
   claimFilename?: string
   claimPretty?: string
+  reasoning?: string
+  followupReasoning?: string
+  toolCalls?: ClaimToolCall[]
 }
 
 type ClaimReportNode = {
@@ -70,6 +74,80 @@ const AI_OPTIONS = [
     description: "Review a random claim from the People's Archive",
   },
 ]
+
+/** Collapsible panel showing all tool invocations for a claim answer. */
+function ToolCallsPanel({ toolCalls, responseId }: { toolCalls: ClaimToolCall[]; responseId: number }) {
+  const [open, setOpen] = useState(false)
+
+  const formatToolName = (name: string) =>
+    name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+
+  // Group calls by stage so the panel is easy to scan
+  const grouped: Record<string, ClaimToolCall[]> = {}
+  toolCalls.forEach((tc) => {
+    const key = tc.stage || 'other'
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(tc)
+  })
+
+  return (
+    <div className="mt-3 rounded-lg border border-red-200/70 bg-white/60">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-red-50/50 rounded-lg transition-colors"
+      >
+        <Wrench size={11} className="text-red-600 flex-shrink-0" />
+        <span className="text-[10px] uppercase tracking-wider text-red-700 font-semibold flex-1">
+          Tool invocations ({toolCalls.length})
+        </span>
+        {open
+          ? <ChevronDown size={12} className="text-red-600" />
+          : <ChevronRight size={12} className="text-red-600" />
+        }
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          {Object.entries(grouped).map(([stage, calls]) => (
+            <div key={`${responseId}-stage-${stage}`}>
+              <div className="text-[9px] uppercase tracking-widest text-red-500 mb-1 border-b border-red-100 pb-0.5">
+                {stage.replace(/_/g, ' ')}
+              </div>
+              {calls.map((call, i) => {
+                const resultStr = (() => {
+                try { return JSON.stringify(call.result, null, 2) }
+                  catch { return String(call.result) }
+                })()
+                return (
+                  <div key={`${responseId}-${stage}-${i}`} className="mb-2">
+                    <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                      <span className="text-[11px] font-semibold text-red-800">
+                        {formatToolName(call.name)}
+                      </span>
+                      {call.attempt !== undefined && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-200/60 text-red-700 uppercase tracking-wide font-mono">
+                          attempt {call.attempt}
+                        </span>
+                      )}
+                    </div>
+                    <details>
+                      <summary className="cursor-pointer text-[10px] text-red-600 hover:text-red-800 select-none">
+                        View result
+                      </summary>
+                      <pre className="mt-1 rounded border border-red-200/60 bg-red-50/40 p-2 text-[10px] text-red-900 whitespace-pre-wrap break-words overflow-auto max-h-48">
+                        {resultStr}
+                      </pre>
+                    </details>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function AIChannel({
   channelId,
@@ -111,6 +189,12 @@ export function AIChannel({
   const [calendarQuestionsAsked, setCalendarQuestionsAsked] = useState(0)
   const [calendarEventDraft, setCalendarEventDraft] =
     useState<CalendarEventPayload | null>(null)
+  const [claimPayload, setClaimPayload] = useState<{ claim: unknown; filename?: string } | null>(null)
+  const [claimHistory, setClaimHistory] = useState<ClaimQaHistoryEntry[]>([])
+  const [claimQuestionCount, setClaimQuestionCount] = useState(0)
+  const [claimAskedQuestions, setClaimAskedQuestions] = useState<string[]>([])
+  const [claimPendingFollowup, setClaimPendingFollowup] = useState<string | null>(null)
+  const [claimToolHistory, setClaimToolHistory] = useState<ClaimToolCall[]>([])
 
   const {
     data: aiHealth,
@@ -390,6 +474,12 @@ export function AIChannel({
     setCalendarAnswers([])
     setCalendarQuestionsAsked(0)
     setCalendarEventDraft(null)
+    setClaimPayload(null)
+    setClaimHistory([])
+    setClaimQuestionCount(0)
+    setClaimAskedQuestions([])
+    setClaimPendingFollowup(null)
+    setClaimToolHistory([])
     setStreamError(null)
     setActiveQuestion(null)
     setResponses([])
@@ -456,6 +546,12 @@ export function AIChannel({
         const rallyingCall =
           `Comrade, claim ${filename} has been delivered for collective review. ` +
           'Ask your questions below to serve the shared record.'
+        setClaimPayload({ claim, filename })
+        setClaimHistory([])
+        setClaimQuestionCount(0)
+        setClaimAskedQuestions([])
+        setClaimPendingFollowup(null)
+        setClaimToolHistory([])
         setResponses([
           {
             id: Date.now(),
@@ -515,6 +611,98 @@ export function AIChannel({
 
     try {
       if (gmailStage === 'claims') {
+        if (!claimPayload) {
+          setStreamError('No claim loaded. Start over to fetch a claim.')
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        if (claimQuestionCount >= 5) {
+          setStreamError('Maximum of 5 questions reached for this claim.')
+          setIsSubmitting(false)
+          setQuery('')
+          return
+        }
+
+        setStreamProgress('Analyzing claim details...')
+        const nextCount = claimQuestionCount + 1
+        const questionText = claimPendingFollowup
+          ? `${claimPendingFollowup}\nUser response: ${trimmedAnswer}`
+          : trimmedAnswer
+        const askedQuestions = Array.from(
+          new Set(
+            [
+              ...claimAskedQuestions,
+              claimPendingFollowup || '',
+            ].map((item) => item.trim()).filter(Boolean),
+          ),
+        )
+        const result = await generateClaimAnswer(
+          claimPayload.claim,
+          questionText,
+          claimHistory,
+          nextCount,
+          askedQuestions,
+          claimToolHistory,
+        )
+
+        setClaimQuestionCount(nextCount)
+        setClaimHistory((prev) => [...prev, { question: questionText, answer: result.answer }])
+        setClaimToolHistory(
+          result.tool_history
+            ? result.tool_history
+            : [...claimToolHistory, ...(result.tool_calls || [])],
+        )
+        setClaimPendingFollowup(null)
+
+        setResponses((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            query: '',
+            response: result.answer,
+            agent: 'Claims Q&A',
+            mode: 'claim_answer',
+            reasoning: result.reasoning,
+            toolCalls: result.tool_calls?.length ? result.tool_calls : undefined,
+          },
+        ])
+
+        if (result.next_question && !result.done) {
+          const followupId = Date.now() + 2
+          const followupQuestion = result.next_question.trim()
+          setResponses((prev) => [
+            ...prev,
+            {
+              id: followupId,
+              query: '',
+              response: followupQuestion,
+              agent: 'Claims Q&A',
+              mode: 'claim_followup',
+              followupReasoning: result.followup_reasoning || undefined,
+            },
+          ])
+          setClaimAskedQuestions((prev) =>
+            prev.includes(followupQuestion) ? prev : [...prev, followupQuestion],
+          )
+          setClaimPendingFollowup(followupQuestion)
+          setActiveQuestion(followupQuestion)
+        } else {
+          let fallbackPrompt = 'Ask another claim question...'
+          if (nextCount >= 5) {
+            fallbackPrompt = 'Question limit reached for this claim. Start over to load a new one.'
+          } else if (claimPayload.filename) {
+            fallbackPrompt = `Ask about ${claimPayload.filename}...`
+          }
+          if (result.done) {
+            fallbackPrompt = 'Conversation complete. Ask another claim question if needed.'
+          }
+          setActiveQuestion(fallbackPrompt)
+          setClaimPendingFollowup(null)
+        }
+
+        setStreamProgress(null)
         setIsSubmitting(false)
         setQuery('')
         return
@@ -765,7 +953,11 @@ export function AIChannel({
         return
       }
     } catch (err) {
-      setStreamError('Gmail agent failed. Please try again.')
+      const message =
+        gmailStage === 'claims'
+          ? 'Claims Q&A failed. Please try again.'
+          : 'Gmail agent failed. Please try again.'
+      setStreamError(message)
       setStreamProgress(null)
       console.error(err)
     } finally {
@@ -782,6 +974,7 @@ export function AIChannel({
   const aiUnavailable = Boolean(healthMessage) || Boolean(aiAccessMessage) || aiStatus?.available === false
   const aiUnavailableMessage =
     aiAccessMessage || healthMessage || 'AI service is not configured yet. Please contact administrator.'
+  const claimsQuestionLimitReached = isClaimsMode && claimQuestionCount >= 5
   const assistantLabel = isClaimsMode
     ? 'Claims Q&A'
     : isCalendarMode
@@ -796,7 +989,8 @@ export function AIChannel({
   const assistantIcon = isClaimsMode ? Flag : isCalendarMode ? Calendar : Sparkles
   const assistantIconClass = isClaimsMode ? 'text-red-600' : 'text-amber-600'
   const AssistantIcon = assistantIcon
-  const inputDisabled = isSubmitting || (!isClaimsMode && aiUnavailable)
+  const inputDisabled =
+    isSubmitting || (!isClaimsMode && aiUnavailable) || claimsQuestionLimitReached
 
   return (
     <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
@@ -920,18 +1114,21 @@ export function AIChannel({
         {/* Conversation */}
         {responses.map((response, index) => {
           const isClaimMessage = response.mode === 'claim_message'
-          const responseCardClass = isClaimMessage
+          const isClaimAnswer = response.mode === 'claim_answer'
+          const isClaimFollowup = response.mode === 'claim_followup'
+          const isClaimVariant = isClaimMessage || isClaimAnswer || isClaimFollowup
+          const responseCardClass = isClaimVariant
             ? 'bg-red-50 border-red-200'
             : 'bg-amber-50 border-amber-200'
-          const responseAvatarClass = isClaimMessage ? 'bg-red-200' : 'bg-amber-200'
-          const responseIconClass = isClaimMessage ? 'text-red-700' : 'text-amber-700'
-          const responseTitleClass = isClaimMessage ? 'text-red-800' : 'text-amber-800'
-          const responseBadgeClass = isClaimMessage
+          const responseAvatarClass = isClaimVariant ? 'bg-red-200' : 'bg-amber-200'
+          const responseIconClass = isClaimVariant ? 'text-red-700' : 'text-amber-700'
+          const responseTitleClass = isClaimVariant ? 'text-red-800' : 'text-amber-800'
+          const responseBadgeClass = isClaimVariant
             ? 'bg-red-200 text-red-800'
             : 'bg-amber-200 text-amber-800'
-          const responseTextClass = isClaimMessage ? 'text-red-900' : 'text-amber-900'
-          const ResponseIcon = isClaimMessage ? Flag : Mail
-          const claimReport = isClaimMessage ? buildClaimReport(response.claim) : []
+          const responseTextClass = isClaimVariant ? 'text-red-900' : 'text-amber-900'
+          const ResponseIcon = isClaimFollowup ? MessageSquare : isClaimVariant ? Flag : Mail
+          const claimReport = isClaimMessage && response.claim ? buildClaimReport(response.claim) : []
 
           return (
             <div key={index} className="mb-4 md:mb-6">
@@ -952,7 +1149,11 @@ export function AIChannel({
 
             {/* AI response */}
             {response.response && (
-              <div className={`flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl border ${responseCardClass}`}>
+              <div className={`flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl border ${
+                isClaimFollowup
+                  ? 'bg-red-100/60 border-red-300 border-dashed'
+                  : responseCardClass
+              }`}>
                 <div
                   className={`w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 ${responseAvatarClass}`}
                 >
@@ -963,10 +1164,39 @@ export function AIChannel({
                     <div className={`text-xs md:text-sm font-semibold ${responseTitleClass}`}>
                       {response.agent}
                     </div>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${responseBadgeClass}`}>
-                      AI
-                    </span>
+                    {isClaimFollowup ? (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-300 text-red-900 font-medium">
+                        Follow-up
+                      </span>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${responseBadgeClass}`}>
+                        AI
+                      </span>
+                    )}
                   </div>
+
+                  {/* Follow-up question display */}
+                  {isClaimFollowup ? (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">
+                        Next question for review
+                      </div>
+                      <div className="text-sm md:text-base font-medium text-red-900 break-words">
+                        {response.response}
+                      </div>
+                      {response.followupReasoning && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-red-600 hover:text-red-800 select-none flex items-center gap-1">
+                            <ChevronRight size={10} className="inline" />
+                            Why this question
+                          </summary>
+                          <div className="mt-1 pl-3 text-xs text-red-800 whitespace-pre-wrap break-words border-l-2 border-red-200">
+                            {response.followupReasoning}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  ) : (
                   <div className={`${responseTextClass} whitespace-pre-wrap text-sm md:text-base break-words`}>
                     {isClaimMessage && (
                       <div className="mb-3">
@@ -980,7 +1210,19 @@ export function AIChannel({
                     )}
                     {response.response}
 
-                    {isClaimMessage && (
+                    {response.reasoning && (
+                      <div className="mt-3 rounded-lg border border-red-200/70 bg-red-50/80 px-3 py-2 text-xs md:text-sm text-red-900">
+                        <div className="text-[10px] uppercase tracking-wider text-red-700 mb-1">Reasoning</div>
+                        <div className="whitespace-pre-wrap break-words">{response.reasoning}</div>
+                      </div>
+                    )}
+
+                    {/* Tool calls — collapsible panel */}
+                    {response.toolCalls != null && response.toolCalls.length > 0
+                      ? <ToolCallsPanel toolCalls={response.toolCalls} responseId={response.id} />
+                      : null}
+
+                    {isClaimMessage && Boolean(response.claim) && (
                       <div className="mt-4 rounded-lg border border-red-200/80 bg-red-50/60 p-4 claim-report">
                         <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-3">
                           Collective Report
@@ -1057,6 +1299,7 @@ export function AIChannel({
                       </div>
                     )}
                   </div>
+                  )} {/* end isClaimFollowup else */}
                 </div>
               </div>
             )}

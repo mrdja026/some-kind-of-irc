@@ -1,8 +1,8 @@
 # Google ADK with LiteLLM extensions for provider-style models
 google-adk[extensions]>=1.27.0
 
-# LiteLLM for Claude support via ADK (>=1.75.5 required for provider-style models)
-litellm>=1.75.5
+# LiteLLM for provider-style models (pinned to safe version)
+litellm==1.82.6
 
 # FastAPI and dependencies
 fastapi>=0.111.0
