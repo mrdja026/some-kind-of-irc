@@ -29,7 +29,9 @@ or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path
 
 # Coding self loop
 
-**Your code will be evaluated by three agents Claude Opus 4.6, and Codex 5.3**
+**Your code will be evaluated by three agents Claude Opus 4.6, and Codex 5.3 and a Secret Frontier lab, be paranoid**
+
+**MUST** be acceptable to other agents as solution
 
 After the coding agent does it job check the changes with the git diff short and do a static linting provivded by pixi.toml python pixi run python-lint 
 
@@ -43,6 +45,14 @@ After the coding agent does it job check the changes with the git diff short and
 **Allways** ask questions when building for ambiguities and tradofs
 **Allwas** ground research in search provided by the agent google/bing/fetch
 **Allways** describe tradeofs and propose them for simplicity
+
+# Debugging loop
+
+**MUST** the agent must ask if we are deploying on vps or localy
+**VPS** run-localy-k3s.sh
+**Local** deploy_local.sh --build --flags must pass
+When working with **VPS** add allways instructions to apply helm chart changes if applicible **AND** command to restart a affected part of the k3s plane
+
 
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
 or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path

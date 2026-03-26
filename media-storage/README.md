@@ -11,6 +11,8 @@ Environment variables:
 - `MINIO_ACCESS_KEY`
 - `MINIO_SECRET_KEY`
 - `MINIO_BUCKET` (default: `media`)
+- `MINIO_CLAIMS_BUCKET` (default: `synt-data`)
+- `MINIO_CLAIMS_PREFIX` (default: empty)
 - `MINIO_REGION` (default: `us-east-1`)
 - `MINIO_USE_SSL` (default: `false`)
 - `BACKEND_VERIFY_URL` (default: `http://localhost:8002/auth/me`)

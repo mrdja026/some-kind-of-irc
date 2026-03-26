@@ -26,17 +26,16 @@ export ANTHROPIC_API_KEY="sk-ant-your-key-here"
 # Make script executable and run
 chmod +x run_locally_k3s.sh
 ./run_locally_k3s.sh
-What the Script Does (8 steps)
+What the Script Does (7 steps)
 Step	Action
-1/8	Check prerequisites (docker, curl)
-2/8	Verify ports 80/443 are free
-3/8	Install K3s (idempotent)
-4/8	Install Argo CD
-5/8	Install NGINX Ingress
-6/8	Deploy Redis + PostgreSQL
-7/8	Build & deploy all services (monolith, ai-service, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
-8/8	Configure ingress routes
-Then: Inject ANTHROPIC_API_KEY, create MinIO bucket, seed users.
+1/7	Check prerequisites (docker, curl)
+2/7	Verify ports 80/443 are free
+3/7	Install K3s (idempotent)
+4/7	Install NGINX Ingress
+5/7	Deploy Redis + PostgreSQL
+6/7	Build & deploy all services (monolith, ai-service-adk, data-processor, minio, media-storage, audit-logger, frontend) + run migrations
+7/7	Configure ingress routes
+Then: Inject ANTHROPIC_API_KEY, create MinIO buckets, seed users.
 Verify Deployment
 # Check pods
 kubectl get pods -n irc-app
@@ -44,7 +43,7 @@ kubectl get pods -n irc-app
 curl http://localhost/health
 curl http://localhost/healthz
 curl http://localhost/adk/healthz
-curl http://localhost/data-processor/healthz
+curl http://localhost/data-processor/health
 # Access from external IP
 curl http://<VPS_IP>/health
 ---
@@ -52,89 +51,32 @@ Ready to deploy? The script is well-documented and handles everything automatica
 
 ---
 
-## Post-Deployment Issues (2026-03-22)
+## Hurdles Resolved in Repo (2026-03-23)
+- Removed Argo CD from the K3s flow to avoid argocd-repo-server crashloops on small VPSes.
+- ADK-only AI routing (no ai-service) with `/healthz` pointing to `ai-service-adk`.
+- `run_locally_k3s.sh` now patches `PUBLIC_BASE_URL`, `MINIO_PUBLIC_ENDPOINT`, and `ALLOWED_ORIGINS` after deploy.
+- MinIO buckets `media` and `synt-data` are created during deployment.
+- Upload limit raised to 20MB (ingress `proxy-body-size` + media-storage `MAX_UPLOAD_MB`).
+- Media downloads are served directly by media-storage (no dependency on `/minio` ingress).
+- Media uploads are routed directly to media-storage via `/media/upload` (monolith kept only for legacy clients).
 
-### Issue 1: Health Check Endpoint Mismatch
-**Status**: Fixed in repo, needs redeploy
-**Files affected**:
-- `k8s/manifests/audit-logger.yaml` - Changed `/healthz` to `/health`
-- `k8s/manifests/media-storage.yaml` - Changed `/healthz` to `/health`
+## Manual Steps Still Required
+- **Free ports 80/443** before running the script (stop nginx/caddy or any service bound to those ports).
+- **Set ANTHROPIC_API_KEY** if AI/Gmail features are needed.
+- **Update IP-specific config** if the VPS IP changes:
+  - Patch `PUBLIC_BASE_URL`, `MINIO_PUBLIC_ENDPOINT`, and `ALLOWED_ORIGINS` in the `irc-app-config` ConfigMap.
+- **MinIO console access** from a host machine requires `kubectl port-forward` + SSH tunnel (console is not exposed publicly).
+- **Seed synthetic claims** if needed (bucket is created but seeding is manual).
+- **Fix legacy image URLs** if older messages still reference `http://CHANGE_ME:8080/...`.
+- **HTTP on VPS** works out of the box via `run_locally_k3s.sh` (default `PUBLIC_BASE_URL` is `http://<VPS_IP>`).
+- **HTTPS** requires a domain or self-signed cert; if the frontend is served over HTTPS but `PUBLIC_BASE_URL` is HTTP, browsers block mixed content (login/upload fail). Set `PUBLIC_BASE_URL=https://<VPS_IP>` and provide TLS if you want HTTPS.
 
-**Fix on VPS**:
-```bash
-git pull
-kubectl delete deployment audit-logger media-storage -n irc-app
-kubectl apply -f k8s/manifests/audit-logger.yaml
-kubectl apply -f k8s/manifests/media-storage.yaml
-```
-
-### Issue 2: CORS Errors on Media Upload & AI Service
-**Status**: Partially fixed, needs VPS IP in ALLOWED_ORIGINS
-**Root cause**: 
-- `ALLOWED_ORIGINS` in configmap only includes localhost, not VPS public IP
-- media-storage Flask app was missing flask-cors (now fixed in repo)
-
-**Fix on VPS**:
-```bash
-# 1. Pull latest (includes flask-cors fix)
-git pull
-
-# 2. Get VPS IP and update configmap
-VPS_IP=$(curl -s ifconfig.me)
-kubectl patch configmap irc-app-config -n irc-app --type merge \
-  -p "{\"data\":{\"ALLOWED_ORIGINS\":\"http://localhost,http://127.0.0.1,http://localhost:4269,http://$VPS_IP,http://$VPS_IP:4269,http://$VPS_IP:80\"}}"
-
-# 3. Rebuild media-storage with flask-cors
-docker build -t media-storage:latest ./media-storage
-sudo k3s ctr images import <(docker save media-storage:latest)
-
-# 4. Restart affected services
-kubectl rollout restart deployment/media-storage -n irc-app
-kubectl rollout restart deployment/ai-service -n irc-app
-kubectl rollout restart deployment/ai-service-adk -n irc-app
-kubectl rollout restart deployment/monolith -n irc-app
-```
-
-### Issue 3: Admin User Not Recognized
-**Status**: Needs investigation
-**Symptom**: User "admina" told they are not an admin when accessing AI features
-**Possible causes**:
-1. User seeding didn't set `is_admin=true` in database
-2. JWT token not including admin flag
-3. AI service not reading admin flag correctly
-
-**Diagnose on VPS**:
-```bash
-# Check if admina has is_admin=true
-kubectl exec -n irc-app deploy/postgresql -- psql -U app_user -d app_db \
-  -c "SELECT id, username, is_admin FROM users WHERE username='admina';"
-```
-
-**Fix if is_admin is false**:
-```bash
-kubectl exec -n irc-app deploy/postgresql -- psql -U app_user -d app_db \
-  -c "UPDATE users SET is_admin = true WHERE username = 'admina';"
-```
-
-### Issue 4: Low-RAM VPS Timeouts
-**Status**: Known limitation
-**Symptom**: Deployment hangs waiting for pods on 4GB RAM VPS
-**Workaround**: Be patient, increase timeouts, or use larger VPS
-
----
-
-## What's Working (Verified 2026-03-22)
-- [x] Frontend loads at http://<VPS_IP>/ (via ingress)
-- [x] Frontend loads at http://<VPS_IP>:4269 (direct)
-- [x] Data processor working (document upload/processing)
-- [x] User login works
-- [x] All pods running after health check fixes
-- [x] Ingress routing configured (strangler pattern)
-
-## What Needs Testing After Fixes
-- [ ] Media upload (after CORS fix)
-- [ ] AI features (after CORS + admin fix)
-- [ ] MinIO public access via /minio/*
+## What Needs Testing After Deploy
+- [x] Image upload + display from `/media/uploads/.../display.jpg` (verified on VPS over HTTP, 2026-03-26)
+- [ ] AI access for allowlisted users
+- [ ] MinIO access via `/minio/*` (S3 API)
+- [x] WebSocket chat connectivity (`/ws/*`) (verified on VPS over HTTP, 2026-03-26)
+- [x] Data-processor upload/processing via `/data-processor/*` (verified on VPS over HTTP, 2026-03-26)
 
 ---
 
@@ -147,11 +89,10 @@ The `run_locally_k3s.sh` script is a **dev environment bootstrapper**, not a pro
 
 | Step | What it does | Needed for production? |
 |------|--------------|------------------------|
-| 3/8 | Install K3s | ❌ Already installed on VPS |
-| 4/8 | Install Argo CD | ❌ Not used, or should be GitOps |
-| 5/8 | Install NGINX Ingress | ❌ Already installed |
-| 6/8 | Deploy Redis + PostgreSQL | ⚠️ One-time only |
-| 7/8 | Build images with Docker on VPS | ❌ Should use container registry |
+| 3/7 | Install K3s | ❌ Already installed on VPS |
+| 4/7 | Install NGINX Ingress | ❌ Already installed |
+| 5/7 | Deploy Redis + PostgreSQL | ⚠️ One-time only |
+| 6/7 | Build images with Docker on VPS | ❌ Should use container registry |
 
 ### What Production Should Look Like
 
@@ -162,13 +103,7 @@ kubectl apply -f k8s/manifests/
 kubectl rollout restart deployment -n irc-app
 ```
 
-**Option B: GitOps with Argo CD (if we're installing it anyway)**
-```bash
-# Argo CD watches repo and auto-deploys on push
-git push  # That's it
-```
-
-**Option C: CI/CD Pipeline**
+**Option B: CI/CD Pipeline**
 ```yaml
 # GitHub Actions / GitLab CI
 - Build images → Push to registry
@@ -179,13 +114,11 @@ git push  # That's it
 ### Current Reality
 - Script builds images locally on VPS (slow, uses VPS resources)
 - No container registry integration
-- Argo CD is installed but not configured for GitOps
 - Every "deploy" re-runs installation steps
 
 ### Recommended Future Work
 1. **Push images to registry** instead of building on VPS
-2. **Either use Argo CD properly** (GitOps) or **remove it**
-3. **Split script** into:
-   - `setup-k3s.sh` - One-time VPS setup
-   - `deploy.sh` - Actual deployment (just kubectl apply)
-4. **Add CI/CD** - Build images in GitHub Actions, deploy via kubectl or Argo CD
+2. **Split script** into:
+    - `setup-k3s.sh` - One-time VPS setup
+    - `deploy.sh` - Actual deployment (just kubectl apply)
+3. **Add CI/CD** - Build images in GitHub Actions, deploy via kubectl

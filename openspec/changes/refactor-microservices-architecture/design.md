@@ -13,7 +13,7 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
 
 - Must maintain compatibility with existing frontend and services
 - Must support local development with Kubernetes
-- Must use GitOps for deployment and management
+- Must support repeatable deployments via manifests and scripts
 
 ## Goals / Non-Goals
 
@@ -25,7 +25,7 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
 - Implement API Gateway via NGINX Ingress Controller with path-based routing (/auth, /ai)
 - Set up Redis for distributed caching and rate limiting
 - Deploy PostgreSQL as Kubernetes pod for auth data
-- Use Argo CD for GitOps deployment
+- Support repeatable deployments via manifests and scripts
 
 **Non-Goals:**
 
@@ -59,11 +59,11 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
 - **Rationale:** Simple and self-contained for local development
 - **Alternatives considered:** Managed PostgreSQL service (for production)
 
-### GitOps Tool
+### Deployment Tooling
 
-- **Decision:** Use Argo CD for GitOps
-- **Rationale:** Declarative, Git-driven deployment with UI and automation
-- **Alternatives considered:** Flux CD (more lightweight, no UI)
+- **Decision:** Use direct kubectl + scripted deployments for now
+- **Rationale:** Lowest operational overhead for single-node K3s
+- **Alternatives considered:** GitOps tooling (future)
 
 ### Admin Allowlist Enforcement
 
@@ -121,16 +121,15 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
 ### Phase 1: Preparation
 
 1. Set up local Kubernetes cluster (single-node K3s on Ubuntu LTS via systemd)
-2. Install Argo CD
-3. Deploy NGINX Ingress Controller
-4. Provision Redis
-5. Provision PostgreSQL
-6. Set up monitoring and logging stack
-7. Deploy monolith and Hello World FastAPI service
-8. Configure ingress routes for Strangler Pattern validation
-9. Seed default users (admina/guest) in monolith
-10. Confirm admin-only access path for AI requests via Auth Service
-11. Deploy audit-logger microservice (optional - via Helm only)
+2. Deploy NGINX Ingress Controller
+3. Provision Redis
+4. Provision PostgreSQL
+5. Set up monitoring and logging stack
+6. Deploy monolith and Hello World FastAPI service
+7. Configure ingress routes for Strangler Pattern validation
+8. Seed default users (admina/guest) in monolith
+9. Confirm admin-only access path for AI requests via Auth Service
+10. Deploy audit-logger microservice (optional - via Helm only)
 
 ### Phase 2: Auth Service Migration
 
@@ -144,7 +143,7 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
    - Response: HTTP 404 for non-admins (security through obscurity)
    - Scope: AI endpoints (`/ai/*`) and data-processor endpoints (`/data-processor/*`)
 5. Containerize Auth Service
-6. Deploy to Kubernetes using Argo CD
+6. Deploy to Kubernetes using kubectl apply or deploy scripts
 7. Configure NGINX Ingress to route /auth/\* requests to Auth Service
 8. Test integration with monolith
 
@@ -154,7 +153,7 @@ The current system uses a monolithic FastAPI backend that combines multiple dist
 2. Replace in-memory rate limiting with Redis
 3. Implement API key rotation mechanism
 4. Containerize AI Service
-5. Deploy to Kubernetes using Argo CD
+5. Deploy to Kubernetes using kubectl apply or deploy scripts
 6. Configure NGINX Ingress to route /ai/\* requests to AI Service
 7. Test integration with Auth Service and monolith
 

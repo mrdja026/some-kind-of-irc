@@ -71,6 +71,11 @@ export type AIStatus = {
   max_requests_per_hour: number;
 };
 
+export type ClaimResponse = {
+  filename: string;
+  claim: unknown;
+};
+
 // Data Processor types
 export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom';
 
