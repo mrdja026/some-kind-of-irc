@@ -29,8 +29,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("flags", JSONB(), nullable=True),
         sa.Column("turn_count", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("completed_at", sa.DateTime(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column("tool_calls", JSONB(), nullable=True),
         sa.Column("done", sa.Boolean(), nullable=False),
         sa.Column("next_question", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["session_id"],
             ["claims_visible_sessions.id"],
@@ -79,19 +79,25 @@ def upgrade() -> None:
         "claims_debug_events",
         sa.Column("id", UUID(as_uuid=True), nullable=False),
         sa.Column("session_id", UUID(as_uuid=True), nullable=False),
+        # stream_msg_id is the Redis XADD message ID (e.g. "1711528800000-0").
+        # It is always unique per Redis message and is used as the dedup key,
+        # avoiding NULL-equality issues that make nullable columns unsafe as
+        # unique constraint components.
+        sa.Column("stream_msg_id", sa.String(), nullable=False, server_default=""),
         sa.Column("event_kind", sa.String(), nullable=False),
         sa.Column("stage", sa.String(), nullable=True),
         sa.Column("payload", JSONB(), nullable=False),
         sa.Column("request_id", sa.String(), nullable=True),
         sa.Column("correlation_id", sa.String(), nullable=True),
-        sa.Column("recorded_at", sa.DateTime(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["session_id"],
             ["claims_visible_sessions.id"],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("session_id", "stream_msg_id", name="uq_debug_event_stream_msg"),
     )
     op.create_index(
         "ix_claims_debug_events_session_id",

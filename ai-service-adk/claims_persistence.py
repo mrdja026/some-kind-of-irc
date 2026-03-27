@@ -7,6 +7,15 @@ This module writes to three tables owned by the backend Alembic schema:
 
 Writes are fire-and-forget: failures are logged but never block the
 API response.  Called after **every** turn, not just when done=true.
+
+Design notes:
+  - Debug events are collected from Redis **before** acquiring the DB
+    connection so that a slow Redis call never holds a Postgres connection
+    open.
+  - Deduplication of debug events is done via the ``stream_msg_id`` column
+    (the Redis XADD message ID), which is always unique per message.  This
+    avoids the PostgreSQL NULL-inequality trap that makes nullable columns
+    unsafe as unique constraint components.
 """
 
 from __future__ import annotations
@@ -60,7 +69,11 @@ async def _collect_debug_events(
     redis_client: Optional[redis_async.Redis],
     stream_key: str,
 ) -> list[dict[str, Any]]:
-    """Read Redis stream events tagged with the given session_id."""
+    """Read Redis stream events tagged with the given session_id.
+
+    Returns a list of dicts that include ``stream_msg_id`` (the Redis XADD
+    message ID), which is the authoritative dedup key for ``claims_debug_events``.
+    """
     if redis_client is None:
         return []
     try:
@@ -76,6 +89,7 @@ async def _collect_debug_events(
                 payload = {"raw": payload_raw}
             events.append(
                 {
+                    "stream_msg_id": msg_id,
                     "event_kind": fields.get("kind", ""),
                     "stage": payload.get("stage") or payload.get("step"),
                     "payload": payload,
@@ -107,12 +121,15 @@ async def persist_turn(
     redis_client: Optional[redis_async.Redis] = None,
     stream_key: str = "",
 ) -> None:
-    """Upsert session header, append a single turn, and (on done) flush debug events.
+    """Upsert session header, append a single turn, and flush debug events.
 
     Called after every API turn.  The session row is upserted so the first
     call creates it and subsequent calls update turn_count / status / flags.
-    Debug events are only collected and written when ``done=True`` to avoid
-    reading the full Redis stream on every intermediate turn.
+
+    Debug events are collected from Redis **before** the DB transaction so
+    that a slow Redis read never holds a Postgres connection open.  Each event
+    is deduplicated by its Redis stream message ID (``stream_msg_id``), which
+    is always unique, avoiding NULL-equality issues with nullable columns.
     """
     pool = await _get_pool()
     if pool is None:
@@ -125,6 +142,10 @@ async def persist_turn(
     except (ValueError, AttributeError):
         LOG.warning("Invalid session_id format: %s — skipping persistence", session_id)
         return
+
+    # Collect debug events from Redis BEFORE acquiring the DB connection so
+    # that a slow Redis read does not hold a Postgres connection/transaction open.
+    debug_events = await _collect_debug_events(session_id, redis_client, stream_key)
 
     try:
         async with pool.connection() as conn:
@@ -185,10 +206,9 @@ async def persist_turn(
                     ),
                 )
 
-                # Flush debug events from Redis every turn
-                debug_events = await _collect_debug_events(
-                    session_id, redis_client, stream_key
-                )
+                # Insert debug events collected earlier (outside this transaction).
+                # stream_msg_id is the Redis XADD message ID — always unique per
+                # message — used as the dedup key so ON CONFLICT is always reliable.
                 for evt in debug_events:
                     recorded_at_str = evt.get("recorded_at", "")
                     try:
@@ -201,14 +221,15 @@ async def persist_turn(
                     await conn.execute(
                         """
                         INSERT INTO claims_debug_events
-                            (id, session_id, event_kind, stage, payload,
+                            (id, session_id, stream_msg_id, event_kind, stage, payload,
                              request_id, correlation_id, recorded_at, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT ON CONSTRAINT uq_debug_event_dedup DO NOTHING
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT ON CONSTRAINT uq_debug_event_stream_msg DO NOTHING
                         """,
                         (
                             uuid.uuid4(),
                             sid,
+                            evt.get("stream_msg_id", ""),
                             evt.get("event_kind", ""),
                             evt.get("stage"),
                             json.dumps(evt.get("payload", {}), default=str),

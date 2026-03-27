@@ -389,12 +389,11 @@ async def generate_claims_answer(
     _incoming_sid = (request.session_id or "").strip()
     if _incoming_sid:
         try:
-            _uuid.UUID(_incoming_sid)
-            session_id = _incoming_sid
+            session_id = str(_uuid.UUID(_incoming_sid))  # normalise to canonical form
         except ValueError:
-            session_id = _uuid.uuid4().hex
+            session_id = str(_uuid.uuid4())
     else:
-        session_id = _uuid.uuid4().hex
+        session_id = str(_uuid.uuid4())
 
     tool_history = list(request.tool_history or [])
     response_tool_calls: List[Dict[str, Any]] = []
@@ -911,8 +910,16 @@ async def generate_claims_answer(
     if isinstance(request.claim, dict):
         claim_id = request.claim.get("claim_id", "")
     claim_status = ""
+    # Build a concise flags dict with only the key result signals; the full
+    # tool_output can contain large nested payloads that bloat the JSONB column.
+    claim_flags: Optional[Dict[str, Any]] = None
     if isinstance(tool_output, dict):
         claim_status = str(tool_output.get("status", ""))
+        claim_flags = {
+            k: tool_output[k]
+            for k in ("status", "verdict", "score", "flags", "risk_level")
+            if k in tool_output
+        } or None
     turn_number = len(request.history) + 1
 
     try:
@@ -921,7 +928,7 @@ async def generate_claims_answer(
             claim_id=claim_id,
             username=username,
             status=claim_status,
-            flags=tool_output,
+            flags=claim_flags,
             turn_number=turn_number,
             question=request.question,
             answer=final_answer,
