@@ -21,3 +21,4 @@ redis>=5.0.0
 
 # Postgres persistence (claims session data)
 psycopg[binary]>=3.1.0
+psycopg_pool>=3.1.0

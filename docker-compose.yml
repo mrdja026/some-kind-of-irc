@@ -229,6 +229,24 @@ services:
       - data-processor
       - redis-log-sink
 
+  pgweb:
+    image: sosedoff/pgweb:latest
+    entrypoint: >
+      sh -c 'export DATABASE_URL="postgresql://${DB_USER:-app_user}:$$(cat /run/secrets/pg_app_password)@${DB_HOST:-postgres}:${DB_PORT:-5432}/${DB_NAME:-app_db}?sslmode=disable"
+      && /usr/bin/pgweb --bind=0.0.0.0 --listen=8081'
+    environment:
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+    secrets:
+      - pg_app_password
+    ports:
+      - "9991:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   minio-data:

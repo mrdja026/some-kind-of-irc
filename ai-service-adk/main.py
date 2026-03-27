@@ -32,7 +32,7 @@ from claims_agent import (
     build_tool_calls,
     is_followup_question_valid,
 )
-from claims_persistence import persist_completed_session
+from claims_persistence import persist_turn
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -906,43 +906,34 @@ async def generate_claims_answer(
         },
     )
 
-    # Persist completed session to Postgres (fire-and-forget)
-    if done:
-        all_turns: list[dict[str, Any]] = []
-        for h in request.history:
-            all_turns.append(
-                {"question": h.question, "answer": h.answer, "done": False}
-            )
-        all_turns.append(
-            {
-                "question": request.question,
-                "answer": final_answer,
-                "reasoning": reasoning,
-                "tool_calls": response_tool_calls,
-                "done": True,
-                "next_question": next_question,
-            }
-        )
-        claim_id = ""
-        if isinstance(request.claim, dict):
-            claim_id = request.claim.get("claim_id", "")
-        claim_status = ""
-        if isinstance(tool_output, dict):
-            claim_status = str(tool_output.get("status", ""))
+    # Persist this turn to Postgres (fire-and-forget, every turn)
+    claim_id = ""
+    if isinstance(request.claim, dict):
+        claim_id = request.claim.get("claim_id", "")
+    claim_status = ""
+    if isinstance(tool_output, dict):
+        claim_status = str(tool_output.get("status", ""))
+    turn_number = len(request.history) + 1
 
-        try:
-            await persist_completed_session(
-                session_id=session_id,
-                claim_id=claim_id,
-                username=username,
-                status=claim_status,
-                flags=tool_output,
-                turns=all_turns,
-                redis_client=_redis_log_client(),
-                stream_key=settings.AI_SESSION_STREAM_KEY,
-            )
-        except Exception:
-            logger.warning("Claims persistence failed (session=%s)", session_id, exc_info=True)
+    try:
+        await persist_turn(
+            session_id=session_id,
+            claim_id=claim_id,
+            username=username,
+            status=claim_status,
+            flags=tool_output,
+            turn_number=turn_number,
+            question=request.question,
+            answer=final_answer,
+            reasoning=reasoning,
+            tool_calls=response_tool_calls or None,
+            done=done,
+            next_question=next_question,
+            redis_client=_redis_log_client(),
+            stream_key=settings.AI_SESSION_STREAM_KEY,
+        )
+    except Exception:
+        logger.warning("Claims persistence failed (session=%s)", session_id, exc_info=True)
 
     return ClaimQaResponse(
         answer=final_answer,

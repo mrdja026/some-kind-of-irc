@@ -1,12 +1,12 @@
-"""Persist completed claims Q&A sessions to Postgres.
+"""Persist claims Q&A sessions to Postgres incrementally.
 
 This module writes to three tables owned by the backend Alembic schema:
-  - claims_visible_sessions  (conversation header)
-  - claims_visible_turns     (per Q&A turn)
+  - claims_visible_sessions  (conversation header — upserted each turn)
+  - claims_visible_turns     (per Q&A turn — appended each turn)
   - claims_debug_events      (inference debug events from Redis stream)
 
 Writes are fire-and-forget: failures are logged but never block the
-API response.
+API response.  Called after **every** turn, not just when done=true.
 """
 
 from __future__ import annotations
@@ -19,18 +19,18 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import psycopg
-import psycopg.rows
+from psycopg_pool import AsyncConnectionPool
 import redis.asyncio as redis_async
 
 from config import settings
 
 LOG = logging.getLogger(__name__)
 
-_pool: Optional[psycopg.AsyncConnectionPool] = None
+_pool: Optional[AsyncConnectionPool] = None
 _pool_lock = asyncio.Lock()
 
 
-async def _get_pool() -> Optional[psycopg.AsyncConnectionPool]:
+async def _get_pool() -> Optional[AsyncConnectionPool]:
     """Lazy-init a small async connection pool (thread-safe via asyncio.Lock)."""
     global _pool
     dsn = settings.DATABASE_URL.strip()
@@ -42,7 +42,7 @@ async def _get_pool() -> Optional[psycopg.AsyncConnectionPool]:
         if _pool is not None:
             return _pool
         try:
-            _pool = psycopg.AsyncConnectionPool(
+            _pool = AsyncConnectionPool(
                 conninfo=dsn,
                 min_size=1,
                 max_size=4,
@@ -90,30 +90,29 @@ async def _collect_debug_events(
         return []
 
 
-async def persist_completed_session(
+async def persist_turn(
     *,
     session_id: str,
     claim_id: str,
     username: str,
     status: str,
     flags: Optional[dict[str, Any]],
-    turns: list[dict[str, Any]],
+    turn_number: int,
+    question: str,
+    answer: str,
+    reasoning: Optional[str] = None,
+    tool_calls: Optional[list[dict[str, Any]]] = None,
+    done: bool = False,
+    next_question: Optional[str] = None,
     redis_client: Optional[redis_async.Redis] = None,
     stream_key: str = "",
 ) -> None:
-    """Write a completed session (header + turns + debug events) to Postgres.
+    """Upsert session header, append a single turn, and (on done) flush debug events.
 
-    Parameters
-    ----------
-    session_id : UUID string for this conversation.
-    claim_id   : e.g. "CLM-2026-0001" (reference to MinIO).
-    username   : User who completed the session.
-    status     : Final claim status from flags.
-    flags      : Truth-check flags snapshot (JSONB).
-    turns      : List of dicts, each with keys:
-                 question, answer, reasoning, tool_calls, done, next_question.
-    redis_client : Optional async Redis client for collecting debug events.
-    stream_key   : Redis stream key for debug events.
+    Called after every API turn.  The session row is upserted so the first
+    call creates it and subsequent calls update turn_count / status / flags.
+    Debug events are only collected and written when ``done=True`` to avoid
+    reading the full Redis stream on every intermediate turn.
     """
     pool = await _get_pool()
     if pool is None:
@@ -127,17 +126,22 @@ async def persist_completed_session(
         LOG.warning("Invalid session_id format: %s — skipping persistence", session_id)
         return
 
-    debug_events = await _collect_debug_events(session_id, redis_client, stream_key)
-
     try:
         async with pool.connection() as conn:
             async with conn.transaction():
+                # Upsert session header
                 await conn.execute(
                     """
                     INSERT INTO claims_visible_sessions
-                        (id, claim_id, username, status, flags, turn_count, created_at, completed_at)
+                        (id, claim_id, username, status, flags, turn_count,
+                         created_at, completed_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET
+                        status       = EXCLUDED.status,
+                        flags        = EXCLUDED.flags,
+                        turn_count   = EXCLUDED.turn_count,
+                        completed_at = CASE WHEN %s THEN EXCLUDED.completed_at
+                                            ELSE claims_visible_sessions.completed_at END
                     """,
                     (
                         sid,
@@ -145,36 +149,46 @@ async def persist_completed_session(
                         username,
                         status,
                         json.dumps(flags, default=str) if flags else None,
-                        len(turns),
+                        turn_number,
                         now,
+                        now,
+                        done,
+                    ),
+                )
+
+                # Append this turn
+                tc_json = json.dumps(tool_calls, default=str) if tool_calls else None
+                await conn.execute(
+                    """
+                    INSERT INTO claims_visible_turns
+                        (id, session_id, turn_number, question, answer, reasoning,
+                         tool_calls, done, next_question, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT ON CONSTRAINT uq_session_turn DO UPDATE SET
+                        answer       = EXCLUDED.answer,
+                        reasoning    = EXCLUDED.reasoning,
+                        tool_calls   = EXCLUDED.tool_calls,
+                        done         = EXCLUDED.done,
+                        next_question = EXCLUDED.next_question
+                    """,
+                    (
+                        uuid.uuid4(),
+                        sid,
+                        turn_number,
+                        question,
+                        answer,
+                        reasoning,
+                        tc_json,
+                        done,
+                        next_question,
                         now,
                     ),
                 )
 
-                for i, turn in enumerate(turns, start=1):
-                    tc = turn.get("tool_calls")
-                    await conn.execute(
-                        """
-                        INSERT INTO claims_visible_turns
-                            (id, session_id, turn_number, question, answer, reasoning,
-                             tool_calls, done, next_question, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (
-                            uuid.uuid4(),
-                            sid,
-                            i,
-                            turn.get("question", ""),
-                            turn.get("answer", ""),
-                            turn.get("reasoning"),
-                            json.dumps(tc, default=str) if tc else None,
-                            bool(turn.get("done", False)),
-                            turn.get("next_question"),
-                            now,
-                        ),
-                    )
-
+                # Flush debug events from Redis every turn
+                debug_events = await _collect_debug_events(
+                    session_id, redis_client, stream_key
+                )
                 for evt in debug_events:
                     recorded_at_str = evt.get("recorded_at", "")
                     try:
@@ -190,6 +204,7 @@ async def persist_completed_session(
                             (id, session_id, event_kind, stage, payload,
                              request_id, correlation_id, recorded_at, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT ON CONSTRAINT uq_debug_event_dedup DO NOTHING
                         """,
                         (
                             uuid.uuid4(),
@@ -204,15 +219,13 @@ async def persist_completed_session(
                         ),
                     )
 
-        LOG.info(
-            "Persisted claims session %s: %d turns, %d debug events",
-            session_id,
-            len(turns),
-            len(debug_events),
-        )
+                LOG.info(
+                    "Persisted turn %d for session %s (done=%s, %d debug events)",
+                    turn_number, session_id, done, len(debug_events),
+                )
+
     except Exception:
         LOG.warning(
-            "Failed to persist claims session %s to Postgres",
-            session_id,
-            exc_info=True,
+            "Failed to persist turn %d for session %s",
+            turn_number, session_id, exc_info=True,
         )
