@@ -1,6 +1,37 @@
 # IRC Chat Application
 
-A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Redis, and MinIO.
+A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Redis, and MinIO.\
+
+#Noice: Heavy vibe code, dependency contain litellm, but its patched in the requirements.txt and fixed to safe version
+
+## What it does - SSR SLACK - HELL YEAH
+- This is a **MVP** and proof of tech for future project
+- It can summarize what emails are relevant based on user questions
+- It can schedule a google calendar meeting using nlp
+- For Syntetic Data i have Claims data that is described in the @models/ folder
+
+
+## Inference layer
+- AI-service-adk uses google adk for creating 2 agents with LLM as a judge with slight differently prompts same toolset to generate questions
+- Dumps of logs of toolcalls and reasoning into redis-sink and on turn into postgree tables localhost:9991
+
+## Tech stack
+
+- Solid start for frontend with websocket with react query for https to backend
+- Backend monolith that contains jwt wrappers for adk service and media service and data processing service (functionality out of scope for now)
+- ADK-Service Google ADK Python
+- Backend Python FastAPI
+- Media service flask api - aboslute rubish of a file
+- Data service - Django - django-rest | out of scope
+- Postgres
+- Redis for logs and error sinks
+- Docker
+- K8S/K3S Ingress magic for network (works on http with newest feature on tag 0.0.2) versions after that do not have any feature except chat 
+
+# How to build (Linux supported only, Data processor is tricky to build on windows due deps to opencv)
+
+- chmod +x ./deploy_local.sh
+- ./deploy_local.sh --builds --logs
 
 ## OpenSpec
 
