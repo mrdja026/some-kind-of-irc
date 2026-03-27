@@ -42,6 +42,7 @@ async def append_ai_session_event(
     backend: str = "google_adk",
     correlation_id: Optional[str] = None,
     request_id: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> None:
     client = _client()
     if client is None:
@@ -60,6 +61,8 @@ async def append_ai_session_event(
         fields["correlation_id"] = correlation_id
     if request_id:
         fields["request_id"] = request_id
+    if session_id:
+        fields["session_id"] = session_id
 
     try:
         await client.xadd(

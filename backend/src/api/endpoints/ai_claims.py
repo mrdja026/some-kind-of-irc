@@ -24,6 +24,7 @@ class ClaimQaRequest(BaseModel):
     question_count: int = Field(0, ge=0, le=5)
     asked_questions: List[str] = []
     tool_history: List[dict] = []
+    session_id: Optional[str] = None
 
 
 class ClaimQaResponse(BaseModel):
@@ -35,6 +36,7 @@ class ClaimQaResponse(BaseModel):
     tool_calls: Optional[List[dict]] = None
     tool_history: Optional[List[dict]] = None
     flags: Optional[dict] = None
+    session_id: Optional[str] = None
 
 
 @router.post("/qa", response_model=ClaimQaResponse)

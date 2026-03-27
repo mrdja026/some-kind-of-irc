@@ -1,6 +1,43 @@
 """Configuration for ai-service-adk, loaded from environment variables."""
 
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+
+def _read_secret(path: str) -> str:
+    """Read a Docker/K8s secret file, returning '' on failure."""
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return ""
+
+
+def _build_database_url() -> str:
+    """Build a psycopg-compatible DSN from component env vars.
+
+    Precedence: explicit DATABASE_URL > component vars > empty (disabled).
+    """
+    explicit = os.getenv("DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+
+    host = os.getenv("DB_HOST", "").strip()
+    port = os.getenv("DB_PORT", "").strip()
+    name = os.getenv("DB_NAME", "").strip()
+    user = os.getenv("DB_USER", "").strip()
+    password = os.getenv("DB_PASSWORD", "").strip() or _read_secret(
+        os.getenv("DB_PASSWORD_FILE", "").strip()
+    )
+
+    if not host:
+        return ""
+    return (
+        f"postgresql://{user}:{password}@{host}:{port or '5432'}/{name or 'app_db'}"
+    )
 
 
 class Settings(BaseSettings):
@@ -40,6 +77,10 @@ class Settings(BaseSettings):
 
     # Backend integration (calendar tool calls)
     BACKEND_URL: str = "http://backend:8002"
+
+    # Postgres persistence for completed claims sessions.
+    # Empty string disables persistence.
+    DATABASE_URL: str = _build_database_url()
 
     # Service port
     PORT: int = 8004
