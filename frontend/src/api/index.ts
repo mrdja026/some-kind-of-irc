@@ -270,6 +270,7 @@ export const generateClaimAnswer = async (
   questionCount = 0,
   askedQuestions: string[] = [],
   toolHistory: ClaimToolCall[] = [],
+  sessionId?: string | null,
 ): Promise<ClaimQaResponse> => {
   const response = await fetch(`${API_BASE_URL}/ai/claims/qa`, {
     method: 'POST',
@@ -282,6 +283,7 @@ export const generateClaimAnswer = async (
       question_count: questionCount,
       asked_questions: askedQuestions,
       tool_history: toolHistory,
+      session_id: sessionId ?? undefined,
     }),
   });
   if (!response.ok) {

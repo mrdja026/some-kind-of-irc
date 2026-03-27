@@ -14,6 +14,7 @@ Endpoints:
 
 import logging
 import time
+import uuid as _uuid
 from typing import Annotated, Literal, Optional, List, Dict, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field
 from auth import require_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
-from ai_session_events import append_ai_session_event, new_request_id
+from ai_session_events import append_ai_session_event, new_request_id, _client as _redis_log_client
 from calendar_agent import CalendarAgentADK
 from gmail_agent import GmailAgentADK
 from claims_agent import (
@@ -31,6 +32,7 @@ from claims_agent import (
     build_tool_calls,
     is_followup_question_valid,
 )
+from claims_persistence import persist_turn
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -117,6 +119,7 @@ class ClaimQaRequest(BaseModel):
     question_count: int = Field(0, ge=0, le=5)
     asked_questions: List[str] = []
     tool_history: List[Dict[str, Any]] = []
+    session_id: Optional[str] = None
 
 
 class ClaimQaResponse(BaseModel):
@@ -128,6 +131,7 @@ class ClaimQaResponse(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_history: Optional[List[Dict[str, Any]]] = None
     flags: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +384,17 @@ async def generate_claims_answer(
     rid = http_request.headers.get("x-request-id") or new_request_id()
     correlation_id = http_request.headers.get("x-correlation-id")
 
+    # Generate or reuse session_id for multi-turn correlation.
+    # Validate client-supplied value; fall back to new UUID on bad input.
+    _incoming_sid = (request.session_id or "").strip()
+    if _incoming_sid:
+        try:
+            session_id = str(_uuid.UUID(_incoming_sid))  # normalise to canonical form
+        except ValueError:
+            session_id = str(_uuid.uuid4())
+    else:
+        session_id = str(_uuid.uuid4())
+
     tool_history = list(request.tool_history or [])
     response_tool_calls: List[Dict[str, Any]] = []
 
@@ -399,6 +414,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "tool_name": "truth_check",
@@ -419,6 +435,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "step": "truth_check",
@@ -463,6 +480,7 @@ async def generate_claims_answer(
             username=username,
             correlation_id=correlation_id,
             request_id=rid,
+            session_id=session_id,
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -486,6 +504,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "step": "candidate_a",
@@ -512,6 +531,7 @@ async def generate_claims_answer(
             username=username,
             correlation_id=correlation_id,
             request_id=rid,
+            session_id=session_id,
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -535,6 +555,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "step": "candidate_b",
@@ -561,6 +582,7 @@ async def generate_claims_answer(
             username=username,
             correlation_id=correlation_id,
             request_id=rid,
+            session_id=session_id,
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -583,6 +605,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "step": "judge",
@@ -640,6 +663,7 @@ async def generate_claims_answer(
                     username=username,
                     correlation_id=correlation_id,
                     request_id=rid,
+                    session_id=session_id,
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -671,6 +695,7 @@ async def generate_claims_answer(
                 username=username,
                 correlation_id=correlation_id,
                 request_id=rid,
+                session_id=session_id,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_candidate_a",
@@ -699,6 +724,7 @@ async def generate_claims_answer(
                     username=username,
                     correlation_id=correlation_id,
                     request_id=rid,
+                    session_id=session_id,
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -730,6 +756,7 @@ async def generate_claims_answer(
                 username=username,
                 correlation_id=correlation_id,
                 request_id=rid,
+                session_id=session_id,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_candidate_b",
@@ -758,6 +785,7 @@ async def generate_claims_answer(
                     username=username,
                     correlation_id=correlation_id,
                     request_id=rid,
+                    session_id=session_id,
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -787,6 +815,7 @@ async def generate_claims_answer(
                 username=username,
                 correlation_id=correlation_id,
                 request_id=rid,
+                session_id=session_id,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_judge",
@@ -851,6 +880,7 @@ async def generate_claims_answer(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         payload={
             "route": "/ai/claims/qa",
             "step": "followup",
@@ -875,6 +905,43 @@ async def generate_claims_answer(
         },
     )
 
+    # Persist this turn to Postgres (fire-and-forget, every turn)
+    claim_id = ""
+    if isinstance(request.claim, dict):
+        claim_id = request.claim.get("claim_id", "")
+    claim_status = ""
+    # Build a concise flags dict with only the key result signals; the full
+    # tool_output can contain large nested payloads that bloat the JSONB column.
+    claim_flags: Optional[Dict[str, Any]] = None
+    if isinstance(tool_output, dict):
+        claim_status = str(tool_output.get("status", ""))
+        claim_flags = {
+            k: tool_output[k]
+            for k in ("status", "verdict", "score", "flags", "risk_level")
+            if k in tool_output
+        } or None
+    turn_number = len(request.history) + 1
+
+    try:
+        await persist_turn(
+            session_id=session_id,
+            claim_id=claim_id,
+            username=username,
+            status=claim_status,
+            flags=claim_flags,
+            turn_number=turn_number,
+            question=request.question,
+            answer=final_answer,
+            reasoning=reasoning,
+            tool_calls=response_tool_calls or None,
+            done=done,
+            next_question=next_question,
+            redis_client=_redis_log_client(),
+            stream_key=settings.AI_SESSION_STREAM_KEY,
+        )
+    except Exception:
+        logger.warning("Claims persistence failed (session=%s)", session_id, exc_info=True)
+
     return ClaimQaResponse(
         answer=final_answer,
         reasoning=reasoning,
@@ -884,6 +951,7 @@ async def generate_claims_answer(
         tool_calls=response_tool_calls,
         tool_history=tool_history,
         flags=tool_output,
+        session_id=session_id,
     )
 
 

@@ -203,7 +203,7 @@ echo "Running data-processor Django migrations..."
 "${COMPOSE_CMD[@]}" run --rm data-processor python manage.py migrate --noinput
 
 echo "Starting application services..."
-"${COMPOSE_CMD[@]}" up -d backend ai-service-adk audit-logger media-storage data-processor frontend caddy
+"${COMPOSE_CMD[@]}" up -d backend ai-service-adk audit-logger media-storage data-processor frontend caddy pgweb
 
 echo "Waiting for backend to become healthy..."
 if ensure_backend_running; then
@@ -344,6 +344,7 @@ Deploy summary
 - Media proxy:         http://localhost:8080/media/...
 - MinIO console:       http://localhost:9001
 - Postgres:            localhost:5432 (db: app_db / user: app_user)
+- Postgres UI (pgweb): http://localhost:9991
 - Redis log stream:    redis-log key caddy:warn_error_logs (maxlen 200)
 ------------------------------------------------------------
 EOF

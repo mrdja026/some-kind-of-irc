@@ -195,6 +195,7 @@ export function AIChannel({
   const [claimAskedQuestions, setClaimAskedQuestions] = useState<string[]>([])
   const [claimPendingFollowup, setClaimPendingFollowup] = useState<string | null>(null)
   const [claimToolHistory, setClaimToolHistory] = useState<ClaimToolCall[]>([])
+  const [claimSessionId, setClaimSessionId] = useState<string | null>(null)
 
   const {
     data: aiHealth,
@@ -480,6 +481,7 @@ export function AIChannel({
     setClaimAskedQuestions([])
     setClaimPendingFollowup(null)
     setClaimToolHistory([])
+    setClaimSessionId(null)
     setStreamError(null)
     setActiveQuestion(null)
     setResponses([])
@@ -552,6 +554,7 @@ export function AIChannel({
         setClaimAskedQuestions([])
         setClaimPendingFollowup(null)
         setClaimToolHistory([])
+        setClaimSessionId(null)
         setResponses([
           {
             id: Date.now(),
@@ -645,8 +648,12 @@ export function AIChannel({
           nextCount,
           askedQuestions,
           claimToolHistory,
+          claimSessionId,
         )
 
+        if (result.session_id) {
+          setClaimSessionId(result.session_id)
+        }
         setClaimQuestionCount(nextCount)
         setClaimHistory((prev) => [...prev, { question: questionText, answer: result.answer }])
         setClaimToolHistory(

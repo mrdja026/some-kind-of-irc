@@ -107,6 +107,7 @@ export type ClaimQaResponse = {
   tool_calls?: ClaimToolCall[] | null;
   tool_history?: ClaimToolCall[] | null;
   flags?: ClaimQaFlags;
+  session_id?: string | null;
 };
 
 // Data Processor types

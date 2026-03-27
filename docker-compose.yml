@@ -106,14 +106,22 @@ services:
       AI_SESSION_STREAM_MAXLEN: "${AI_SESSION_STREAM_MAXLEN:-500}"
       AI_RATE_LIMIT_PER_HOUR: "${AI_RATE_LIMIT_PER_HOUR:-100}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY-}"
-      ADK_MODEL: "${ADK_MODEL:-anthropic/claude-3-haiku-20240307}"
+      ADK_MODEL: "${ADK_MODEL:-anthropic/claude-sonnet-4-5-20250929}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+      DB_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
     ports:
       - "8004:8004"
     depends_on:
       - redis
       - redis-log
       - backend
+      - postgres
 
   frontend:
     build:
@@ -220,6 +228,24 @@ services:
       - media-storage
       - data-processor
       - redis-log-sink
+
+  pgweb:
+    image: sosedoff/pgweb:latest
+    entrypoint: >
+      sh -c 'export DATABASE_URL="postgresql://${DB_USER:-app_user}:$$(cat /run/secrets/pg_app_password)@${DB_HOST:-postgres}:${DB_PORT:-5432}/${DB_NAME:-app_db}?sslmode=disable"
+      && /usr/bin/pgweb --bind=0.0.0.0 --listen=8081'
+    environment:
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+    secrets:
+      - pg_app_password
+    ports:
+      - "9991:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

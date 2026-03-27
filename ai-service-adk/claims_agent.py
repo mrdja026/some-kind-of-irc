@@ -1,9 +1,12 @@
+import asyncio
 import json
 import logging
 import math
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+from pydantic import BaseModel, Field
 
 from config import settings
 
@@ -19,7 +22,36 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 MAX_FOLLOWUP_QUESTIONS = 5
-MODEL_FAMILY = "claude-3-haiku-20240307"
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0
+MODEL_FAMILY = "claude-sonnet-4-5-20241022"
+
+
+# ---------------------------------------------------------------------------
+# Pydantic output schemas for structured LLM responses
+# ---------------------------------------------------------------------------
+
+
+class ClaimsJudgeSchema(BaseModel):
+    """Schema enforced on the claims judge LLM output."""
+
+    winner: int = Field(ge=1, le=2, description="1 or 2 — which candidate answer is better")
+    reasoning: str = Field(description="1-2 sentence justification for the choice")
+    done: bool = Field(
+        default=False,
+        description="True only when question is definitively answered with no remaining ambiguity",
+    )
+
+
+class ClaimsFollowupJudgeSchema(BaseModel):
+    """Schema enforced on the follow-up judge LLM output."""
+
+    winner: int = Field(ge=1, le=2, description="1 or 2 — which follow-up question is better")
+    reasoning: str = Field(description="1-2 sentence justification for the choice")
+    question: str = Field(
+        default="",
+        description="The chosen or synthesised follow-up question text",
+    )
 
 REQUIRED_FIELDS = [
     "claim_id",
@@ -742,7 +774,11 @@ class ClaimsAgentADK:
         return self._session_service
 
     async def _run_agent(
-        self, agent_name: str, instruction: str, user_message: str
+        self,
+        agent_name: str,
+        instruction: str,
+        user_message: str,
+        output_schema: Optional[type] = None,
     ) -> str:
         if Agent is None or Runner is None or LiteLlm is None:
             raise RuntimeError("Google ADK is not installed.")
@@ -750,12 +786,17 @@ class ClaimsAgentADK:
         session_service = self._ensure_session_service()
         model = LiteLlm(model=self.model)
 
-        agent = Agent(
-            model=model,
-            name=agent_name,
-            instruction=instruction,
-            tools=[],
-        )
+        agent_kwargs: Dict[str, Any] = {
+            "model": model,
+            "name": agent_name,
+            "instruction": instruction,
+            "tools": [],
+        }
+        if output_schema is not None:
+            agent_kwargs["output_schema"] = output_schema
+            agent_kwargs["output_key"] = "structured_output"
+
+        agent = Agent(**agent_kwargs)
 
         runner = Runner(
             agent=agent,
@@ -779,18 +820,35 @@ class ClaimsAgentADK:
             parts=[types.Part(text=user_message)],
         )
 
-        response_text = ""
+        last_error = None
         try:
-            async for event in runner.run_async(
-                user_id=user_id,
-                session_id=session_id,
-                new_message=content,
-            ):
-                if hasattr(event, "content") and event.content:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            response_text += part.text
-            return response_text
+            for attempt in range(1, MAX_RETRIES + 1):
+                response_text = ""
+                try:
+                    async for event in runner.run_async(
+                        user_id=user_id,
+                        session_id=session_id,
+                        new_message=content,
+                    ):
+                        if hasattr(event, "content") and event.content:
+                            for part in event.content.parts:
+                                if hasattr(part, "text") and part.text:
+                                    response_text += part.text
+                    return response_text
+                except Exception as exc:
+                    last_error = exc
+                    exc_str = str(exc).lower()
+                    is_retryable = "overloaded" in exc_str or "rate" in exc_str or "529" in exc_str or "500" in exc_str
+                    if is_retryable and attempt < MAX_RETRIES:
+                        delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                        logger.warning(
+                            "Retryable error on %s (attempt %d/%d), retrying in %.1fs: %s",
+                            agent_name, attempt, MAX_RETRIES, delay, exc,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        raise
+            raise last_error  # unreachable but satisfies type checker
         finally:
             try:
                 await session_service.delete_session(
@@ -800,6 +858,34 @@ class ClaimsAgentADK:
                 )
             except Exception as exc:
                 logger.warning("Failed to delete claims ADK session: %s", exc)
+
+    def _parse_structured(
+        self,
+        raw_text: str,
+        schema: type,
+        fallback: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Parse LLM output against a Pydantic schema with fallback.
+
+        Tries Pydantic validation first, then falls back to _clean_and_parse_json.
+        """
+        # 1. Try direct Pydantic parse (works when ADK returns clean JSON)
+        try:
+            parsed = schema.model_validate_json(raw_text.strip())
+            return parsed.model_dump()
+        except Exception:
+            pass
+
+        # 2. Fallback: extract JSON via the legacy parser, then validate
+        try:
+            raw_dict = _clean_and_parse_json(raw_text)
+            if isinstance(raw_dict, dict):
+                parsed = schema.model_validate(raw_dict)
+                return parsed.model_dump()
+        except Exception as exc:
+            logger.warning("Structured parse failed for %s: %s", schema.__name__, exc)
+
+        return fallback
 
     def truth_check(self, payload: Any) -> Dict[str, Any]:
         return truth_check_claim(payload)
@@ -914,24 +1000,22 @@ class ClaimsAgentADK:
         )
 
         start = time.perf_counter()
+        default_judge = {
+            "winner": 1,
+            "reasoning": "Selected response 1 by default.",
+            "done": False,
+        }
         try:
             output = await self._run_agent(
                 agent_name="claims_judge",
                 instruction=instruction,
                 user_message=user_message,
+                output_schema=ClaimsJudgeSchema,
             )
-            parsed = _clean_and_parse_json(output)
-            if not isinstance(parsed, dict):
-                raise ValueError("Judge output is not an object")
-            if "done" not in parsed:
-                parsed["done"] = False
+            parsed = self._parse_structured(output, ClaimsJudgeSchema, default_judge)
         except Exception as exc:
             logger.error("Claims judge failed: %s", exc)
-            parsed = {
-                "winner": 1,
-                "reasoning": "Selected response 1 by default.",
-                "done": False,
-            }
+            parsed = default_judge
             output = json.dumps(parsed)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         metrics = {
@@ -1092,22 +1176,24 @@ class ClaimsAgentADK:
         )
 
         start = time.perf_counter()
+        default_followup_judge = {
+            "winner": 1,
+            "reasoning": "Selected follow-up 1 by default.",
+            "question": candidate_a or "",
+        }
         try:
             output = await self._run_agent(
                 agent_name="claims_followup_judge",
                 instruction=instruction,
                 user_message=user_message,
+                output_schema=ClaimsFollowupJudgeSchema,
             )
-            parsed = _clean_and_parse_json(output)
-            if not isinstance(parsed, dict):
-                raise ValueError("Follow-up judge output is not an object")
+            parsed = self._parse_structured(
+                output, ClaimsFollowupJudgeSchema, default_followup_judge
+            )
         except Exception as exc:
             logger.error("Claims follow-up judge failed: %s", exc)
-            parsed = {
-                "winner": 1,
-                "reasoning": "Selected follow-up 1 by default.",
-                "question": candidate_a or "",
-            }
+            parsed = default_followup_judge
             output = json.dumps(parsed)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         metrics = {
