@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from pydantic import BaseModel, Field
 
 from config import settings
 
@@ -26,6 +27,49 @@ except ImportError:
     Agent = Runner = InMemorySessionService = LiteLlm = types = None
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Pydantic output schemas for structured LLM responses
+# ---------------------------------------------------------------------------
+
+
+class CalendarEventSchema(BaseModel):
+    """Structured event object returned by the planner LLM."""
+
+    title: str = Field(default="", description="Event title")
+    start_datetime: str = Field(
+        default="", description="ISO-8601 start datetime (YYYY-MM-DDTHH:MM)"
+    )
+    end_datetime: str = Field(
+        default="", description="ISO-8601 end datetime (YYYY-MM-DDTHH:MM)"
+    )
+    timezone: str = Field(default="UTC", description="IANA timezone")
+    attendees: List[str] = Field(
+        default_factory=list, description="Attendee email addresses"
+    )
+
+
+class CalendarPlanSchema(BaseModel):
+    """Schema enforced on the calendar planner LLM output."""
+
+    needs_clarification: bool = Field(
+        description="True when required fields are missing or ambiguous"
+    )
+    missing_fields: List[str] = Field(
+        default_factory=list,
+        description="List of missing fields: 'date', 'time', or both",
+    )
+    question: str = Field(
+        description="Clarification or confirmation question for the user"
+    )
+    event: CalendarEventSchema = Field(
+        default_factory=CalendarEventSchema,
+        description="Extracted event details",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +264,7 @@ class CalendarAgentADK:
         instruction: str,
         user_message: str,
         tools: list = None,
+        output_schema: Optional[type] = None,
     ) -> str:
         """Run an ADK agent and return the text response."""
         if Agent is None or Runner is None or LiteLlm is None:
@@ -231,12 +276,17 @@ class CalendarAgentADK:
         model = LiteLlm(model=self.model)
 
         # Create agent with instruction
-        agent = Agent(
-            model=model,
-            name=agent_name,
-            instruction=instruction,
-            tools=tools or [],
-        )
+        agent_kwargs: Dict[str, Any] = {
+            "model": model,
+            "name": agent_name,
+            "instruction": instruction,
+            "tools": tools or [],
+        }
+        if output_schema is not None:
+            agent_kwargs["output_schema"] = output_schema
+            agent_kwargs["output_key"] = "structured_output"
+
+        agent = Agent(**agent_kwargs)
 
         # Create runner
         runner = Runner(
@@ -263,19 +313,36 @@ class CalendarAgentADK:
         )
 
         try:
-            # Run agent and collect response
+            # Run agent and collect response with retry on transient errors
             response_text = ""
-            async for event in runner.run_async(
-                user_id=user_id,
-                session_id=session_id,
-                new_message=content,
-            ):
-                if hasattr(event, "content") and event.content:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            response_text += part.text
-
-            return response_text
+            last_error = None
+            for attempt in range(1, MAX_RETRIES + 1):
+                response_text = ""
+                try:
+                    async for event in runner.run_async(
+                        user_id=user_id,
+                        session_id=session_id,
+                        new_message=content,
+                    ):
+                        if hasattr(event, "content") and event.content:
+                            for part in event.content.parts:
+                                if hasattr(part, "text") and part.text:
+                                    response_text += part.text
+                    return response_text
+                except Exception as exc:
+                    last_error = exc
+                    exc_str = str(exc).lower()
+                    is_retryable = "overloaded" in exc_str or "rate" in exc_str or "529" in exc_str or "500" in exc_str
+                    if is_retryable and attempt < MAX_RETRIES:
+                        delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                        logger.warning(
+                            "Retryable error on %s (attempt %d/%d), retrying in %.1fs: %s",
+                            agent_name, attempt, MAX_RETRIES, delay, exc,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        raise
+            raise last_error  # unreachable but satisfies type checker
         finally:
             try:
                 await session_service.delete_session(
@@ -311,15 +378,27 @@ class CalendarAgentADK:
         )
 
         try:
-            # Run the planning agent
+            # Run the planning agent with structured output
             output = await self._run_agent(
                 agent_name="calendar_planner",
                 instruction="You schedule meetings and verify details carefully. Extract meeting details and ask clarifying questions when needed.",
                 user_message=prompt,
                 tools=[],
+                output_schema=CalendarPlanSchema,
             )
 
-            result = self._clean_and_parse_json(output)
+            # Parse with Pydantic schema, falling back to legacy parser
+            try:
+                parsed = CalendarPlanSchema.model_validate_json(output.strip())
+                result = parsed.model_dump()
+            except Exception:
+                try:
+                    raw = self._clean_and_parse_json(output)
+                    parsed = CalendarPlanSchema.model_validate(raw)
+                    result = parsed.model_dump()
+                except Exception:
+                    result = self._clean_and_parse_json(output)
+
             event = self._normalize_event(result.get("event", {}))
             missing_fields = self._resolve_missing_fields(result)
 

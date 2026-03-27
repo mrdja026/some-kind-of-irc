@@ -106,7 +106,7 @@ services:
       AI_SESSION_STREAM_MAXLEN: "${AI_SESSION_STREAM_MAXLEN:-500}"
       AI_RATE_LIMIT_PER_HOUR: "${AI_RATE_LIMIT_PER_HOUR:-100}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY-}"
-      ADK_MODEL: "${ADK_MODEL:-anthropic/claude-3-haiku-20240307}"
+      ADK_MODEL: "${ADK_MODEL:-anthropic/claude-sonnet-4-5-20250929}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
     ports:
       - "8004:8004"

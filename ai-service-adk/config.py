@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # Google ADK with LiteLLM model configuration
     # LiteLLM format: provider/model (e.g., anthropic/claude-3-haiku-20240307)
-    ADK_MODEL: str = "anthropic/claude-3-haiku-20240307"
+    ADK_MODEL: str = "anthropic/claude-sonnet-4-5-20250929"
 
     # Anthropic API key (used by LiteLLM)
     ANTHROPIC_API_KEY: str = ""
