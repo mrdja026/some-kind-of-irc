@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -79,8 +79,8 @@ class ClaimIntake(StrictModel):
     channel: IntakeChannel
     summary: str
     cause_of_loss: str
-    initial_damage_estimate_eur: int = Field(ge=0)
-    emergency_mitigation_completed: bool
+    initial_damage_estimate_eur: Optional[int] = Field(default=None, ge=0)
+    emergency_mitigation_completed: Optional[bool] = None
     injuries_reported: bool
 
 
@@ -89,6 +89,7 @@ class ClaimDocument(StrictModel):
     doc_type: DocumentType
     title: str
     created_at: datetime
+    file_path: Optional[str] = None
 
 
 class AdjusterNote(StrictModel):
@@ -100,7 +101,7 @@ class AdjusterNote(StrictModel):
 class CoverageReview(StrictModel):
     reviewed_by: str
     decision: CoverageDecision
-    reasoning: str
+    reasoning: Optional[str] = None
     applied_deductible_eur: int = Field(ge=0)
     approved_repairs_eur: int = Field(ge=0)
     approved_contents_eur: int = Field(ge=0)
@@ -113,7 +114,7 @@ class Resolution(StrictModel):
     deductible_eur: int = Field(ge=0)
     net_payment_eur: int = Field(ge=0)
     payment_method: PaymentMethod
-    customer_letter_summary: str
+    customer_letter_summary: Optional[str] = None
 
 
 class Claim(StrictModel):
@@ -125,12 +126,13 @@ class Claim(StrictModel):
     reported_date: date
     insured: Insured
     policy: Policy
-    claim_intake: ClaimIntake
-    documents: list[ClaimDocument]
-    adjuster_notes: list[AdjusterNote]
-    coverage_review: CoverageReview
-    resolution: Resolution
+    claim_intake: Optional[ClaimIntake] = None
+    documents: Optional[list[ClaimDocument]] = None
+    adjuster_notes: Optional[list[AdjusterNote]] = None
+    coverage_review: Optional[CoverageReview] = None
+    resolution: Optional[Resolution] = None
     conversation_seed_questions: list[str]
+    data_path: Optional[str] = None
 
 
 class ClaimDataset(RootModel[list[Claim]]):
@@ -141,7 +143,6 @@ __all__ = [
     "AdjusterNote",
     "Claim",
     "ClaimDataset",
-    "ClaimDecision",
     "ClaimDocument",
     "ClaimIntake",
     "ClaimStatus",

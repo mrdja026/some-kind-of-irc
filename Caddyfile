@@ -34,6 +34,9 @@
   @media_upload path /media/upload
   reverse_proxy @media_upload backend:8002
 
+  @media_claims path /media/claims/*
+  reverse_proxy @media_claims backend:8002
+
   @media path /media/*
   reverse_proxy @media media-storage:9101
 

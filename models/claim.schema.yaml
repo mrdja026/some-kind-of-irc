@@ -13,11 +13,6 @@ required:
   - reported_date
   - insured
   - policy
-  - claim_intake
-  - documents
-  - adjuster_notes
-  - coverage_review
-  - resolution
   - conversation_seed_questions
 properties:
   claim_id:
@@ -41,24 +36,39 @@ properties:
   policy:
     $ref: "#/$defs/Policy"
   claim_intake:
-    $ref: "#/$defs/ClaimIntake"
+    oneOf:
+      - $ref: "#/$defs/ClaimIntake"
+      - type: "null"
   documents:
-    type: array
-    items:
-      $ref: "#/$defs/ClaimDocument"
+    oneOf:
+      - type: array
+        items:
+          $ref: "#/$defs/ClaimDocument"
+      - type: "null"
   adjuster_notes:
-    type: array
-    items:
-      $ref: "#/$defs/AdjusterNote"
+    oneOf:
+      - type: array
+        items:
+          $ref: "#/$defs/AdjusterNote"
+      - type: "null"
   coverage_review:
-    $ref: "#/$defs/CoverageReview"
+    oneOf:
+      - $ref: "#/$defs/CoverageReview"
+      - type: "null"
   resolution:
-    $ref: "#/$defs/Resolution"
+    oneOf:
+      - $ref: "#/$defs/Resolution"
+      - type: "null"
   conversation_seed_questions:
     type: array
     items:
       type: string
       minLength: 1
+  data_path:
+    oneOf:
+      - type: string
+        minLength: 1
+      - type: "null"
 $defs:
   ClaimStatus:
     type: string
@@ -217,8 +227,6 @@ $defs:
       - channel
       - summary
       - cause_of_loss
-      - initial_damage_estimate_eur
-      - emergency_mitigation_completed
       - injuries_reported
     properties:
       reported_by:
@@ -232,10 +240,14 @@ $defs:
         type: string
         minLength: 1
       initial_damage_estimate_eur:
-        type: integer
-        minimum: 0
+        oneOf:
+          - type: integer
+            minimum: 0
+          - type: "null"
       emergency_mitigation_completed:
-        type: boolean
+        oneOf:
+          - type: boolean
+          - type: "null"
       injuries_reported:
         type: boolean
   ClaimDocument:
@@ -258,6 +270,11 @@ $defs:
       created_at:
         type: string
         format: date-time
+      file_path:
+        oneOf:
+          - type: string
+            minLength: 1
+          - type: "null"
   AdjusterNote:
     type: object
     additionalProperties: false
@@ -281,7 +298,6 @@ $defs:
     required:
       - reviewed_by
       - decision
-      - reasoning
       - applied_deductible_eur
       - approved_repairs_eur
       - approved_contents_eur
@@ -292,8 +308,10 @@ $defs:
       decision:
         $ref: "#/$defs/CoverageDecision"
       reasoning:
-        type: string
-        minLength: 1
+        oneOf:
+          - type: string
+            minLength: 1
+          - type: "null"
       applied_deductible_eur:
         type: integer
         minimum: 0
@@ -313,7 +331,6 @@ $defs:
       - deductible_eur
       - net_payment_eur
       - payment_method
-      - customer_letter_summary
     properties:
       resolution_date:
         type:
@@ -334,5 +351,7 @@ $defs:
       payment_method:
         $ref: "#/$defs/PaymentMethod"
       customer_letter_summary:
-        type: string
-        minLength: 1
+        oneOf:
+          - type: string
+            minLength: 1
+          - type: "null"

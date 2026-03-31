@@ -6,6 +6,7 @@ import type {
   CalendarEventPayload,
   InferenceLogEvent,
   ClaimResponse,
+  ClaimFilesResponse,
   ClaimQaHistoryEntry,
   ClaimQaResponse,
   ClaimToolCall,
@@ -262,6 +263,42 @@ export const fetchRandomClaim = async (): Promise<ClaimResponse> => {
   }
   return response.json();
 };
+
+export const fetchDeepReviewClaim = async (): Promise<ClaimResponse> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/deep-review/random`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch deep review claim' }));
+    throw new Error(error.detail || 'Failed to fetch deep review claim');
+  }
+  return response.json();
+};
+
+export const fetchClaimFiles = async (claimId: string): Promise<ClaimFilesResponse> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch claim files' }));
+    throw new Error(error.detail || 'Failed to fetch claim files');
+  }
+  return response.json();
+};
+
+export const fetchClaimFileContent = async (claimId: string, filename: string): Promise<unknown> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files/${filename}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch file' }));
+    throw new Error(error.detail || 'Failed to fetch file');
+  }
+  return response.json();
+};
+
+export const getClaimFileUrl = (claimId: string, filename: string): string =>
+  `${API_BASE_URL}/media/claims/${claimId}/files/${filename}`;
 
 export const generateClaimAnswer = async (
   claim: unknown,

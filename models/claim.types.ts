@@ -67,8 +67,8 @@ export interface ClaimIntake {
   channel: IntakeChannel;
   summary: string;
   cause_of_loss: string;
-  initial_damage_estimate_eur: number;
-  emergency_mitigation_completed: boolean;
+  initial_damage_estimate_eur: number | null;
+  emergency_mitigation_completed: boolean | null;
   injuries_reported: boolean;
 }
 
@@ -77,6 +77,7 @@ export interface ClaimDocument {
   doc_type: DocumentType;
   title: string;
   created_at: ISODateTime;
+  file_path: string | null;
 }
 
 export interface AdjusterNote {
@@ -88,7 +89,7 @@ export interface AdjusterNote {
 export interface CoverageReview {
   reviewed_by: string;
   decision: CoverageDecision;
-  reasoning: string;
+  reasoning: string | null;
   applied_deductible_eur: number;
   approved_repairs_eur: number;
   approved_contents_eur: number;
@@ -101,7 +102,7 @@ export interface Resolution {
   deductible_eur: number;
   net_payment_eur: number;
   payment_method: PaymentMethod;
-  customer_letter_summary: string;
+  customer_letter_summary: string | null;
 }
 
 export interface Claim {
@@ -113,12 +114,13 @@ export interface Claim {
   reported_date: ISODate;
   insured: Insured;
   policy: Policy;
-  claim_intake: ClaimIntake;
-  documents: ClaimDocument[];
-  adjuster_notes: AdjusterNote[];
-  coverage_review: CoverageReview;
-  resolution: Resolution;
+  claim_intake: ClaimIntake | null;
+  documents: ClaimDocument[] | null;
+  adjuster_notes: AdjusterNote[] | null;
+  coverage_review: CoverageReview | null;
+  resolution: Resolution | null;
   conversation_seed_questions: string[];
+  data_path: string | null;
 }
 
 export type ClaimDataset = Claim[];

@@ -76,6 +76,18 @@ export type ClaimResponse = {
   claim: unknown;
 };
 
+export type ClaimFileEntry = {
+  key: string;
+  filename: string;
+  size: number;
+  last_modified: string | null;
+};
+
+export type ClaimFilesResponse = {
+  claim_id: string;
+  files: ClaimFileEntry[];
+};
+
 export type ClaimQaHistoryEntry = {
   question: string;
   answer: string;

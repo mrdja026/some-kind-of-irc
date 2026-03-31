@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import {
   createCalendarEvent,
   fetchRandomClaim,
+  fetchDeepReviewClaim,
+  fetchClaimFiles,
+  fetchClaimFileContent,
+  getClaimFileUrl,
   fetchGmailMessages,
   generateCalendarQuestion,
   generateClaimAnswer,
@@ -12,9 +16,10 @@ import {
   getAIHealth,
   getAIStatus,
 } from '../api'
-import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall } from '../types'
+import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall, ClaimFileEntry } from '../types'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag, ChevronDown, ChevronRight, Wrench, MessageSquare } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
+import { ClaimImagePopup } from './ClaimImagePopup'
 
 interface AIChannelProps {
   channelId: number
@@ -72,6 +77,12 @@ const AI_OPTIONS = [
     label: 'Claims Q&A',
     icon: Flag,
     description: "Review a random claim from the People's Archive",
+  },
+  {
+    id: 'claims-deep',
+    label: 'Deep Claim Review',
+    icon: BookOpen,
+    description: 'Inspect an incomplete claim with companion data files',
   },
 ]
 
@@ -196,6 +207,10 @@ export function AIChannel({
   const [claimPendingFollowup, setClaimPendingFollowup] = useState<string | null>(null)
   const [claimToolHistory, setClaimToolHistory] = useState<ClaimToolCall[]>([])
   const [claimSessionId, setClaimSessionId] = useState<string | null>(null)
+  const [claimFiles, setClaimFiles] = useState<ClaimFileEntry[]>([])
+  const [expandedFile, setExpandedFile] = useState<string | null>(null)
+  const [fileContents, setFileContents] = useState<Record<string, unknown>>({})
+  const [selectedClaimImage, setSelectedClaimImage] = useState<{ url: string; filename: string } | null>(null)
 
   const {
     data: aiHealth,
@@ -545,6 +560,7 @@ export function AIChannel({
         setStreamProgress("Requesting a claim from the People's Archive...")
         const { filename, claim } = await fetchRandomClaim()
         const claimPretty = formatClaim(claim)
+        const claimId = (claim as Record<string, unknown>)?.claim_id as string | undefined
         const rallyingCall =
           `Comrade, claim ${filename} has been delivered for collective review. ` +
           'Ask your questions below to serve the shared record.'
@@ -555,12 +571,85 @@ export function AIChannel({
         setClaimPendingFollowup(null)
         setClaimToolHistory([])
         setClaimSessionId(null)
+        setClaimFiles([])
+        setExpandedFile(null)
+        setFileContents({})
+
+        if (claimId) {
+          fetchClaimFiles(claimId).then((res) => setClaimFiles(res.files || [])).catch(() => {})
+        }
         setResponses([
           {
             id: Date.now(),
             query: '',
             response: rallyingCall,
             agent: 'Claims Q&A',
+            mode: 'claim_message',
+            claim,
+            claimFilename: filename,
+            claimPretty,
+          },
+        ])
+        setGmailStage('claims')
+        setActiveQuestion(`Ask about ${filename}...`)
+        setStreamProgress(null)
+        setIsSubmitting(false)
+        return
+      }
+
+      if (optionId === 'claims-deep') {
+        setStreamProgress('Loading incomplete claim with companion data...')
+        const { filename, claim } = await fetchDeepReviewClaim()
+        const claimPretty = formatClaim(claim)
+        const claimId = (claim as Record<string, unknown>)?.claim_id as string | undefined
+        setClaimPayload({ claim, filename })
+        setClaimHistory([])
+        setClaimQuestionCount(0)
+        setClaimAskedQuestions([])
+        setClaimPendingFollowup(null)
+        setClaimToolHistory([])
+        setClaimSessionId(null)
+        setClaimFiles([])
+        setExpandedFile(null)
+        setFileContents({})
+
+        let loadedFiles: { filename: string; content: unknown }[] = []
+        if (claimId) {
+          try {
+            const res = await fetchClaimFiles(claimId)
+            const files = res.files || []
+            setClaimFiles(files)
+            const contents = await Promise.all(
+              files.map(async (f) => {
+                try {
+                  const content = await fetchClaimFileContent(claimId, f.filename)
+                  return { filename: f.filename, content }
+                } catch {
+                  return { filename: f.filename, content: { error: 'Failed to load' } }
+                }
+              }),
+            )
+            const contentsMap: Record<string, unknown> = {}
+            for (const c of contents) contentsMap[c.filename] = c.content
+            setFileContents(contentsMap)
+            loadedFiles = contents
+          } catch { /* files optional */ }
+        }
+
+        const fileList = loadedFiles.length
+          ? `\n\n📎 ${loadedFiles.length} companion data files loaded: ${loadedFiles.map((f) => f.filename).join(', ')}`
+          : ''
+        const greeting =
+          `Comrade, incomplete dossier ${filename} has been loaded for deep review. ` +
+          'This claim has sparse top-level data — expand the companion files below for full detail.' +
+          fileList
+
+        setResponses([
+          {
+            id: Date.now(),
+            query: '',
+            response: greeting,
+            agent: 'Deep Claim Review',
             mode: 'claim_message',
             claim,
             claimFilename: filename,
@@ -1064,7 +1153,7 @@ export function AIChannel({
             <div className="grid gap-3 md:gap-4 max-w-lg mx-auto">
               {AI_OPTIONS.map((option) => {
                 const Icon = option.icon
-                const isClaimsOption = option.id === 'claims'
+                const isClaimsOption = option.id === 'claims' || option.id === 'claims-deep'
                 const isOptionDisabled = isSubmitting || (!isClaimsOption && aiUnavailable)
                 return (
                   <button
@@ -1256,6 +1345,92 @@ export function AIChannel({
                             </pre>
                           </details>
                         )}
+
+                        {claimFiles.length > 0 && (() => {
+                          const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+                          const isImage = (name: string) => IMAGE_EXTS.some(e => name.toLowerCase().endsWith(e))
+                          const jsonFiles = claimFiles.filter(f => !isImage(f.filename))
+                          const imageFiles = claimFiles.filter(f => isImage(f.filename))
+                          const claimId = (response.claim as Record<string, unknown>)?.claim_id as string
+
+                          return (
+                            <div className="mt-4 border-t border-red-200 pt-3">
+                              <div className="text-[10px] uppercase tracking-[0.3em] text-red-700 mb-2">
+                                Companion Data Files
+                              </div>
+
+                              {/* JSON files — expandable */}
+                              <div className="space-y-1">
+                                {jsonFiles.map((file) => (
+                                  <div key={file.key} className="text-xs">
+                                    <button
+                                      onClick={async () => {
+                                        if (expandedFile === file.filename) {
+                                          setExpandedFile(null)
+                                          return
+                                        }
+                                        setExpandedFile(file.filename)
+                                        if (!fileContents[file.filename] && claimId) {
+                                          try {
+                                            const content = await fetchClaimFileContent(claimId, file.filename)
+                                            setFileContents(prev => ({ ...prev, [file.filename]: content }))
+                                          } catch {
+                                            setFileContents(prev => ({ ...prev, [file.filename]: { error: 'Failed to load' } }))
+                                          }
+                                        }
+                                      }}
+                                      className="flex items-center gap-1 text-red-800 hover:text-red-600 cursor-pointer font-mono"
+                                    >
+                                      {expandedFile === file.filename ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                      {file.filename}
+                                      <span className="text-red-500 font-sans">
+                                        ({file.size > 1024 ? `${(file.size / 1024).toFixed(1)}KB` : `${file.size}B`})
+                                      </span>
+                                    </button>
+                                    {expandedFile === file.filename && fileContents[file.filename] && (
+                                      <pre className="mt-1 ml-4 p-2 text-[10px] font-mono text-red-900 bg-red-50 border border-red-200 rounded whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+                                        {JSON.stringify(fileContents[file.filename], null, 2)}
+                                      </pre>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Image files — thumbnails */}
+                              {imageFiles.length > 0 && (
+                                <div className="mt-3">
+                                  <div className="text-[10px] uppercase tracking-[0.2em] text-red-600 mb-1">
+                                    Site Photos
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {imageFiles.map((file) => {
+                                      const imgUrl = claimId
+                                        ? getClaimFileUrl(claimId, file.filename)
+                                        : ''
+                                      return (
+                                        <button
+                                          key={file.key}
+                                          onClick={() => setSelectedClaimImage({ url: imgUrl, filename: file.filename })}
+                                          className="group relative rounded overflow-hidden border border-red-200 hover:border-red-400 transition-colors"
+                                        >
+                                          <img
+                                            src={imgUrl}
+                                            alt={file.filename}
+                                            className="h-20 w-auto object-cover cursor-pointer group-hover:opacity-90 transition-opacity"
+                                            loading="lazy"
+                                          />
+                                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-1 py-0.5 truncate">
+                                            {file.filename}
+                                          </div>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
                     
@@ -1431,6 +1606,15 @@ export function AIChannel({
         <div className="absolute inset-0 z-30 bg-white/95 backdrop-blur-sm">
           <InferenceTimeline onClose={() => onToggleTimeline?.()} />
         </div>
+      )}
+
+      {/* Claim image lightbox */}
+      {selectedClaimImage && (
+        <ClaimImagePopup
+          imageUrl={selectedClaimImage.url}
+          filename={selectedClaimImage.filename}
+          onClose={() => setSelectedClaimImage(null)}
+        />
       )}
     </div>
   )

@@ -53,6 +53,25 @@ After the coding agent does it job check the changes with the git diff short and
 **Local** deploy_local.sh --build --flags must pass
 When working with **VPS** add allways instructions to apply helm chart changes if applicible **AND** command to restart a affected part of the k3s plane
 
+# Caddy routing rules
+
+Caddy evaluates `path` matchers top-down. **Specific routes must come before generic wildcards** or the generic rule swallows the request.
+
+Current routing for `/media/*`:
+
+```
+@media_upload  path /media/upload        → backend:8002
+@media_claims  path /media/claims/*      → backend:8002
+@media         path /media/*             → media-storage:9101
+```
+
+**Why this order matters:**
+- `backend:8002` owns all claims logic (`/media/claims/random`, `/media/claims/{id}/files`, `/media/claims/deep-review/random`)
+- `media-storage:9101` owns raw file serving (`/media/<key>` for images, PDFs, etc.)
+- If `@media_claims` is missing or placed after `@media`, claims requests hit media-storage which has no claims endpoints → 404
+
+**Rule:** When adding new `/media/...` backend endpoints, add a specific Caddy matcher **above** the generic `@media` rule. Never rely on the generic `/media/*` rule to reach the backend.
+
 
 When you cannot find plans try searching /openspec folder in working repository when in plan mode
 or  /home/mrdjanubuntu/workspaace/some-kind-of-irc/openspec path

@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from secrets import randbelow
+import re
 import requests
 import io
 from typing import Any, List
@@ -173,3 +175,113 @@ def get_random_claim(
         raise HTTPException(status_code=502, detail="Invalid claim payload")
 
     return payload
+
+
+@router.get("/claims/deep-review/random", response_model=ClaimResponse)
+def get_deep_review_claim(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Return a random incomplete claim (0001-0010) that has companion data."""
+    claim_index = randbelow(10) + 1
+    filename = f"CLM-2026-{claim_index:04d}.json"
+    storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
+
+    try:
+        response = requests.get(
+            f"{storage_url}/claims/{filename}",
+            cookies=request.cookies,
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Media storage unavailable")
+
+    if not response.ok:
+        detail = "Claim retrieval failed"
+        try:
+            payload = response.json()
+            detail = payload.get("detail", detail)
+        except ValueError:
+            if response.text:
+                detail = response.text
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Invalid storage response")
+
+    if not isinstance(payload, dict) or "claim" not in payload:
+        raise HTTPException(status_code=502, detail="Invalid claim payload")
+
+    return payload
+
+
+_claim_id_pattern = r"^CLM-2026-\d{4}$"
+
+
+@router.get("/claims/{claim_id}/files")
+def list_claim_files(
+    request: Request,
+    claim_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
+    try:
+        response = requests.get(
+            f"{storage_url}/claims/{claim_id}/files",
+            cookies=request.cookies,
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Media storage unavailable")
+
+    if not response.ok:
+        detail = "File listing failed"
+        try:
+            payload = response.json()
+            detail = payload.get("detail", detail)
+        except ValueError:
+            pass
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    try:
+        return response.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Invalid storage response")
+
+
+@router.get("/claims/{claim_id}/files/{filename:path}")
+def get_claim_file(
+    request: Request,
+    claim_id: str,
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
+    try:
+        response = requests.get(
+            f"{storage_url}/claims/{claim_id}/files/{filename}",
+            cookies=request.cookies,
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Media storage unavailable")
+
+    if not response.ok:
+        detail = "File retrieval failed"
+        try:
+            payload = response.json()
+            detail = payload.get("detail", detail)
+        except ValueError:
+            pass
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    content_type = response.headers.get("content-type", "application/octet-stream")
+    return Response(content=response.content, media_type=content_type)
