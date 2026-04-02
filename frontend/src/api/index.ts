@@ -12,17 +12,37 @@ import type {
   ClaimToolCall,
 } from '../types';
 
-const API_BASE_URL =
+export const API_BASE_URL =
   typeof window === 'undefined'
     ? import.meta.env.VITE_API_URL || 'http://backend:8002'
     : (() => {
         const origin = window.location.origin;
+        const isLocalHost =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1';
+        const normalizeLocalApiUrl = (value: string): string => {
+          if (!isLocalHost) {
+            return value;
+          }
+          if (
+            value.includes(':8002') ||
+            value.includes(':8001') ||
+            value.includes(':8004') ||
+            value.includes(':4269')
+          ) {
+            return 'http://localhost:8080';
+          }
+          return value;
+        };
         const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
         if (explicit) {
           if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
             return origin;
           }
-          return explicit;
+          return normalizeLocalApiUrl(explicit);
+        }
+        if (isLocalHost) {
+          return 'http://localhost:8080';
         }
         return origin;
       })();
@@ -584,6 +604,89 @@ export const getInferenceLogs = async (
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to get inference logs' }));
     throw new Error(error.detail || 'Failed to get inference logs');
+  }
+  return response.json();
+};
+
+// ---------------------------------------------------------------------------
+// Claim damage-annotation API (proxied through backend)
+// ---------------------------------------------------------------------------
+
+export type CreateClaimDocRequest = {
+  image_url: string;
+  source_key: string;
+  source_parent_key?: string;
+  original_filename?: string;
+};
+
+export type CreateClaimAnnotationRequest = {
+  document_id: string;
+  label_type: string;
+  label_name?: string;
+  color?: string;
+  bounding_box: { x: number; y: number; width: number; height: number; rotation?: number };
+  verification_status?: string;
+  certainty?: number;
+  review_value?: string | null;
+};
+
+export type DamageAnnotationEntry = {
+  id: string;
+  document_id: string;
+  label_type: string;
+  label_name: string;
+  color: string;
+  bounding_box: { x: number; y: number; width: number; height: number; rotation?: number };
+  verification_status: string;
+  certainty: number | null;
+  review_value: string | null;
+  original_filename: string | null;
+  image_url: string | null;
+};
+
+export const createClaimDocument = async (
+  claimId: string,
+  body: CreateClaimDocRequest,
+): Promise<Record<string, unknown>> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/documents/from-minio`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create document' }));
+    throw new Error(error.detail || 'Failed to create document');
+  }
+  return response.json();
+};
+
+export const createClaimAnnotation = async (
+  claimId: string,
+  body: CreateClaimAnnotationRequest,
+): Promise<Record<string, unknown>> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/damage-annotations`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create annotation' }));
+    throw new Error(error.detail || 'Failed to create annotation');
+  }
+  return response.json();
+};
+
+export const fetchClaimAnnotations = async (
+  claimId: string,
+): Promise<{ claim_id: string; annotations: DamageAnnotationEntry[]; count: number }> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/damage-annotations`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch annotations' }));
+    throw new Error(error.detail || 'Failed to fetch annotations');
   }
   return response.json();
 };

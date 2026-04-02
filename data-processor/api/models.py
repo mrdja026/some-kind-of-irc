@@ -34,6 +34,9 @@ class DocumentRecord(models.Model):
     image_data = models.BinaryField(null=True, blank=True)
     preprocessed_data = models.BinaryField(null=True, blank=True)
     thumbnail_url = models.TextField(null=True, blank=True)
+    source_bucket = models.CharField(max_length=255, null=True, blank=True)
+    source_key = models.CharField(max_length=500, null=True, blank=True)
+    source_parent_key = models.CharField(max_length=500, null=True, blank=True)
     width = models.PositiveIntegerField(default=0)
     height = models.PositiveIntegerField(default=0)
     ocr_status = models.CharField(
@@ -65,6 +68,12 @@ class AnnotationRecord(models.Model):
         ("valid", "valid"),
         ("invalid", "invalid"),
     ]
+    VERIFICATION_CHOICES = [
+        ("unverified", "unverified"),
+        ("human_verified", "human_verified"),
+        ("ai_suggested", "ai_suggested"),
+        ("rejected", "rejected"),
+    ]
 
     id = models.CharField(primary_key=True, max_length=36, default=_uuid_str, editable=False)
     document = models.ForeignKey(
@@ -83,6 +92,13 @@ class AnnotationRecord(models.Model):
         choices=VALIDATION_CHOICES,
         default="pending",
     )
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VERIFICATION_CHOICES,
+        default="unverified",
+    )
+    review_value = models.TextField(null=True, blank=True)
+    certainty = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
 

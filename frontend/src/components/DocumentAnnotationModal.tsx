@@ -20,7 +20,8 @@ import {
   listTemplates,
   applyTemplate,
 } from '../api/dataProcessor'
-import type { Annotation, LabelType, OcrStatus } from '../types'
+import { API_BASE_URL } from '../api'
+import type { Annotation, LabelType, OcrStatus, VerificationStatus } from '../types'
 import { BoundingBoxCanvas } from './BoundingBoxCanvas'
 import { AnnotationToolbar } from './AnnotationToolbar'
 import { TemplateSaveModal } from './TemplateSaveModal'
@@ -37,13 +38,23 @@ interface DocumentAnnotationModalProps {
 
 // Label type colors
 const LABEL_COLORS: Record<LabelType, string> = {
-  header: '#3B82F6', // blue
-  table: '#10B981', // green
-  signature: '#8B5CF6', // purple
-  date: '#F59E0B', // amber
-  amount: '#EF4444', // red
-  custom: '#6B7280', // gray
+  header: '#3B82F6',
+  table: '#10B981',
+  signature: '#8B5CF6',
+  date: '#F59E0B',
+  amount: '#EF4444',
+  custom: '#6B7280',
+  fire_damage: '#EF5350',
+  water_damage: '#42A5F5',
+  smoke_damage: '#78909C',
+  structural_damage: '#FF7043',
+  glass_damage: '#26C6DA',
+  debris: '#8D6E63',
 }
+
+const DAMAGE_LABEL_TYPES: Set<LabelType> = new Set([
+  'fire_damage', 'water_damage', 'smoke_damage', 'structural_damage', 'glass_damage', 'debris',
+])
 
 export function DocumentAnnotationModal({
   documentId,
@@ -113,6 +124,17 @@ export function DocumentAnnotationModal({
     }
   }, [document, debug])
 
+  const resolvedImageUrl = (() => {
+    const rawUrl = document?.image_url
+    if (!rawUrl) {
+      return undefined
+    }
+    if (rawUrl.startsWith('/media/')) {
+      return `${API_BASE_URL}${rawUrl}`
+    }
+    return rawUrl
+  })()
+
   // Process OCR mutation
   const processMutation = useMutation({
     mutationFn: () => processDocument(documentId),
@@ -127,10 +149,9 @@ export function DocumentAnnotationModal({
       label_type: LabelType
       label_name: string
       color: string
-      x: number
-      y: number
-      width: number
-      height: number
+      bounding_box: { x: number; y: number; width: number; height: number; rotation?: number }
+      verification_status?: VerificationStatus
+      certainty?: number | null
     }) => createAnnotation(documentId, data),
     onSuccess: (newAnnotation) => {
       setAnnotations((prev) => [...prev, newAnnotation])
@@ -186,11 +207,13 @@ export function DocumentAnnotationModal({
       const name =
         labelName.trim() || `${activeLabelType} ${annotations.length + 1}`
 
+      const isDamage = DAMAGE_LABEL_TYPES.has(activeLabelType)
       createAnnotationMutation.mutate({
         label_type: activeLabelType,
         label_name: name,
         color: LABEL_COLORS[activeLabelType],
         bounding_box: { ...box, rotation: 0 },
+        ...(isDamage ? { verification_status: 'human_verified' as VerificationStatus, certainty: 1.0 } : {}),
       })
       setLabelName('')
       setLabelNameError(null)
@@ -212,11 +235,7 @@ export function DocumentAnnotationModal({
   const handleToolChange = useCallback(
     (next: 'select' | 'draw') => {
       setTool(next)
-      if (next === 'draw') {
-        setActiveLabelType('custom')
-      }
       setLabelNameError(null)
-      // Preserve the active label type; do not force custom on tool change
     },
     [],
   )
@@ -402,12 +421,12 @@ export function DocumentAnnotationModal({
               <Loader2 size={48} className="animate-spin text-gray-500" />
             </div>
           ) : (
-            <BoundingBoxCanvas
-              documentId={documentId}
-              imageUrl={document?.image_url}
-              annotations={annotations}
-              selectedAnnotation={selectedAnnotation}
-              onSelectAnnotation={setSelectedAnnotation}
+              <BoundingBoxCanvas
+                documentId={documentId}
+                imageUrl={resolvedImageUrl}
+                annotations={annotations}
+                selectedAnnotation={selectedAnnotation}
+                onSelectAnnotation={setSelectedAnnotation}
               onCreateAnnotation={handleCreateAnnotation}
               onUpdateAnnotation={handleUpdateAnnotation}
               tool={tool}

@@ -123,7 +123,10 @@ export type ClaimQaResponse = {
 };
 
 // Data Processor types
-export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom';
+export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom'
+  | 'fire_damage' | 'water_damage' | 'smoke_damage' | 'structural_damage' | 'glass_damage' | 'debris';
+
+export type VerificationStatus = 'unverified' | 'human_verified' | 'ai_suggested' | 'rejected';
 
 export type BoundingBox = {
   x: number;
@@ -142,6 +145,10 @@ export type Annotation = {
   bounding_box: BoundingBox;
   extracted_text?: string | null;
   confidence?: number | null;
+  validation_status?: string;
+  verification_status?: VerificationStatus;
+  review_value?: string | null;
+  certainty?: number | null;
   created_at: string;
 };
 
@@ -161,6 +168,9 @@ export type Document = {
   ocr_status: OcrStatus;
   ocr_result?: OcrResult | null;
   annotations: Annotation[];
+  source_bucket?: string | null;
+  source_key?: string | null;
+  source_parent_key?: string | null;
   created_at: string;
 };
 

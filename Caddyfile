@@ -15,7 +15,7 @@
   }
   encode @compressible gzip
 
-  @api path /auth/* /channels/* /health
+  @api path /auth/* /channels /channels/* /health
   reverse_proxy @api backend:8002
 
   # ADK AI service (Google ADK backend)

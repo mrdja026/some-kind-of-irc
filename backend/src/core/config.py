@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     # Data Processor Microservice Configuration
     DATA_PROCESSOR_URL: str = "http://data-processor:8003"
     FEATURE_DATA_PROCESSOR: bool = False
+    DP_SERVICE_AUTH_SECRET: str = ""
 
     # Redis Configuration (for pub/sub events)
     REDIS_URL: str = "redis://localhost:6379/0"

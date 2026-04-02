@@ -19,6 +19,7 @@ urlpatterns = [
     
     # Document endpoints
     path("documents/", views.DocumentListCreateView.as_view(), name="document-list-create"),
+    path("documents/from-minio/", views.DocumentFromMinioView.as_view(), name="document-from-minio"),
     path("documents/<str:document_id>/", views.DocumentDetailView.as_view(), name="document-detail"),
     
     # Annotation endpoints

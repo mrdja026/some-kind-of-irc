@@ -23,23 +23,38 @@ from storage.in_memory import (
 
 
 def _normalize_media_url(url: str | None) -> str | None:
+    """Rewrite internal MinIO URLs to the public endpoint.
+
+    Only rewrites URLs whose host matches the internal MINIO_ENDPOINT
+    (e.g. ``minio:9000``).  All other URLs — including Caddy-proxied
+    paths like ``localhost:8080/media/claims/…`` — are returned as-is.
+    """
     if not url:
         return url
     public_base = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "").rstrip("/")
-    if not public_base:
+    internal_endpoint = getattr(settings, "MINIO_ENDPOINT", "").rstrip("/")
+    if not public_base or not internal_endpoint:
         return url
     if url.startswith(public_base):
         return url
     try:
         parsed = urlparse(url)
+        internal_parsed = urlparse(internal_endpoint)
     except ValueError:
         return url
     if not parsed.scheme or not parsed.netloc:
         return url
-    path = parsed.path or ""
-    if not path.startswith("/"):
-        path = f"/{path}"
-    return f"{public_base}{path}"
+    # Only rewrite URLs that point to the internal MinIO host
+    if parsed.netloc == internal_parsed.netloc:
+        path = parsed.path or ""
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{public_base}{path}"
+    # For non-MinIO absolute URLs (e.g. /media/claims/... via backend port),
+    # return just the path so the browser resolves via Caddy origin
+    if parsed.path and parsed.path.startswith("/media/"):
+        return parsed.path
+    return url
 
 
 class BoundingBoxSerializer(serializers.Serializer):
@@ -77,6 +92,16 @@ class AnnotationSerializer(serializers.Serializer):
     validation_status = serializers.ChoiceField(
         choices=["pending", "valid", "invalid"],
         default="pending"
+    )
+    verification_status = serializers.ChoiceField(
+        choices=["unverified", "human_verified", "ai_suggested", "rejected"],
+        default="unverified"
+    )
+    review_value = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    certainty = serializers.FloatField(
+        allow_null=True, required=False, min_value=0, max_value=1
     )
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
@@ -123,8 +148,11 @@ class DocumentSerializer(serializers.Serializer):
     file_type = serializers.CharField(read_only=True)
     page_count = serializers.IntegerField(read_only=True, min_value=1)
     pdf_text_layer = serializers.JSONField(read_only=True, allow_null=True)
-    image_url = serializers.URLField(read_only=True, allow_null=True)
+    image_url = serializers.CharField(read_only=True, allow_null=True)
     thumbnail_url = serializers.URLField(read_only=True, allow_null=True)
+    source_bucket = serializers.CharField(read_only=True, allow_null=True)
+    source_key = serializers.CharField(read_only=True, allow_null=True)
+    source_parent_key = serializers.CharField(read_only=True, allow_null=True)
     width = serializers.IntegerField(read_only=True, min_value=0)
     height = serializers.IntegerField(read_only=True, min_value=0)
     ocr_status = serializers.ChoiceField(

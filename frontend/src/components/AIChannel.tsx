@@ -15,11 +15,13 @@ import {
   generatePdf,
   getAIHealth,
   getAIStatus,
+  createClaimDocument,
 } from '../api'
 import type { CalendarEventPayload, ClaimQaHistoryEntry, ClaimToolCall, ClaimFileEntry } from '../types'
 import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag, ChevronDown, ChevronRight, Wrench, MessageSquare } from 'lucide-react'
 import { InferenceTimeline } from './InferenceTimeline'
 import { ClaimImagePopup } from './ClaimImagePopup'
+import { DocumentAnnotationModal } from './DocumentAnnotationModal'
 
 interface AIChannelProps {
   channelId: number
@@ -210,7 +212,8 @@ export function AIChannel({
   const [claimFiles, setClaimFiles] = useState<ClaimFileEntry[]>([])
   const [expandedFile, setExpandedFile] = useState<string | null>(null)
   const [fileContents, setFileContents] = useState<Record<string, unknown>>({})
-  const [selectedClaimImage, setSelectedClaimImage] = useState<{ url: string; filename: string } | null>(null)
+  const [selectedClaimImage, setSelectedClaimImage] = useState<{ url: string; filename: string; claimId?: string; sourceKey?: string } | null>(null)
+  const [annotationTarget, setAnnotationTarget] = useState<{ documentId: string; filename: string; claimId: string } | null>(null)
 
   const {
     data: aiHealth,
@@ -1410,7 +1413,7 @@ export function AIChannel({
                                       return (
                                         <button
                                           key={file.key}
-                                          onClick={() => setSelectedClaimImage({ url: imgUrl, filename: file.filename })}
+                                          onClick={() => setSelectedClaimImage({ url: imgUrl, filename: file.filename, claimId, sourceKey: file.key })}
                                           className="group relative rounded overflow-hidden border border-red-200 hover:border-red-400 transition-colors"
                                         >
                                           <img
@@ -1614,6 +1617,38 @@ export function AIChannel({
           imageUrl={selectedClaimImage.url}
           filename={selectedClaimImage.filename}
           onClose={() => setSelectedClaimImage(null)}
+          onAnnotate={selectedClaimImage.claimId ? async () => {
+            const img = selectedClaimImage
+            if (!img.claimId || !img.sourceKey) return
+            try {
+              // Store a relative path so the annotation modal resolves it
+              // via window.location.origin (Caddy), not the backend port
+              const relativePath = `/media/claims/${img.claimId}/files/${img.filename}`
+              const doc = await createClaimDocument(img.claimId, {
+                image_url: relativePath,
+                source_key: img.sourceKey,
+                source_parent_key: `${img.claimId}-data`,
+                original_filename: img.filename,
+              })
+              const docId = (doc as Record<string, unknown>).id as string
+              if (docId) {
+                setAnnotationTarget({ documentId: docId, filename: img.filename, claimId: img.claimId })
+                setSelectedClaimImage(null)
+              }
+            } catch {
+              // silently ignore — data-processor may be down
+            }
+          } : undefined}
+        />
+      )}
+
+      {/* Damage annotation modal */}
+      {annotationTarget && (
+        <DocumentAnnotationModal
+          documentId={annotationTarget.documentId}
+          filename={annotationTarget.filename}
+          channelId={channelId}
+          onClose={() => setAnnotationTarget(null)}
         />
       )}
     </div>

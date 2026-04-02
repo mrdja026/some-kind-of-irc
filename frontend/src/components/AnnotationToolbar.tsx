@@ -8,6 +8,12 @@ import {
   Calendar,
   DollarSign,
   Layout,
+  Flame,
+  Droplets,
+  Wind,
+  Building2,
+  GlassWater,
+  Trash,
 } from 'lucide-react'
 import type { LabelType, Template } from '../types'
 
@@ -64,6 +70,43 @@ const LABEL_TYPES: {
     label: 'Amount',
     color: '#EF4444',
     icon: <DollarSign size={16} />,
+  },
+  // Damage label types for claims
+  {
+    type: 'fire_damage',
+    label: 'Fire',
+    color: '#EF5350',
+    icon: <Flame size={16} />,
+  },
+  {
+    type: 'water_damage',
+    label: 'Water',
+    color: '#42A5F5',
+    icon: <Droplets size={16} />,
+  },
+  {
+    type: 'smoke_damage',
+    label: 'Smoke',
+    color: '#78909C',
+    icon: <Wind size={16} />,
+  },
+  {
+    type: 'structural_damage',
+    label: 'Structure',
+    color: '#FF7043',
+    icon: <Building2 size={16} />,
+  },
+  {
+    type: 'glass_damage',
+    label: 'Glass',
+    color: '#26C6DA',
+    icon: <GlassWater size={16} />,
+  },
+  {
+    type: 'debris',
+    label: 'Debris',
+    color: '#8D6E63',
+    icon: <Trash size={16} />,
   },
 ]
 

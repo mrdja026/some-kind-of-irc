@@ -285,3 +285,146 @@ def get_claim_file(
 
     content_type = response.headers.get("content-type", "application/octet-stream")
     return Response(content=response.content, media_type=content_type)
+
+
+# ---------------------------------------------------------------------------
+# Data-processor proxy helpers
+# ---------------------------------------------------------------------------
+
+def _dp_headers() -> dict:
+    """Build auth headers for data-processor service calls."""
+    secret = settings.DP_SERVICE_AUTH_SECRET
+    if secret:
+        return {"X-Service-Auth": secret, "Content-Type": "application/json"}
+    return {"Content-Type": "application/json"}
+
+
+def _dp_url(path: str) -> str:
+    return f"{settings.DATA_PROCESSOR_URL.rstrip('/')}/api/{path.lstrip('/')}"
+
+
+# ---------------------------------------------------------------------------
+# Claim damage-annotation proxy endpoints
+# ---------------------------------------------------------------------------
+
+
+class CreateDocFromMinioRequest(BaseModel):
+    image_url: str
+    source_key: str
+    source_parent_key: str | None = None
+    original_filename: str | None = None
+
+
+@router.post("/claims/{claim_id}/documents/from-minio")
+def create_claim_document(
+    claim_id: str,
+    body: CreateDocFromMinioRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Create or retrieve a data-processor document from a MinIO reference."""
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    payload = {
+        "source_bucket": "synt-data",
+        "source_key": body.source_key,
+        "source_parent_key": body.source_parent_key or f"{claim_id}-data",
+        "image_url": body.image_url,
+        "channel_id": f"claims-{claim_id}",
+        "uploaded_by": current_user.username,
+        "original_filename": body.original_filename or body.source_key.rsplit("/", 1)[-1],
+    }
+    try:
+        resp = requests.post(
+            _dp_url("documents/from-minio/"),
+            json=payload,
+            headers=_dp_headers(),
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Data processor unavailable")
+
+    if not resp.ok:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+class CreateDamageAnnotationRequest(BaseModel):
+    document_id: str
+    label_type: str = "fire_damage"
+    label_name: str = ""
+    color: str = "#EF5350"
+    bounding_box: dict
+    verification_status: str = "human_verified"
+    certainty: float = 1.0
+    review_value: str | None = None
+
+
+@router.post("/claims/{claim_id}/damage-annotations")
+def create_damage_annotation(
+    claim_id: str,
+    body: CreateDamageAnnotationRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Create a damage annotation on a claim document via data-processor."""
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    payload = {
+        "label_type": body.label_type,
+        "label_name": body.label_name or body.label_type.replace("_", " ").title(),
+        "color": body.color,
+        "bounding_box": body.bounding_box,
+        "verification_status": body.verification_status,
+        "certainty": body.certainty,
+        "review_value": body.review_value,
+    }
+    try:
+        resp = requests.post(
+            _dp_url(f"documents/{body.document_id}/annotations/"),
+            json=payload,
+            headers=_dp_headers(),
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Data processor unavailable")
+
+    if not resp.ok:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+
+@router.get("/claims/{claim_id}/damage-annotations")
+def list_damage_annotations(
+    claim_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """List all damage annotations for a claim's documents."""
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    channel_id = f"claims-{claim_id}"
+    try:
+        resp = requests.get(
+            _dp_url("documents/"),
+            params={"channel_id": channel_id},
+            headers=_dp_headers(),
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Data processor unavailable")
+
+    if not resp.ok:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    data = resp.json()
+    documents = data.get("documents", [])
+    annotations = []
+    for doc in documents:
+        for ann in doc.get("annotations", []):
+            ann["document_id"] = doc.get("id")
+            ann["original_filename"] = doc.get("original_filename")
+            ann["image_url"] = doc.get("image_url")
+            annotations.append(ann)
+
+    return {"claim_id": claim_id, "annotations": annotations, "count": len(annotations)}

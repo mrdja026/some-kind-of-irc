@@ -1,13 +1,14 @@
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { X, PenSquare } from 'lucide-react'
 
 interface ClaimImagePopupProps {
   imageUrl: string
   filename: string
   onClose: () => void
+  onAnnotate?: () => void
 }
 
-export function ClaimImagePopup({ imageUrl, filename, onClose }: ClaimImagePopupProps) {
+export function ClaimImagePopup({ imageUrl, filename, onClose, onAnnotate }: ClaimImagePopupProps) {
   return createPortal(
     <div
       className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
@@ -30,7 +31,18 @@ export function ClaimImagePopup({ imageUrl, filename, onClose }: ClaimImagePopup
           alt={filename}
           className="max-h-[80vh] w-auto object-contain rounded-lg"
         />
-        <div className="mt-3 text-white/70 text-sm font-mono">{filename}</div>
+        <div className="mt-3 flex items-center gap-4">
+          <span className="text-white/70 text-sm font-mono">{filename}</span>
+          {onAnnotate && (
+            <button
+              onClick={onAnnotate}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors min-h-[40px]"
+            >
+              <PenSquare size={16} />
+              Annotate Damage
+            </button>
+          )}
+        </div>
       </div>
     </div>,
     document.body,
