@@ -36,7 +36,7 @@ export const API_BASE_URL =
         };
         const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
         if (explicit) {
-          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
+          if ((explicit.includes('localhost') || explicit.includes('127.0.0.1')) && !isLocalHost) {
             return origin;
           }
           return normalizeLocalApiUrl(explicit);
@@ -306,19 +306,23 @@ export const fetchClaimFiles = async (claimId: string): Promise<ClaimFilesRespon
   return response.json();
 };
 
-export const fetchClaimFileContent = async (claimId: string, filename: string): Promise<unknown> => {
-  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files/${filename}`, {
+const encodeClaimFilename = (filename: string): string =>
+  filename.split('/').map(encodeURIComponent).join('/');
+
+export const fetchClaimFileContent = async (claimId: string, filename: string): Promise<Blob> => {
+  const encodedFilename = encodeClaimFilename(filename);
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files/${encodedFilename}`, {
     credentials: 'include',
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to fetch file' }));
-    throw new Error(error.detail || 'Failed to fetch file');
+    const error = await response.text().catch(() => 'Failed to fetch file');
+    throw new Error(error || 'Failed to fetch file');
   }
-  return response.json();
+  return response.blob();
 };
 
 export const getClaimFileUrl = (claimId: string, filename: string): string =>
-  `${API_BASE_URL}/media/claims/${claimId}/files/${filename}`;
+  `${API_BASE_URL}/media/claims/${claimId}/files/${encodeClaimFilename(filename)}`;
 
 export const generateClaimAnswer = async (
   claim: unknown,

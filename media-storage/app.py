@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import urllib.parse
 from uuid import uuid4
 from typing import Optional
 
@@ -468,7 +469,9 @@ def get_claim_file(claim_id: str, filename: str):
     if not _claim_id_re.match(claim_id):
         return jsonify({"detail": "Invalid claim ID"}), 400
 
-    safe_filename = filename.replace("..", "").lstrip("/")
+    safe_filename = os.path.basename(os.path.normpath(urllib.parse.unquote(filename)))
+    if not safe_filename or safe_filename in (".", "..") or "/" in safe_filename or "\\" in safe_filename:
+        return jsonify({"detail": "Invalid filename"}), 400
     key = f"{claim_id}-data/data/{safe_filename}"
 
     try:

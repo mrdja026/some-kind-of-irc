@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { useEffect, useRef } from 'react'
 import { X, PenSquare } from 'lucide-react'
 
 interface ClaimImagePopupProps {
@@ -9,10 +10,22 @@ interface ClaimImagePopupProps {
 }
 
 export function ClaimImagePopup({ imageUrl, filename, onClose, onAnnotate }: ClaimImagePopupProps) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    dialogRef.current?.focus()
+  }, [])
+
   return createPortal(
     <div
+      ref={dialogRef}
       className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4"
       onClick={onClose}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Image preview: ${filename}`}
+      tabIndex={-1}
     >
       <button
         onClick={onClose}

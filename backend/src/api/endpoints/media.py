@@ -391,6 +391,22 @@ def create_damage_annotation(
     if not re.match(_claim_id_pattern, claim_id):
         raise HTTPException(status_code=400, detail="Invalid claim ID")
 
+    # Verify the document belongs to this claim before writing
+    try:
+        doc_resp = requests.get(
+            _dp_url(f"documents/{body.document_id}/"),
+            headers=_dp_headers(),
+            timeout=10,
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="Data processor unavailable")
+    if not doc_resp.ok:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc_data = doc_resp.json()
+    expected_channel = f"claims-{claim_id}"
+    if doc_data.get("channel_id") != expected_channel:
+        raise HTTPException(status_code=400, detail="Document does not belong to this claim")
+
     payload = {
         "label_type": body.label_type,
         "label_name": body.label_name or body.label_type.replace("_", " ").title(),
@@ -534,7 +550,12 @@ async def persist_annotation_export(
 
     session = (
         db.query(ClaimsVisibleSession)
-        .filter(ClaimsVisibleSession.id == session_uuid)
+        .filter(
+            ClaimsVisibleSession.id == session_uuid,
+            ClaimsVisibleSession.claim_id == claim_id,
+            ClaimsVisibleSession.username == current_user.username,
+            ClaimsVisibleSession.status == "annotation",
+        )
         .first()
     )
     if not session:
@@ -690,7 +711,7 @@ def _derive_damage_type(result: ClaimsAnnotationResult) -> str:
         if not name:
             continue
         cert = f.get("certainty")
-        if cert is not None and cert > best_cert:
+        if isinstance(cert, (int, float)) and cert > best_cert:
             best_cert = cert
             best_label = name
         freq[name] = freq.get(name, 0) + 1
@@ -717,19 +738,26 @@ async def get_annotation_results(
 ):
     """Return latest annotation results for a claim, derive damage_type.
 
-    Auth is optional: when called with a valid cookie (frontend), the endpoint
-    also posts an #ai message and emits a stream event.  When called without
-    auth (ADK service-to-service), it returns data only.
+    Auth: either a valid user session cookie (frontend) or the internal
+    X-Service-Auth header matching DP_SERVICE_AUTH_SECRET (ADK service-to-service).
+    Anonymous access is not permitted.
     """
     if not re.match(_claim_id_pattern, claim_id):
         raise HTTPException(status_code=400, detail="Invalid claim ID")
 
-    # Optional auth — don't fail if missing
+    # Try user auth first
     current_user: User | None = None
     try:
         current_user = await get_current_user(request, db)
     except HTTPException:
         pass
+
+    # Fall back to explicit internal-service credential
+    if current_user is None:
+        internal_secret = settings.DP_SERVICE_AUTH_SECRET
+        provided = request.headers.get("X-Service-Auth", "")
+        if not internal_secret or not provided or not secrets.compare_digest(provided, internal_secret):
+            raise HTTPException(status_code=401, detail="Authentication required")
 
     query = db.query(ClaimsAnnotationResult).filter(
         ClaimsAnnotationResult.claim_id == claim_id,
@@ -768,30 +796,31 @@ async def get_annotation_results(
         "resolved_at": now.isoformat().replace("+00:00", "Z"),
     }
 
-    # Emit AI session stream event (always — even without auth)
+    # Emit AI session stream event (only for authenticated frontend users)
     stream_msg_id = ""
-    try:
-        client = _get_redis_log()
-        fields: dict[str, str] = {
-            "recorded_at": now.isoformat().replace("+00:00", "Z"),
-            "source": "backend",
-            "kind": "claims_annotation_results",
-            "backend": "n/a",
-            "username": username,
-            "payload": json.dumps(payload, default=str),
-            "session_id": str(result.session_id),
-        }
-        stream_msg_id = client.xadd(
-            settings.AI_SESSION_STREAM_KEY,
-            fields,
-            maxlen=500,
-            approximate=True,
-        )
-        if isinstance(stream_msg_id, bytes):
-            stream_msg_id = stream_msg_id.decode()
-    except Exception:
-        logger.warning("Failed to XADD annotation results event", exc_info=True)
-        stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
+    if current_user:
+        try:
+            client = _get_redis_log()
+            fields: dict[str, str] = {
+                "recorded_at": now.isoformat().replace("+00:00", "Z"),
+                "source": "backend",
+                "kind": "claims_annotation_results",
+                "backend": "n/a",
+                "username": username,
+                "payload": json.dumps(payload, default=str),
+                "session_id": str(result.session_id),
+            }
+            stream_msg_id = client.xadd(
+                settings.AI_SESSION_STREAM_KEY,
+                fields,
+                maxlen=500,
+                approximate=True,
+            )
+            if isinstance(stream_msg_id, bytes):
+                stream_msg_id = stream_msg_id.decode()
+        except Exception:
+            logger.warning("Failed to XADD annotation results event", exc_info=True)
+            stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
 
     # Post #ai message (only when authenticated — skip for ADK service-to-service)
     ai_message_id = None
