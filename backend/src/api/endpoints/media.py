@@ -5,14 +5,14 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from secrets import randbelow
 import re
 import requests
 import io
-from typing import Any, List
+from typing import Any, List, Optional
 from fpdf import FPDF
 
 import redis as _redis
@@ -29,6 +29,7 @@ from src.models.message import Message
 from src.services.websocket_manager import manager
 
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy import desc
 
 logger = logging.getLogger(__name__)
 
@@ -661,6 +662,183 @@ async def persist_annotation_export(
         "debug_event_id": str(debug_event.id),
         "annotation_result_id": str(annotation_result.id),
         "damage_labels": damage_labels,
+        "stream_msg_id": str(stream_msg_id),
+        "ai_message_id": ai_message_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Annotation results — read + derive primary damage_type
+# ---------------------------------------------------------------------------
+
+
+def _derive_damage_type(result: ClaimsAnnotationResult) -> str:
+    """Pick primary damage_type: highest certainty → most frequent → first → unknown."""
+    findings = result.findings or {}
+    fields = findings.get("fields") if isinstance(findings, dict) else []
+    if not isinstance(fields, list) or not fields:
+        labels = list(result.damage_labels or [])
+        return labels[0] if labels else "unknown"
+
+    # Try highest certainty
+    best_label, best_cert = None, -1.0
+    freq: dict[str, int] = {}
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        name = f.get("name") or ""
+        if not name:
+            continue
+        cert = f.get("certainty")
+        if cert is not None and cert > best_cert:
+            best_cert = cert
+            best_label = name
+        freq[name] = freq.get(name, 0) + 1
+
+    if best_label and best_cert > 0:
+        return best_label
+
+    # Fallback: most frequent
+    if freq:
+        return max(freq, key=lambda k: freq[k])
+
+    # Fallback: first damage_label
+    labels = list(result.damage_labels or [])
+    return labels[0] if labels else "unknown"
+
+
+@router.get("/claims/{claim_id}/annotation-results")
+async def get_annotation_results(
+    claim_id: str,
+    request: Request,
+    session_id: Optional[str] = Query(None),
+    document_id: Optional[str] = Query(None),
+    db: DbSession = Depends(get_db),
+):
+    """Return latest annotation results for a claim, derive damage_type.
+
+    Auth is optional: when called with a valid cookie (frontend), the endpoint
+    also posts an #ai message and emits a stream event.  When called without
+    auth (ADK service-to-service), it returns data only.
+    """
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    # Optional auth — don't fail if missing
+    current_user: User | None = None
+    try:
+        current_user = await get_current_user(request, db)
+    except HTTPException:
+        pass
+
+    query = db.query(ClaimsAnnotationResult).filter(
+        ClaimsAnnotationResult.claim_id == claim_id,
+    )
+    if session_id:
+        try:
+            sid = uuid.UUID(session_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid session_id")
+        query = query.filter(ClaimsAnnotationResult.session_id == sid)
+    if document_id:
+        query = query.filter(ClaimsAnnotationResult.document_id == document_id)
+
+    result = query.order_by(desc(ClaimsAnnotationResult.exported_at)).first()
+
+    if not result:
+        return {
+            "status": "no_results",
+            "claim_id": claim_id,
+            "damage_type": None,
+            "damage_labels": [],
+            "findings": {},
+        }
+
+    damage_type = _derive_damage_type(result)
+    now = _utcnow()
+    username = current_user.username if current_user else "system"
+
+    payload = {
+        "claim_id": claim_id,
+        "document_id": result.document_id,
+        "damage_type": damage_type,
+        "damage_labels": list(result.damage_labels or []),
+        "findings": result.findings,
+        "username": username,
+        "resolved_at": now.isoformat().replace("+00:00", "Z"),
+    }
+
+    # Emit AI session stream event (always — even without auth)
+    stream_msg_id = ""
+    try:
+        client = _get_redis_log()
+        fields: dict[str, str] = {
+            "recorded_at": now.isoformat().replace("+00:00", "Z"),
+            "source": "backend",
+            "kind": "claims_annotation_results",
+            "backend": "n/a",
+            "username": username,
+            "payload": json.dumps(payload, default=str),
+            "session_id": str(result.session_id),
+        }
+        stream_msg_id = client.xadd(
+            settings.AI_SESSION_STREAM_KEY,
+            fields,
+            maxlen=500,
+            approximate=True,
+        )
+        if isinstance(stream_msg_id, bytes):
+            stream_msg_id = stream_msg_id.decode()
+    except Exception:
+        logger.warning("Failed to XADD annotation results event", exc_info=True)
+        stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
+
+    # Post #ai message (only when authenticated — skip for ADK service-to-service)
+    ai_message_id = None
+    if current_user:
+        ai_channel = db.query(Channel).filter(Channel.name == "#ai").first()
+        if ai_channel:
+            findings_summary = json.dumps(result.findings, default=str)
+            if len(findings_summary) > 2000:
+                findings_summary = findings_summary[:1997] + "..."
+            content = (
+                f"✅ **ok that is {damage_type} damage** — `{claim_id}`\n"
+                f"Document: `{result.filename or result.document_id}`\n"
+                f"```json\n{findings_summary}\n```"
+            )
+            msg = Message(
+                content=content,
+                sender_id=int(current_user.id),
+                channel_id=int(ai_channel.id),
+            )
+            db.add(msg)
+            db.commit()
+            db.refresh(msg)
+            ai_message_id = int(msg.id)
+
+            await manager.broadcast(
+                {
+                    "type": "message",
+                    "id": ai_message_id,
+                    "content": str(msg.content),
+                    "image_url": None,
+                    "sender_id": int(current_user.id),
+                    "username": str(current_user.username),
+                    "display_name": getattr(current_user, "display_name", None),
+                    "channel_id": int(ai_channel.id),
+                    "timestamp": msg.timestamp.isoformat(),
+                },
+                int(ai_channel.id),
+            )
+
+    return {
+        "status": "ok",
+        "claim_id": claim_id,
+        "damage_type": damage_type,
+        "damage_labels": list(result.damage_labels or []),
+        "findings": result.findings,
+        "document_id": result.document_id,
+        "filename": result.filename,
         "stream_msg_id": str(stream_msg_id),
         "ai_message_id": ai_message_id,
     }

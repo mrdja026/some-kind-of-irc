@@ -72,6 +72,7 @@ _VALID_KINDS = frozenset({
     "calendar_question",
     "calendar_create",
     "claims_annotation_export",
+    "claims_annotation_results",
 })
 _VALID_BACKENDS = frozenset({"crewai", "google_adk", "n/a", "local_vllm"})
 

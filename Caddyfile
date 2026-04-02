@@ -25,6 +25,10 @@
     reverse_proxy ai-service-adk:8004
   }
 
+  # Direct /ai/* path (used by claims Q&A — no prefix strip needed)
+  @ai_direct path /ai/*
+  reverse_proxy @ai_direct ai-service-adk:8004
+
   @ai_health path /healthz
   reverse_proxy @ai_health ai-service-adk:8004
 
@@ -33,6 +37,9 @@
 
   @media_upload path /media/upload
   reverse_proxy @media_upload backend:8002
+
+  @media_pdf path /media/pdf/*
+  reverse_proxy @media_pdf backend:8002
 
   @media_claims path /media/claims/*
   reverse_proxy @media_claims backend:8002

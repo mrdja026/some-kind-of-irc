@@ -215,6 +215,7 @@ export function AIChannel({
   const [fileContents, setFileContents] = useState<Record<string, unknown>>({})
   const [selectedClaimImage, setSelectedClaimImage] = useState<{ url: string; filename: string; claimId?: string; sourceKey?: string } | null>(null)
   const [annotationTarget, setAnnotationTarget] = useState<{ documentId: string; filename: string; claimId: string } | null>(null)
+  const [annotationDocumentId, setAnnotationDocumentId] = useState<string | null>(null)
 
   const {
     data: aiHealth,
@@ -734,8 +735,11 @@ export function AIChannel({
             ].map((item) => item.trim()).filter(Boolean),
           ),
         )
+        const claimWithAnnotation = annotationDocumentId
+          ? { ...claimPayload.claim as Record<string, unknown>, annotation_document_id: annotationDocumentId }
+          : claimPayload.claim
         const result = await generateClaimAnswer(
-          claimPayload.claim,
+          claimWithAnnotation,
           questionText,
           claimHistory,
           nextCount,
@@ -1652,6 +1656,7 @@ export function AIChannel({
           onClose={() => setAnnotationTarget(null)}
           claimId={annotationTarget.claimId}
           onExportPersisted={(result: AnnotationExportResult) => {
+            setAnnotationDocumentId(result.documentId)
             const labels = result.damageLabels.length
               ? result.damageLabels.join(', ')
               : 'none detected'
