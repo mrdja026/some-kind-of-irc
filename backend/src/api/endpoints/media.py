@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from secrets import randbelow
+from secrets import compare_digest, randbelow
 import re
 import requests
 import io
@@ -756,7 +756,7 @@ async def get_annotation_results(
     if current_user is None:
         internal_secret = settings.DP_SERVICE_AUTH_SECRET
         provided = request.headers.get("X-Service-Auth", "")
-        if not internal_secret or not provided or not secrets.compare_digest(provided, internal_secret):
+        if not internal_secret or not provided or not compare_digest(provided, internal_secret):
             raise HTTPException(status_code=401, detail="Authentication required")
 
     query = db.query(ClaimsAnnotationResult).filter(
