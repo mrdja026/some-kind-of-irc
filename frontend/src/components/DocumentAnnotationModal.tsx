@@ -20,7 +20,7 @@ import {
   listTemplates,
   applyTemplate,
 } from '../api/dataProcessor'
-import { API_BASE_URL } from '../api'
+import { API_BASE_URL, createAnnotationSession, persistAnnotationExport } from '../api'
 import type { Annotation, LabelType, OcrStatus, VerificationStatus } from '../types'
 import { BoundingBoxCanvas } from './BoundingBoxCanvas'
 import { AnnotationToolbar } from './AnnotationToolbar'
@@ -28,12 +28,21 @@ import { TemplateSaveModal } from './TemplateSaveModal'
 import { ExportPanel } from './ExportPanel'
 import { ValidationWorkflow } from './ValidationWorkflow'
 
+export interface AnnotationExportResult {
+  claimId: string
+  documentId: string
+  filename: string
+  damageLabels: string[]
+}
+
 interface DocumentAnnotationModalProps {
   documentId: string
   filename: string
   channelId: number
   onClose: () => void
   onStatusChange?: (status: OcrStatus) => void
+  claimId?: string
+  onExportPersisted?: (result: AnnotationExportResult) => void
 }
 
 // Label type colors
@@ -62,6 +71,8 @@ export function DocumentAnnotationModal({
   channelId,
   onClose,
   onStatusChange,
+  claimId,
+  onExportPersisted,
 }: DocumentAnnotationModalProps) {
   const queryClient = useQueryClient()
 
@@ -85,6 +96,49 @@ export function DocumentAnnotationModal({
   const [isExportPanelOpen, setIsExportPanelOpen] = useState(false)
   const [isValidationWorkflowOpen, setIsValidationWorkflowOpen] =
     useState(false)
+  const [annotationSessionId, setAnnotationSessionId] = useState<string | null>(null)
+
+  // Create/reuse annotation session when claimId is available
+  useEffect(() => {
+    if (!claimId) return
+    let cancelled = false
+    createAnnotationSession(claimId)
+      .then((res) => {
+        if (!cancelled) setAnnotationSessionId(res.session_id)
+      })
+      .catch(() => {
+        // non-blocking — session persistence is best-effort
+      })
+    return () => { cancelled = true }
+  }, [claimId])
+
+  // Callback for ExportPanel: persist export to backend, then auto-close
+  const handleExportComplete = useCallback(
+    (_format: string, content: string) => {
+      if (!claimId || !annotationSessionId) return
+      let findings: unknown
+      try {
+        findings = JSON.parse(content)
+      } catch {
+        findings = { raw: content }
+      }
+      persistAnnotationExport(claimId, annotationSessionId, documentId, findings, filename)
+        .then((res) => {
+          onExportPersisted?.({
+            claimId,
+            documentId,
+            filename,
+            damageLabels: res.damage_labels ?? [],
+          })
+          onClose()
+        })
+        .catch(() => {
+          // Still close — export already downloaded locally
+          onClose()
+        })
+    },
+    [claimId, annotationSessionId, documentId, filename, onClose, onExportPersisted],
+  )
 
   // Fetch document details
   const { data: document, isLoading: isLoadingDocument } = useQuery({
@@ -529,6 +583,7 @@ export function DocumentAnnotationModal({
         annotations={annotations}
         isOpen={isExportPanelOpen}
         onClose={() => setIsExportPanelOpen(false)}
+        onExportComplete={claimId ? handleExportComplete : undefined}
       />
 
       {/* Validation Workflow */}

@@ -24,6 +24,7 @@ interface ExportPanelProps {
   annotations: Annotation[]
   onClose: () => void
   isOpen: boolean
+  onExportComplete?: (format: ExportFormat, content: string) => void
 }
 
 // Field validation status
@@ -134,6 +135,7 @@ export function ExportPanel({
   annotations,
   onClose,
   isOpen,
+  onExportComplete,
 }: ExportPanelProps) {
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('json')
   const [showPreview, setShowPreview] = useState(true)
@@ -162,17 +164,28 @@ export function ExportPanel({
   const exportMutation = useMutation({
     mutationFn: (format: ExportFormat) => exportDocument(documentId, format),
     onSuccess: (data) => {
-      // Set preview content
-      setPreviewContent(data.content)
+      // Data-processor JSON format returns the raw object (no .content wrapper);
+      // CSV returns {format, content}. Normalize to a string for all paths.
+      const contentStr =
+        typeof data.content === 'string'
+          ? data.content
+          : JSON.stringify(data, null, 2)
+
+      setPreviewContent(contentStr)
 
       // Download file
-      const blob = new Blob([data.content], { type: 'text/plain' })
+      const ext = selectedFormat === 'json' ? '.json' : selectedFormat === 'csv' ? '.csv' : '.sql'
+      const downloadName = data.filename || `${filename.replace(/\.[^.]+$/, '')}${ext}`
+      const blob = new Blob([contentStr], { type: 'text/plain' })
       const url = URL.createObjectURL(blob)
       const a = window.document.createElement('a')
       a.href = url
-      a.download = data.filename
+      a.download = downloadName
       a.click()
       URL.revokeObjectURL(url)
+
+      // Notify parent for backend persistence (fire-and-forget)
+      onExportComplete?.(selectedFormat, contentStr)
     },
   })
 

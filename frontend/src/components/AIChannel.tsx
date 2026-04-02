@@ -22,6 +22,7 @@ import { Bot, Sparkles, Mail, ArrowUp, BookOpen, Calendar, Inbox, Clock, Flag, C
 import { InferenceTimeline } from './InferenceTimeline'
 import { ClaimImagePopup } from './ClaimImagePopup'
 import { DocumentAnnotationModal } from './DocumentAnnotationModal'
+import type { AnnotationExportResult } from './DocumentAnnotationModal'
 
 interface AIChannelProps {
   channelId: number
@@ -1649,6 +1650,25 @@ export function AIChannel({
           filename={annotationTarget.filename}
           channelId={channelId}
           onClose={() => setAnnotationTarget(null)}
+          claimId={annotationTarget.claimId}
+          onExportPersisted={(result: AnnotationExportResult) => {
+            const labels = result.damageLabels.length
+              ? result.damageLabels.join(', ')
+              : 'none detected'
+            setResponses((prev) => [
+              ...prev,
+              {
+                id: Date.now(),
+                query: '',
+                response:
+                  `📋 **Annotation export saved** for \`${result.claimId}\`\n` +
+                  `Document: \`${result.filename}\`\n` +
+                  `Damage labels: **${labels}**`,
+                agent: 'Claims Agent',
+                mode: 'agent_message',
+              },
+            ])
+          }}
         />
       )}
     </div>

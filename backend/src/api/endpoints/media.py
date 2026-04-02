@@ -1,3 +1,10 @@
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -8,9 +15,22 @@ import io
 from typing import Any, List
 from fpdf import FPDF
 
+import redis as _redis
+
 from src.core.config import settings
+from src.core.database import get_db
 from src.api.endpoints.auth import get_current_user
 from src.models.user import User
+from src.models.claims_visible import ClaimsVisibleSession
+from src.models.claims_debug import ClaimsDebugEvent
+from src.models.claims_annotation_result import ClaimsAnnotationResult
+from src.models.channel import Channel
+from src.models.message import Message
+from src.services.websocket_manager import manager
+
+from sqlalchemy.orm import Session as DbSession
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -428,3 +448,219 @@ def list_damage_annotations(
             annotations.append(ann)
 
     return {"claim_id": claim_id, "annotations": annotations, "count": len(annotations)}
+
+
+# ---------------------------------------------------------------------------
+# Annotation session & export persistence
+# ---------------------------------------------------------------------------
+
+_redis_log_client: _redis.Redis | None = None
+
+
+def _get_redis_log() -> _redis.Redis:
+    global _redis_log_client
+    if _redis_log_client is None:
+        url = settings.REDIS_LOG_URL.strip()
+        if not url:
+            raise HTTPException(status_code=503, detail="Redis log URL not configured")
+        _redis_log_client = _redis.from_url(url, decode_responses=True)
+    return _redis_log_client
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@router.post("/claims/{claim_id}/annotation-session")
+def create_annotation_session(
+    claim_id: str,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    """Create or reuse a claims annotation session for a claim and user."""
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    existing = (
+        db.query(ClaimsVisibleSession)
+        .filter(
+            ClaimsVisibleSession.claim_id == claim_id,
+            ClaimsVisibleSession.username == current_user.username,
+            ClaimsVisibleSession.status == "annotation",
+        )
+        .first()
+    )
+    if existing:
+        return {"session_id": str(existing.id), "created": False}
+
+    session = ClaimsVisibleSession(
+        id=uuid.uuid4(),
+        claim_id=claim_id,
+        username=current_user.username,
+        status="annotation",
+        flags={"source": "annotation_export"},
+        turn_count=0,
+        created_at=_utcnow(),
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {"session_id": str(session.id), "created": True}
+
+
+class AnnotationExportRequest(BaseModel):
+    session_id: str
+    document_id: str
+    findings: Any
+    source_filename: str | None = None
+
+
+@router.post("/claims/{claim_id}/annotation-export")
+async def persist_annotation_export(
+    claim_id: str,
+    body: AnnotationExportRequest,
+    current_user: User = Depends(get_current_user),
+    db: DbSession = Depends(get_db),
+):
+    """Persist annotation export to claims_debug_events, emit AI stream event, post #ai message."""
+    if not re.match(_claim_id_pattern, claim_id):
+        raise HTTPException(status_code=400, detail="Invalid claim ID")
+
+    try:
+        session_uuid = uuid.UUID(body.session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+
+    session = (
+        db.query(ClaimsVisibleSession)
+        .filter(ClaimsVisibleSession.id == session_uuid)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Annotation session not found")
+
+    now = _utcnow()
+    payload = {
+        "claim_id": claim_id,
+        "document_id": body.document_id,
+        "source_filename": body.source_filename,
+        "findings": body.findings,
+        "username": current_user.username,
+        "exported_at": now.isoformat().replace("+00:00", "Z"),
+    }
+
+    # 1) Emit AI session stream event via Redis XADD
+    stream_msg_id = ""
+    try:
+        client = _get_redis_log()
+        fields: dict[str, str] = {
+            "recorded_at": now.isoformat().replace("+00:00", "Z"),
+            "source": "backend",
+            "kind": "claims_annotation_export",
+            "backend": "n/a",
+            "username": current_user.username,
+            "payload": json.dumps(payload, default=str),
+            "session_id": str(session_uuid),
+        }
+        stream_msg_id = client.xadd(
+            settings.AI_SESSION_STREAM_KEY,
+            fields,
+            maxlen=500,
+            approximate=True,
+        )
+        if isinstance(stream_msg_id, bytes):
+            stream_msg_id = stream_msg_id.decode()
+    except Exception:
+        logger.warning("Failed to XADD annotation export event", exc_info=True)
+        stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
+
+    # 2) Write claims_debug_events row
+    debug_event = ClaimsDebugEvent(
+        id=uuid.uuid4(),
+        session_id=session_uuid,
+        stream_msg_id=str(stream_msg_id),
+        event_kind="claims_annotation_export",
+        stage="export",
+        payload=payload,
+        request_id=None,
+        correlation_id=None,
+        recorded_at=now,
+        created_at=now,
+    )
+    db.add(debug_event)
+
+    # 3) Update session turn_count as a proxy for export count
+    session.turn_count = (session.turn_count or 0) + 1
+
+    # 4) Write claims_annotation_results row (business table)
+    damage_labels: list[str] = []
+    if isinstance(body.findings, dict):
+        fields = body.findings.get("fields") or []
+        if isinstance(fields, list):
+            for f in fields:
+                if isinstance(f, dict):
+                    name = f.get("name") or f.get("label_name") or ""
+                    if name:
+                        damage_labels.append(name)
+                elif isinstance(f, str):
+                    damage_labels.append(f)
+    annotation_result = ClaimsAnnotationResult(
+        id=uuid.uuid4(),
+        session_id=session_uuid,
+        claim_id=claim_id,
+        document_id=body.document_id,
+        filename=body.source_filename,
+        damage_labels=damage_labels,
+        findings=body.findings if body.findings else {},
+        exported_by=current_user.username,
+        exported_at=now,
+    )
+    db.add(annotation_result)
+
+    # 5) Post #ai message with FINDINGS JSON and broadcast via WebSocket
+    ai_channel = db.query(Channel).filter(Channel.name == "#ai").first()
+    ai_message_id = None
+    if ai_channel:
+        findings_summary = json.dumps(body.findings, default=str)
+        if len(findings_summary) > 2000:
+            findings_summary = findings_summary[:1997] + "..."
+        content = (
+            f"📋 **Annotation Export** — `{claim_id}`\n"
+            f"Document: `{body.source_filename or body.document_id}`\n"
+            f"```json\n{findings_summary}\n```"
+        )
+        msg = Message(
+            content=content,
+            sender_id=int(current_user.id),
+            channel_id=int(ai_channel.id),
+        )
+        db.add(msg)
+
+    db.commit()
+
+    if ai_channel:
+        db.refresh(msg)
+        ai_message_id = int(msg.id)
+        await manager.broadcast(
+            {
+                "type": "message",
+                "id": ai_message_id,
+                "content": str(msg.content),
+                "image_url": None,
+                "sender_id": int(current_user.id),
+                "username": str(current_user.username),
+                "display_name": getattr(current_user, "display_name", None),
+                "channel_id": int(ai_channel.id),
+                "timestamp": msg.timestamp.isoformat(),
+            },
+            int(ai_channel.id),
+        )
+
+    return {
+        "status": "ok",
+        "debug_event_id": str(debug_event.id),
+        "annotation_result_id": str(annotation_result.id),
+        "damage_labels": damage_labels,
+        "stream_msg_id": str(stream_msg_id),
+        "ai_message_id": ai_message_id,
+    }

@@ -690,3 +690,54 @@ export const fetchClaimAnnotations = async (
   }
   return response.json();
 };
+
+// ---------------------------------------------------------------------------
+// Annotation session & export persistence
+// ---------------------------------------------------------------------------
+
+export const createAnnotationSession = async (
+  claimId: string,
+): Promise<{ session_id: string; created: boolean }> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/annotation-session`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create annotation session' }));
+    throw new Error(error.detail || 'Failed to create annotation session');
+  }
+  return response.json();
+};
+
+export const persistAnnotationExport = async (
+  claimId: string,
+  sessionId: string,
+  documentId: string,
+  findings: unknown,
+  sourceFilename?: string,
+): Promise<{
+  status: string
+  debug_event_id: string
+  annotation_result_id: string
+  damage_labels: string[]
+  stream_msg_id: string
+  ai_message_id: number | null
+}> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/annotation-export`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      document_id: documentId,
+      findings,
+      source_filename: sourceFilename ?? null,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to persist annotation export' }));
+    throw new Error(error.detail || 'Failed to persist annotation export');
+  }
+  return response.json();
+};
