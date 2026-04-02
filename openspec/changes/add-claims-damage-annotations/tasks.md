@@ -1,0 +1,13 @@
+## 1. Implementation
+- [x] 1.1 Confirm backend route naming for claim damage annotations
+- [x] 1.2 Add document source reference fields (source_bucket, source_key, source_parent_key)
+- [x] 1.3 Add damage label types and review fields (verification_status, review_value, certainty)
+- [x] 1.4 Implement /api/documents/from-minio endpoint (idempotent by source key)
+- [x] 1.5 Add service-auth bypass for internal calls
+- [x] 1.6 Update serializers and export to include review fields
+- [x] 1.7 Add migrations and data-processor tests
+- [x] 1.8 Add backend proxy endpoints for claim documents and damage annotations
+- [x] 1.9 Add frontend claim annotation entry point and modal wiring
+- [x] 1.10 Enable damage labels in draw mode and set human defaults
+- [x] 1.11 Add ADK tool calling backend and log tool output
+- [x] 1.12 Run lint/tests and deploy locally

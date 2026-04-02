@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from pydantic import BaseModel, Field
 
 from config import settings
@@ -499,6 +500,73 @@ def notes_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def damage_annotations(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch damage annotations for the claim from the backend proxy."""
+    claim_id = payload.get("claim_id") or ""
+    if not claim_id:
+        return {"error": "No claim_id in payload", "annotations": []}
+
+    backend_url = settings.BACKEND_URL.rstrip("/")
+    try:
+        resp = httpx.get(
+            f"{backend_url}/media/claims/{claim_id}/damage-annotations",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        annotations = data.get("annotations", [])
+        summary = {}
+        for ann in annotations:
+            lt = ann.get("label_type", "unknown")
+            summary[lt] = summary.get(lt, 0) + 1
+        return {
+            "claim_id": claim_id,
+            "annotation_count": len(annotations),
+            "damage_types": summary,
+            "annotations": annotations[:20],
+        }
+    except Exception as exc:
+        logger.warning("damage_annotations fetch failed: %s", exc)
+        return {"error": str(exc), "annotations": [], "claim_id": claim_id}
+
+
+def claims_annotation_results(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch stored annotation export results for a claim from the backend."""
+    claim_id = payload.get("claim_id") or ""
+    if not claim_id:
+        return {"error": "No claim_id in payload", "damage_type": None}
+
+    document_id = payload.get("annotation_document_id") or ""
+    backend_url = settings.BACKEND_URL.rstrip("/")
+    params: Dict[str, str] = {}
+    if document_id:
+        params["document_id"] = document_id
+
+    try:
+        resp = httpx.get(
+            f"{backend_url}/media/claims/{claim_id}/annotation-results",
+            params=params,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if data.get("status") == "no_results":
+            return {"claim_id": claim_id, "damage_type": None, "error": "no results"}
+
+        return {
+            "claim_id": claim_id,
+            "damage_type": data.get("damage_type"),
+            "damage_labels": data.get("damage_labels", []),
+            "annotation_count": len(data.get("damage_labels", [])),
+            "document_id": data.get("document_id"),
+            "filename": data.get("filename"),
+        }
+    except Exception as exc:
+        logger.warning("claims_annotation_results fetch failed: %s", exc)
+        return {"error": str(exc), "damage_type": None, "claim_id": claim_id}
+
+
 TOOL_REGISTRY = {
     "status_check": status_check,
     "timeline_check": timeline_check,
@@ -506,6 +574,8 @@ TOOL_REGISTRY = {
     "documents_summary": documents_summary,
     "financials_summary": financials_summary,
     "notes_summary": notes_summary,
+    "damage_annotations": damage_annotations,
+    "claims_annotation_results": claims_annotation_results,
 }
 
 

@@ -467,7 +467,7 @@ async def generate_claims_answer(
 
     candidate_a_tools = build_tool_calls(
         request.claim,
-        ["status_check", "timeline_check", "notes_summary"],
+        ["status_check", "timeline_check", "notes_summary", "claims_annotation_results"],
         stage="candidate_a",
     )
     tool_history.extend(candidate_a_tools)
@@ -649,7 +649,7 @@ async def generate_claims_answer(
         for attempt in range(1, max_attempts + 1):
             followup_tools_a = build_tool_calls(
                 request.claim,
-                ["status_check", "timeline_check"],
+                ["status_check", "timeline_check", "claims_annotation_results"],
                 stage="followup_candidate_a",
                 attempt=attempt,
             )
