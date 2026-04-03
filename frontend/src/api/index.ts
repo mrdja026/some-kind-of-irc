@@ -65,16 +65,18 @@ const ADK_API_BASE_URL =
           }
           return value;
         };
+        const isLoopbackUrl = (value: string): boolean =>
+          value.includes('localhost') || value.includes('127.0.0.1');
         const explicit = import.meta.env.VITE_PUBLIC_ADK_API_URL?.trim();
         if (explicit) {
-          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
+          if (isLoopbackUrl(explicit) && !isLocalHost) {
             return origin;
           }
           return normalizeLocalAdkUrl(explicit);
         }
         const browserAdk = import.meta.env.VITE_ADK_API_URL?.trim();
         if (browserAdk) {
-          if (browserAdk.includes('localhost') && window.location.hostname !== 'localhost') {
+          if (isLoopbackUrl(browserAdk) && !isLocalHost) {
             return origin;
           }
           return normalizeLocalAdkUrl(browserAdk);

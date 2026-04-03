@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # Backend integration (calendar tool calls)
     BACKEND_URL: str = "http://backend:8002"
 
+    # Inter-service auth secret (must match backend DP_SERVICE_AUTH_SECRET)
+    DP_SERVICE_AUTH_SECRET: str = ""
+
     # Postgres persistence for completed claims sessions.
     # Empty string disables persistence.
     DATABASE_URL: str = _build_database_url()

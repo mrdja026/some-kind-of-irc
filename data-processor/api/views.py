@@ -158,11 +158,19 @@ class DocumentFromMinioView(APIView):
         if not original_filename:
             original_filename = source_key.rsplit("/", 1)[-1] if "/" in source_key else source_key
 
+        _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".svg"}
+        ext = Path(original_filename).suffix.lower()
+        if ext == ".pdf":
+            inferred_type = "pdf"
+        elif ext in _image_exts:
+            inferred_type = "image"
+        else:
+            inferred_type = "other"
         doc = Document(
             channel_id=channel_id,
             uploaded_by=uploaded_by,
             original_filename=original_filename,
-            file_type="image",
+            file_type=inferred_type,
             image_url=image_url,
             source_bucket=source_bucket,
             source_key=source_key,

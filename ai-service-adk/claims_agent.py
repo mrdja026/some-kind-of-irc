@@ -543,9 +543,13 @@ def claims_annotation_results(payload: Dict[str, Any]) -> Dict[str, Any]:
         params["document_id"] = document_id
 
     try:
+        headers: Dict[str, str] = {}
+        if settings.DP_SERVICE_AUTH_SECRET:
+            headers["X-Service-Auth"] = settings.DP_SERVICE_AUTH_SECRET
         resp = httpx.get(
             f"{backend_url}/media/claims/{claim_id}/annotation-results",
             params=params,
+            headers=headers,
             timeout=10,
         )
         resp.raise_for_status()

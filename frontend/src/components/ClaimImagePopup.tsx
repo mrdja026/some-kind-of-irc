@@ -28,7 +28,10 @@ export function ClaimImagePopup({ imageUrl, filename, onClose, onAnnotate }: Cla
       tabIndex={-1}
     >
       <button
-        onClick={onClose}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
         className="absolute top-4 right-4 p-2 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors z-10 min-w-[44px] min-h-[44px] flex items-center justify-center"
         aria-label="Close"
       >

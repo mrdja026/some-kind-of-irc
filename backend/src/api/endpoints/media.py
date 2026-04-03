@@ -12,6 +12,7 @@ from secrets import compare_digest, randbelow
 import re
 import requests
 import io
+import urllib.parse
 from typing import Any, List, Optional
 from fpdf import FPDF
 
@@ -286,9 +287,10 @@ def get_claim_file(
         raise HTTPException(status_code=400, detail="Invalid claim ID")
 
     storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
+    encoded_filename = urllib.parse.quote(filename, safe="/")
     try:
         response = requests.get(
-            f"{storage_url}/claims/{claim_id}/files/{filename}",
+            f"{storage_url}/claims/{claim_id}/files/{encoded_filename}",
             cookies=request.cookies,
             timeout=10,
         )
@@ -400,9 +402,14 @@ def create_damage_annotation(
         )
     except requests.RequestException:
         raise HTTPException(status_code=503, detail="Data processor unavailable")
-    if not doc_resp.ok:
+    if doc_resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Document not found")
-    doc_data = doc_resp.json()
+    if not doc_resp.ok:
+        raise HTTPException(status_code=502, detail="Failed to verify document")
+    try:
+        doc_data = doc_resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Invalid data processor response")
     expected_channel = f"claims-{claim_id}"
     if doc_data.get("channel_id") != expected_channel:
         raise HTTPException(status_code=400, detail="Document does not belong to this claim")
