@@ -15,6 +15,10 @@ from src.api.endpoints.inference_logs import router as inference_logs_router
 from src.services.websocket_manager import manager
 from src.services.irc_logger import log_privmsg
 from src.services.event_subscriber import start_event_subscriber, stop_event_subscriber
+from src.services.ai_event_consumer import (
+    start_ai_event_consumer,
+    stop_ai_event_consumer,
+)
 from src.models import Channel
 from contextlib import asynccontextmanager
 
@@ -121,9 +125,13 @@ async def lifespan(app: FastAPI):
     # Start Redis event subscriber for auto-join functionality
     start_event_subscriber()
 
+    # Start AI event stream consumer for persisting inference events to Postgres
+    start_ai_event_consumer()
+
     yield
 
-    # Shutdown: stop event subscriber
+    # Shutdown: stop consumers
+    stop_ai_event_consumer()
     stop_event_subscriber()
 
 

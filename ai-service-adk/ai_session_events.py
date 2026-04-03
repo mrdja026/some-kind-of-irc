@@ -1,4 +1,8 @@
-"""Append annotated Gmail AI events to redis-log stream (ADK service)."""
+"""Append annotated AI events to redis-log stream (ADK service).
+
+Supports AI inference logging with caller attribution, tool_calls, and
+reason taxonomy per the ai-inference-events schema.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 import redis.asyncio as redis_async
 
@@ -15,6 +19,31 @@ from config import settings
 LOG = logging.getLogger(__name__)
 
 _ai_log: Optional[redis_async.Redis] = None
+
+
+class CallerInfo(TypedDict, total=False):
+    """Agent caller attribution metadata."""
+
+    agent: (
+        str  # Logical agent identifier (candidate_a, judge, gmail_summary_judge, etc.)
+    )
+    role: str  # Human-readable role name
+    stage: str  # Stage label (candidate_a, followup_judge, etc.)
+    attempt: int  # Attempt number for followup loops
+    model: str  # Model identifier, if available
+
+
+class ToolCall(TypedDict, total=False):
+    """Tool invocation record."""
+
+    tool_name: str
+    args: Any
+    result: Any
+    error: str
+    elapsed_ms: int
+    reason: str  # clarity, factual, consistency, coverage, timeline, financial, policy, other
+    reason_detail: str  # Required when reason=other
+    caller: CallerInfo  # Optional per-call caller override
 
 
 def _client() -> Optional[redis_async.Redis]:
@@ -43,7 +72,31 @@ async def append_ai_session_event(
     correlation_id: Optional[str] = None,
     request_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    caller: Optional[CallerInfo] = None,
+    tool_calls: Optional[list[ToolCall]] = None,
+    question: Optional[str] = None,
+    questions: Optional[list[str]] = None,
+    reasoning: Optional[str] = None,
+    plan: Optional[dict[str, Any]] = None,
 ) -> None:
+    """Append an AI inference event to the Redis stream.
+
+    Args:
+        kind: Event type (claims_candidate, gmail_step_judge, tool_invoked, etc.)
+        username: Authenticated user who triggered the request
+        payload: Full event payload (raw or structured request/response data)
+        source: Service that emitted the event (ai_service_adk, backend, etc.)
+        backend: AI backend (google_adk, crewai, local_vllm, n/a)
+        correlation_id: Optional correlation ID from request headers
+        request_id: Optional request ID for tracing
+        session_id: Session ID for multi-step correlation
+        caller: Agent caller attribution (agent, role, stage, attempt, model)
+        tool_calls: List of tool invocations with args/results/reason taxonomy
+        question: Single question string (for followup events)
+        questions: List of question strings (for multi-question events)
+        reasoning: Agent reasoning string
+        plan: Agent plan or step list
+    """
     client = _client()
     if client is None:
         return
@@ -63,6 +116,20 @@ async def append_ai_session_event(
         fields["request_id"] = request_id
     if session_id:
         fields["session_id"] = session_id
+
+    # New fields for AI inference logging
+    if caller:
+        fields["caller"] = json.dumps(caller, default=str)
+    if tool_calls:
+        fields["tool_calls"] = json.dumps(tool_calls, default=str)
+    if question:
+        fields["question"] = question
+    if questions:
+        fields["questions"] = json.dumps(questions)
+    if reasoning:
+        fields["reasoning"] = reasoning
+    if plan:
+        fields["plan"] = json.dumps(plan, default=str)
 
     try:
         await client.xadd(

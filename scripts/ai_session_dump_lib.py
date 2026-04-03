@@ -1,6 +1,14 @@
 """Build merged AI session dump JSON (Caddy warn/error stream + AI session stream).
 
 Shared by redis-log-sink graceful shutdown and scripts/dump-ai-data-session.py.
+
+Schema version 2.0.0 adds:
+- caller: Agent attribution (agent, role, stage, attempt, model)
+- tool_calls: List of tool invocations with args, results, reason taxonomy
+- question/questions: Single question or list of questions
+- reasoning: Agent reasoning string
+- plan: Agent plan or step list
+- New event kinds for claims and Gmail multi-agent steps
 """
 
 from __future__ import annotations
@@ -12,7 +20,7 @@ from typing import Any, Mapping
 
 import redis
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 DEFAULT_CADDY_STREAM_KEY = "caddy:warn_error_logs"
 DEFAULT_AI_STREAM_KEY = "ai:session_events"
@@ -36,7 +44,9 @@ def _parse_recorded_sort_key(recorded_at: str) -> tuple[float, str]:
         return (0.0, recorded_at)
 
 
-def normalize_caddy_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, Any] | None:
+def normalize_caddy_entry(
+    event_id: str, fields: Mapping[str, str]
+) -> dict[str, Any] | None:
     ts = fields.get("ts") or datetime.now(timezone.utc).isoformat()
     payload: dict[str, Any] = {
         "ts": fields.get("ts", ts),
@@ -56,29 +66,54 @@ def normalize_caddy_entry(event_id: str, fields: Mapping[str, str]) -> dict[str,
 
 
 _VALID_SOURCES = frozenset({"caddy", "ai_service", "ai_service_adk", "backend"})
-_VALID_KINDS = frozenset({
-    "http_warn_error",
-    "gmail_summary",
-    "gmail_questions",
-    "generic_ai",
-    "gmail_step_questions",
-    "gmail_step_summary_action",
-    "gmail_step_summary_insight",
-    "gmail_step_classification",
-    "gmail_step_judge",
-    "local_qa_greeting",
-    "local_qa_rejected",
-    "local_qa_answer",
-    "calendar_question",
-    "calendar_create",
-    "claims_annotation_export",
-    "claims_annotation_results",
-})
+_VALID_KINDS = frozenset(
+    {
+        # HTTP/Caddy events
+        "http_warn_error",
+        # Gmail events
+        "gmail_summary",
+        "gmail_questions",
+        "gmail_step_questions",
+        "gmail_step_summary_action",
+        "gmail_step_summary_insight",
+        "gmail_step_classification",
+        "gmail_step_judge",
+        "gmail_step_action",
+        "gmail_step_insight",
+        "gmail_step_triage",
+        # Calendar events
+        "calendar_question",
+        "calendar_create",
+        # Local Q&A events
+        "local_qa_greeting",
+        "local_qa_rejected",
+        "local_qa_answer",
+        # Claims events
+        "claims_truth_check",
+        "claims_candidate",
+        "claims_judge",
+        "claims_followup_candidate",
+        "claims_followup_judge",
+        "claims_followup",
+        "claims_annotation_export",
+        "claims_annotation_results",
+        # Tool invocation events
+        "tool_invoked",
+        # Generic fallback
+        "generic_ai",
+    }
+)
 _VALID_BACKENDS = frozenset({"crewai", "google_adk", "n/a", "local_vllm"})
 
 
-def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, Any] | None:
-    """Normalize AI stream fields written by ai-service / ai-service-adk."""
+def normalize_ai_entry(
+    event_id: str, fields: Mapping[str, str]
+) -> dict[str, Any] | None:
+    """Normalize AI stream fields written by ai-service / ai-service-adk.
+
+    Handles both legacy format (event_json/body) and current format (payload field).
+    Extracts new fields: caller, tool_calls, question(s), reasoning, plan, session_id.
+    """
     if "payload" not in fields:
         raw = fields.get("event_json") or fields.get("body")
         if not raw:
@@ -89,7 +124,9 @@ def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, An
             return None
         if not isinstance(inner, dict):
             return None
-        recorded_at = str(inner.get("recorded_at") or datetime.now(timezone.utc).isoformat())
+        recorded_at = str(
+            inner.get("recorded_at") or datetime.now(timezone.utc).isoformat()
+        )
         source = str(inner.get("source") or "")
         kind = str(inner.get("kind") or "")
         backend = str(inner.get("backend") or "")
@@ -107,10 +144,12 @@ def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, An
         u = inner.get("username")
         if isinstance(u, str) and u:
             ev["username"] = u
-        for opt in ("correlation_id", "request_id"):
+        for opt in ("correlation_id", "request_id", "session_id"):
             v = inner.get(opt)
             if isinstance(v, str) and v:
                 ev[opt] = v
+        # Extract new fields from inner
+        _extract_new_fields(ev, inner)
         if not (
             ev["source"] in _VALID_SOURCES
             and ev["kind"] in _VALID_KINDS
@@ -138,10 +177,12 @@ def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, An
     username = fields.get("username")
     if isinstance(username, str) and username:
         ev["username"] = username
-    for opt in ("correlation_id", "request_id"):
+    for opt in ("correlation_id", "request_id", "session_id"):
         v = fields.get(opt)
         if isinstance(v, str) and v:
             ev[opt] = v
+    # Extract new fields from stream fields
+    _extract_new_fields(ev, fields)
     if not (
         ev["source"] in _VALID_SOURCES
         and ev["kind"] in _VALID_KINDS
@@ -149,6 +190,59 @@ def normalize_ai_entry(event_id: str, fields: Mapping[str, str]) -> dict[str, An
     ):
         return None
     return ev
+
+
+def _extract_new_fields(ev: dict[str, Any], fields: Mapping[str, Any]) -> None:
+    """Extract caller, tool_calls, question(s), reasoning, plan from fields."""
+    # caller: JSONB agent attribution
+    caller = fields.get("caller")
+    if isinstance(caller, str):
+        try:
+            caller = json.loads(caller)
+        except json.JSONDecodeError:
+            caller = None
+    if isinstance(caller, dict) and caller:
+        ev["caller"] = caller
+
+    # tool_calls: JSONB array of tool invocations
+    tool_calls = fields.get("tool_calls")
+    if isinstance(tool_calls, str):
+        try:
+            tool_calls = json.loads(tool_calls)
+        except json.JSONDecodeError:
+            tool_calls = None
+    if isinstance(tool_calls, list) and tool_calls:
+        ev["tool_calls"] = tool_calls
+
+    # question: single question string
+    question = fields.get("question")
+    if isinstance(question, str) and question:
+        ev["question"] = question
+
+    # questions: array of question strings
+    questions = fields.get("questions")
+    if isinstance(questions, str):
+        try:
+            questions = json.loads(questions)
+        except json.JSONDecodeError:
+            questions = None
+    if isinstance(questions, list) and questions:
+        ev["questions"] = questions
+
+    # reasoning: agent reasoning string
+    reasoning = fields.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        ev["reasoning"] = reasoning
+
+    # plan: JSONB agent plan or step list
+    plan = fields.get("plan")
+    if isinstance(plan, str):
+        try:
+            plan = json.loads(plan)
+        except json.JSONDecodeError:
+            plan = None
+    if isinstance(plan, dict) and plan:
+        ev["plan"] = plan
 
 
 def _collect_sources(events: list[dict[str, Any]]) -> list[str]:
@@ -196,7 +290,9 @@ def build_session_dump_document(
     ai_stream_key: str,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    caddy_events = read_stream(client, caddy_stream_key, normalize=normalize_caddy_entry)
+    caddy_events = read_stream(
+        client, caddy_stream_key, normalize=normalize_caddy_entry
+    )
     ai_events = read_stream(client, ai_stream_key, normalize=normalize_ai_entry)
     merged = caddy_events + ai_events
     merged.sort(
@@ -211,9 +307,7 @@ def build_session_dump_document(
 
     doc: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "exported_at": datetime.now(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "sources": sources,
         "events": merged,
     }

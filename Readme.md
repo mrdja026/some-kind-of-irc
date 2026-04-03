@@ -28,6 +28,47 @@ A real-time IRC-like chat application with FastAPI, Django, React, Postgres, Red
 - Docker
 - K8S/K3S Ingress magic for network (works on http with newest feature on tag 0.0.2) versions after that do not have any feature except chat 
 
+# Observing inference and tool calls 
+- No toool calls for gmail sumarizier/schedule meeting
+- Tool calls only for deep claim with anotations, but it is not necesery
+    - Tools are mostly mocked or dynamic pulling out of the json obj.param1.param2[0].description or the like
+
+pgweb http://localhost:9991/# "ai_inference_events"
+```sql 
+select recorded_at,
+       kind,
+       caller->>'agent' as agent,
+       caller->>'stage' as stage,
+       caller->>'attempt' as attempt,
+       question,
+       reasoning
+from ai_inference_events
+where kind in (
+  'claims_candidate',
+  'claims_judge',
+  'claims_followup_candidate',
+  'claims_followup_judge',
+  'claims_followup'
+)
+order by recorded_at desc
+limit 50;
+
+select recorded_at,
+       kind,
+       caller->>'agent' as agent,
+       question as top_level_question,
+       payload->'request'->>'question' as request_question,
+       payload->'response'->>'question' as response_question,
+       reasoning,
+       payload->'response'->>'reasoning' as response_reasoning,
+       payload->'findings'->>'reasoning' as findings_reasoning
+from ai_inference_events
+where kind like 'claims_%'
+order by recorded_at desc
+limit 50;
+```
+
+
 # How to build (Linux supported only, Data processor is tricky to build on windows due deps to opencv)
 
 - chmod +x ./deploy_local.sh
@@ -75,6 +116,12 @@ Session event fields: `recorded_at`, `source`, `kind`, `backend`, `username`, `p
 
 ```bash
 ANTHROPIC_API_KEY=your_key ./deploy-local.sh --build
+```
+
+Required local secret: set `DP_SERVICE_AUTH_SECRET` (internal service auth), either in `.env.local` or inline:
+
+```bash
+DP_SERVICE_AUTH_SECRET=dev-secret ./deploy-local.sh --build
 ```
 
 `deploy-local.sh` now runs this flow:

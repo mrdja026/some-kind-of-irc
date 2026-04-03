@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/openspec/ai-inference-events.schema.json",
+  "title": "AI inference event dump",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "exported_at", "sources", "events"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Format version of this document (e.g. 2.0.0)."
+    },
+    "exported_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC time when the dump was produced."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Optional session identifier for the dump."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["caddy", "ai_service", "ai_service_adk", "backend"]
+      },
+      "uniqueItems": true
+    },
+    "annotations": {
+      "type": "object",
+      "description": "Optional deployment metadata (image tags, git sha, etc.).",
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/aiEvent" }
+    }
+  },
+  "$defs": {
+    "caller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "stage"],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Logical agent identifier (candidate_a, judge, gmail_summary_judge, etc.)."
+        },
+        "role": {
+          "type": "string",
+          "description": "Human-readable role name for the agent."
+        },
+        "stage": {
+          "type": "string",
+          "description": "Stage label for the step (candidate_a, followup_judge, etc.)."
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Attempt number for followup loops."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier, if available."
+        }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_name", "args", "result", "reason"],
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "args": {
+          "type": ["object", "array", "string", "number", "boolean", "null"],
+          "description": "Serialized tool arguments."
+        },
+        "result": {
+          "type": ["object", "array", "string", "number", "boolean", "null"],
+          "description": "Tool output payload."
+        },
+        "error": {
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "clarity",
+            "factual",
+            "consistency",
+            "coverage",
+            "timeline",
+            "financial",
+            "policy",
+            "other"
+          ]
+        },
+        "reason_detail": {
+          "type": "string"
+        },
+        "caller": { "$ref": "#/$defs/caller" }
+      }
+    },
+    "aiEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "recorded_at",
+        "source",
+        "kind",
+        "backend",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "description": "Redis stream id or synthetic stable id."
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["caddy", "ai_service", "ai_service_adk", "backend"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "http_warn_error",
+            "gmail_questions",
+            "gmail_summary",
+            "gmail_step_questions",
+            "gmail_step_summary_action",
+            "gmail_step_summary_insight",
+            "gmail_step_classification",
+            "gmail_step_judge",
+            "gmail_step_action",
+            "gmail_step_insight",
+            "gmail_step_triage",
+            "calendar_question",
+            "calendar_create",
+            "local_qa_greeting",
+            "local_qa_rejected",
+            "local_qa_answer",
+            "claims_truth_check",
+            "claims_candidate",
+            "claims_judge",
+            "claims_followup_candidate",
+            "claims_followup_judge",
+            "claims_followup",
+            "claims_annotation_export",
+            "claims_annotation_results",
+            "tool_invoked",
+            "generic_ai"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["crewai", "google_adk", "local_vllm", "n/a"]
+        },
+        "username": {
+          "type": "string",
+          "description": "Authenticated principal when available."
+        },
+        "session_id": { "type": "string" },
+        "request_id": { "type": "string" },
+        "correlation_id": { "type": "string" },
+        "caller": { "$ref": "#/$defs/caller" },
+        "question": { "type": "string" },
+        "questions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reasoning": { "type": "string" },
+        "plan": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Optional plan or steps produced by the agent."
+        },
+        "tool_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolCall" }
+        },
+        "payload": {
+          "type": "object",
+          "description": "Raw or structured request/response data.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
