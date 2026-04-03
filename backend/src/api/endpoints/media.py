@@ -165,7 +165,8 @@ def get_random_claim(
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    claim_index = randbelow(100) + 1
+    # Only 10 synthetic claims are seeded (CLM-2026-0001 to CLM-2026-0010)
+    claim_index = randbelow(10) + 1
     filename = f"CLM-2026-{claim_index:04d}.json"
     storage_url = settings.MEDIA_STORAGE_URL.rstrip("/")
 
@@ -314,6 +315,7 @@ def get_claim_file(
 # Data-processor proxy helpers
 # ---------------------------------------------------------------------------
 
+
 def _dp_headers() -> dict:
     """Build auth headers for data-processor service calls."""
     secret = settings.DP_SERVICE_AUTH_SECRET
@@ -355,7 +357,8 @@ def create_claim_document(
         "image_url": body.image_url,
         "channel_id": f"claims-{claim_id}",
         "uploaded_by": current_user.username,
-        "original_filename": body.original_filename or body.source_key.rsplit("/", 1)[-1],
+        "original_filename": body.original_filename
+        or body.source_key.rsplit("/", 1)[-1],
     }
     try:
         resp = requests.post(
@@ -412,7 +415,9 @@ def create_damage_annotation(
         raise HTTPException(status_code=502, detail="Invalid data processor response")
     expected_channel = f"claims-{claim_id}"
     if doc_data.get("channel_id") != expected_channel:
-        raise HTTPException(status_code=400, detail="Document does not belong to this claim")
+        raise HTTPException(
+            status_code=400, detail="Document does not belong to this claim"
+        )
 
     payload = {
         "label_type": body.label_type,
@@ -763,7 +768,11 @@ async def get_annotation_results(
     if current_user is None:
         internal_secret = settings.DP_SERVICE_AUTH_SECRET
         provided = request.headers.get("X-Service-Auth", "")
-        if not internal_secret or not provided or not compare_digest(provided, internal_secret):
+        if (
+            not internal_secret
+            or not provided
+            or not compare_digest(provided, internal_secret)
+        ):
             raise HTTPException(status_code=401, detail="Authentication required")
 
     query = db.query(ClaimsAnnotationResult).filter(

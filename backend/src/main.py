@@ -10,6 +10,8 @@ from src.api.endpoints.auth import router as auth_router
 from src.api.endpoints.channels import router as channels_router
 from src.api.endpoints.media import router as media_router
 from src.api.endpoints.ai_claims import router as ai_claims_router
+from src.api.endpoints.ai_gmail import router as ai_gmail_router
+from src.api.endpoints.ai_calendar import router as ai_calendar_router
 from src.api.endpoints.data_processor import router as data_processor_router
 from src.api.endpoints.inference_logs import router as inference_logs_router
 from src.services.websocket_manager import manager
@@ -184,6 +186,8 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(channels_router)
 app.include_router(media_router)
 app.include_router(ai_claims_router)
+app.include_router(ai_gmail_router)
+app.include_router(ai_calendar_router)
 app.include_router(data_processor_router)
 app.include_router(inference_logs_router, prefix="/api")
 

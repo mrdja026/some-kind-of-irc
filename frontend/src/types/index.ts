@@ -317,3 +317,41 @@ export type StageColorMap = {
     label: string;
   };
 };
+
+// SSE Event Types for AI streaming
+export type AISSEEventType = 'meta' | 'progress' | 'delta' | 'done' | 'error';
+
+export type AISSEMetaEvent = {
+  type: 'meta';
+  agent: string;
+  model: string;
+};
+
+export type AISSEProgressEvent = {
+  type: 'progress';
+  stage: string;
+  message: string;
+};
+
+export type AISSEDeltaEvent = {
+  type: 'delta';
+  content: string;
+};
+
+export type AISSEDoneEvent<T = unknown> = {
+  type: 'done';
+  result: T;
+};
+
+export type AISSEErrorEvent = {
+  type: 'error';
+  code: string;
+  message: string;
+};
+
+export type AISSEEvent<T = unknown> =
+  | AISSEMetaEvent
+  | AISSEProgressEvent
+  | AISSEDeltaEvent
+  | AISSEDoneEvent<T>
+  | AISSEErrorEvent;

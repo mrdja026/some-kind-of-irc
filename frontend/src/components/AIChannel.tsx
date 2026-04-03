@@ -177,6 +177,7 @@ export function AIChannel({
   const [responses, setResponses] = useState<ConversationEntry[]>([])
   const [activeQuestion, setActiveQuestion] = useState<string | null>(null)
   const [streamProgress, setStreamProgress] = useState<string | null>(null)
+  const [streamSteps, setStreamSteps] = useState<{ stage: string; message: string; timestamp: number }[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -503,14 +504,31 @@ export function AIChannel({
     setClaimToolHistory([])
     setClaimSessionId(null)
     setStreamError(null)
+    setStreamSteps([])
     setActiveQuestion(null)
     setResponses([])
   }, [])
 
+  // Helper to track progress steps for the "thinking" timeline
+  const handleProgressUpdate = useCallback((stage: string, message: string) => {
+    setStreamProgress(message)
+    setStreamSteps((prev) => {
+      // Cap at 8 steps to avoid UI overflow
+      const next = [...prev, { stage, message, timestamp: Date.now() }]
+      return next.slice(-8)
+    })
+  }, [])
+
+  // Clear progress state when starting a new request
+  const resetProgressState = useCallback(() => {
+    setStreamProgress(null)
+    setStreamSteps([])
+    setStreamError(null)
+  }, [])
+
   const handleOptionSelect = async (optionId: string) => {
     setIsSubmitting(true)
-    setStreamProgress(null)
-    setStreamError(null)
+    resetProgressState()
 
     try {
       if (optionId === '1') {
@@ -522,7 +540,9 @@ export function AIChannel({
         setGmailQuestions([])
 
         setStreamProgress('Generating first question...')
-        const { questions } = await generateGmailQuestions(emails, '', [], 1)
+        const { questions } = await generateGmailQuestions(emails, '', [], 1, (stage, message) => {
+          handleProgressUpdate(stage, message)
+        })
         const firstQuestion =
           questions?.[0] ||
           'What are your primary interests? (e.g., Tech news, Finance, Photography...)'
@@ -692,8 +712,7 @@ export function AIChannel({
     }
 
     setIsSubmitting(true)
-    setStreamProgress(null)
-    setStreamError(null)
+    resetProgressState()
 
     const responseId = Date.now()
     setResponses((prev) => [
@@ -746,6 +765,9 @@ export function AIChannel({
           askedQuestions,
           claimToolHistory,
           claimSessionId,
+          (stage, message) => {
+            handleProgressUpdate(stage, message)
+          },
         )
 
         if (result.session_id) {
@@ -817,6 +839,9 @@ export function AIChannel({
         const { status, question, event } = await generateCalendarQuestion(
           trimmedAnswer,
           calendarAnswers,
+          (stage, message) => {
+            handleProgressUpdate(stage, message)
+          },
         )
         const updatedAnswers = [...calendarAnswers, trimmedAnswer]
         setCalendarAnswers(updatedAnswers)
@@ -885,7 +910,9 @@ export function AIChannel({
         if (isAffirmativeResponse(trimmedAnswer)) {
           setStreamProgress('Creating calendar event...')
           try {
-            const result = await createCalendarEvent(calendarEventDraft)
+            const result = await createCalendarEvent(calendarEventDraft, (stage, message) => {
+              handleProgressUpdate(stage, message)
+            })
             if (!result.event_id && !result.html_link) {
               throw new Error('Calendar event creation failed')
             }
@@ -960,6 +987,9 @@ export function AIChannel({
           trimmedAnswer,
           [],
           2,
+          (stage, message) => {
+            handleProgressUpdate(stage, message)
+          },
         )
         const followUpQuestions = questions ?? []
         setGmailQuestions(followUpQuestions)
@@ -1017,6 +1047,9 @@ export function AIChannel({
           gmailEmails,
           newAnswers[0],
           newAnswers.slice(1),
+          (stage, message) => {
+            handleProgressUpdate(stage, message)
+          },
         )
 
         setGmailSummary(result)
@@ -1497,7 +1530,7 @@ export function AIChannel({
           )
         })}
 
-        {/* Loading skeleton */}
+        {/* Loading skeleton with progress timeline */}
         {isSubmitting && !showOptionCards && (
           <div className="mb-4 md:mb-6">
             <div className="flex gap-2 md:gap-3 chat-card p-2 md:p-3 rounded-xl mb-2 md:mb-3">
@@ -1512,31 +1545,58 @@ export function AIChannel({
               </div>
             </div>
 
-            <div className="flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200 animate-pulse">
+            <div className="flex gap-2 md:gap-3 p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200">
               <div className="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-200">
                 <Bot size={14} className="md:w-4 md:h-4 text-amber-700" />
               </div>
               <div className="flex-1 space-y-2 md:space-y-3">
                 <div className="flex items-center gap-2">
-                  <div className="h-3 md:h-4 w-16 md:w-20 bg-amber-200 rounded"></div>
-                  <div className="h-3 md:h-4 w-6 md:w-8 bg-amber-200 rounded-full"></div>
+                  <div className="text-xs md:text-sm font-semibold text-amber-800">AI Thinking</div>
+                  <div className="h-3 md:h-4 w-6 md:w-8 bg-amber-200 rounded-full animate-pulse"></div>
                 </div>
-                <div className="space-y-2">
-                  <div className="h-3 bg-amber-200/60 rounded w-full"></div>
-                  <div className="h-3 bg-amber-200/60 rounded w-5/6"></div>
-                  <div className="h-3 bg-amber-200/60 rounded w-4/6"></div>
-                </div>
-                <div className="flex items-center gap-2 pt-2">
-                  <div className="w-2 h-2 rounded-full bg-amber-300 animate-bounce"></div>
+                
+                {/* Progress timeline */}
+                {streamSteps.length > 0 ? (
+                  <div className="space-y-1.5 border-l-2 border-amber-300 pl-3 ml-1">
+                    {streamSteps.map((step, index) => {
+                      const isLatest = index === streamSteps.length - 1
+                      return (
+                        <div
+                          key={step.timestamp}
+                          className={`flex items-start gap-2 text-xs transition-opacity duration-300 ${
+                            isLatest ? 'text-amber-800 font-medium' : 'text-amber-600/70'
+                          }`}
+                        >
+                          <div
+                            className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 -ml-[13px] ${
+                              isLatest ? 'bg-amber-500 animate-pulse' : 'bg-amber-300'
+                            }`}
+                          />
+                          <span>{step.message}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-2 animate-pulse">
+                    <div className="h-3 bg-amber-200/60 rounded w-full"></div>
+                    <div className="h-3 bg-amber-200/60 rounded w-5/6"></div>
+                    <div className="h-3 bg-amber-200/60 rounded w-4/6"></div>
+                  </div>
+                )}
+                
+                {/* Current step indicator */}
+                <div className="flex items-center gap-2 pt-2 border-t border-amber-200/50">
+                  <div className="w-2 h-2 rounded-full bg-amber-400 animate-bounce"></div>
                   <div
-                    className="w-2 h-2 rounded-full bg-amber-300 animate-bounce"
+                    className="w-2 h-2 rounded-full bg-amber-400 animate-bounce"
                     style={{ animationDelay: '0.1s' }}
                   ></div>
                   <div
-                    className="w-2 h-2 rounded-full bg-amber-300 animate-bounce"
+                    className="w-2 h-2 rounded-full bg-amber-400 animate-bounce"
                     style={{ animationDelay: '0.2s' }}
                   ></div>
-                  <span className="text-xs text-amber-600 ml-1">
+                  <span className="text-xs text-amber-600 ml-1 font-medium">
                     {streamProgress || 'Processing...'}
                   </span>
                 </div>

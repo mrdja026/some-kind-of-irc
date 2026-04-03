@@ -11,23 +11,24 @@
 
 :80 {
   @compressible {
-    not path /adk/ai/query/stream
+    not path /ai/* /adk/ai/query/stream
   }
   encode @compressible gzip
 
   @api path /auth/* /channels /channels/* /health /api/inference/*
   reverse_proxy @api backend:8002
 
-  # ADK AI service (Google ADK backend)
+  # AI endpoints routed through backend (SSE streaming)
+  # Backend proxies to ai-service-adk internally
+  @ai_backend path /ai/*
+  reverse_proxy @ai_backend backend:8002
+
+  # ADK AI service direct access (status/health checks only)
   @adk path /adk/*
   handle @adk {
     uri strip_prefix /adk
     reverse_proxy ai-service-adk:8004
   }
-
-  # Direct /ai/* path (used by claims Q&A — no prefix strip needed)
-  @ai_direct path /ai/*
-  reverse_proxy @ai_direct ai-service-adk:8004
 
   @ai_health path /healthz
   reverse_proxy @ai_health ai-service-adk:8004
