@@ -497,6 +497,7 @@ def _get_redis_log() -> _redis.Redis:
         try:
             _redis_log_client.ping()
         except Exception:
+            logger.warning("Redis log connection lost, reconnecting", exc_info=True)
             url = settings.REDIS_LOG_URL.strip()
             _redis_log_client = _redis.from_url(url, decode_responses=True)
     return _redis_log_client

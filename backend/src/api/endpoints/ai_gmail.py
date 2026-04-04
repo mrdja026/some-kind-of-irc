@@ -68,7 +68,7 @@ async def _stream_gmail_questions(
             is_success = response.is_success
             try:
                 response_data: Any = response.json()
-            except ValueError:
+            except Exception:
                 response_data = None
             response_text = response.text
 
@@ -129,7 +129,7 @@ async def _stream_gmail_summary(
             is_success = response.is_success
             try:
                 response_data: Any = response.json()
-            except ValueError:
+            except Exception:
                 response_data = None
             response_text = response.text
 

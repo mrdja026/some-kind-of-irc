@@ -73,7 +73,7 @@ async def _create_sse_proxy_stream(
             is_success = response.is_success
             try:
                 response_data: Any = response.json()
-            except ValueError:
+            except Exception:
                 response_data = None
             response_text = response.text
 
