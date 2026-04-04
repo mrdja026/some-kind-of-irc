@@ -31,6 +31,8 @@ CONSUMER_NAME = "backend_worker"
 # Read batch size and block timeout
 BATCH_SIZE = 100
 BLOCK_MS = 5000  # 5 seconds
+# Minimum idle time before pending messages are reclaimed via XAUTOCLAIM
+MIN_IDLE_TIME_MS = 60_000  # 60 seconds
 
 
 def _parse_datetime(value: str | None) -> Optional[datetime]:
@@ -245,7 +247,7 @@ class AiEventStreamConsumer:
                             self._stream_key,
                             CONSUMER_GROUP,
                             CONSUMER_NAME,
-                            min_idle_time=60_000,  # 60 seconds in ms
+                            min_idle_time=MIN_IDLE_TIME_MS,
                             start_id=next_id,
                             count=BATCH_SIZE,
                         )

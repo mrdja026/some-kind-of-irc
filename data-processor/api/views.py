@@ -835,8 +835,8 @@ class DocumentExportView(APIView):
                     field["value"] or "",
                     field["confidence"] or "",
                     field["validation_status"],
-                    field.get("verification_status") if field.get("verification_status") is not None else "",
-                    field.get("review_value") if field.get("review_value") is not None else "",
+                    field.get("verification_status") or "",
+                    field.get("review_value") or "",
                     field.get("certainty") if field.get("certainty") is not None else "",
                 ])
             
