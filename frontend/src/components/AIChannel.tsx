@@ -182,6 +182,7 @@ export function AIChannel({
   const [streamError, setStreamError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const inputBarRef = useRef<HTMLDivElement | null>(null)
+  const activeClaimIdRef = useRef<string | undefined>(undefined)
   
   // Gmail Agent State
   const [gmailStage, setGmailStage] = useState<
@@ -602,14 +603,10 @@ export function AIChannel({
         setAnnotationDocumentId(null)
 
         if (claimId) {
+          activeClaimIdRef.current = claimId
           const activeId = claimId
           fetchClaimFiles(activeId).then((res) => {
-            // Guard: only apply if we're still viewing the same claim
-            setClaimPayload((curr) => {
-              const currId = (curr?.claim as Record<string, unknown>)?.claim_id as string | undefined
-              if (currId === activeId) setClaimFiles(res.files || [])
-              return curr
-            })
+            if (activeClaimIdRef.current === activeId) setClaimFiles(res.files || [])
           }).catch(() => {})
         }
         setResponses([
@@ -650,6 +647,7 @@ export function AIChannel({
 
         let loadedFiles: { filename: string; content: unknown }[] = []
         if (claimId) {
+          activeClaimIdRef.current = claimId
           try {
             const res = await fetchClaimFiles(claimId)
             const files = res.files || []

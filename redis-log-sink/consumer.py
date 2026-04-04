@@ -185,7 +185,7 @@ def _build_gmail_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
     if not recorded_at:
         return None
 
-    payload_raw = _safe_json_text(f.get("payload"), default="{}") or "{}"
+    payload_raw = _safe_json_text(f.get("payload"), default="{}")
     payload = _safe_json(payload_raw) or {}
 
     req = payload.get("request", {}) if isinstance(payload, dict) else {}
@@ -231,7 +231,7 @@ def _build_calendar_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
     if not recorded_at:
         return None
 
-    payload_raw = _safe_json_text(f.get("payload"), default="{}") or "{}"
+    payload_raw = _safe_json_text(f.get("payload"), default="{}")
     payload = _safe_json(payload_raw) or {}
 
     req = payload.get("request", {}) if isinstance(payload, dict) else {}

@@ -352,14 +352,19 @@ def create_claim_document(
 
     expected_parent = f"{claim_id}-data"
     expected_prefix = f"{expected_parent}/data/"
-    if not body.source_key.startswith(expected_prefix):
+    # Guard path traversal in source_key
+    if ".." in body.source_key or not body.source_key.startswith(expected_prefix):
         raise HTTPException(
             status_code=400, detail="Source file does not belong to this claim"
         )
     if body.source_parent_key and body.source_parent_key != expected_parent:
         raise HTTPException(status_code=400, detail="Invalid source parent for claim")
-    image_path = urllib.parse.urlsplit(body.image_url).path
-    if not image_path.startswith(f"/media/claims/{claim_id}/files/"):
+    # Validate image_url is a relative path or same-origin (no external host)
+    parsed_image_url = urllib.parse.urlsplit(body.image_url)
+    if parsed_image_url.netloc:
+        raise HTTPException(status_code=400, detail="Image URL must be a relative path")
+    image_path = parsed_image_url.path
+    if ".." in image_path or not image_path.startswith(f"/media/claims/{claim_id}/files/"):
         raise HTTPException(
             status_code=400, detail="Image URL does not belong to this claim"
         )
