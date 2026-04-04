@@ -41,10 +41,18 @@ services:
       LOG_SINK_HOST: 0.0.0.0
       LOG_SINK_PORT: "6001"
       SESSION_DUMP_DIR: "${SESSION_DUMP_DIR:-/datasets-out}"
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+      DB_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
     volumes:
       - ./frontend/public/datasets:/datasets-out
     depends_on:
       - redis-log
+      - postgres
 
   backend:
     build:
