@@ -607,7 +607,9 @@ export function AIChannel({
           const activeId = claimId
           fetchClaimFiles(activeId).then((res) => {
             if (activeClaimIdRef.current === activeId) setClaimFiles(res.files || [])
-          }).catch(() => {})
+          }).catch((err) => {
+            console.warn('[AIChannel] fetchClaimFiles failed', err)
+          })
         }
         setResponses([
           {

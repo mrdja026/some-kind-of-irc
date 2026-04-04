@@ -110,7 +110,7 @@ export function DocumentAnnotationModal({
       })
       .catch(() => {
         if (!cancelled) {
-          setExportError('Unable to initialize export persistence. Annotations will not be saved to the server.')
+          setExportError('Unable to initialize export persistence. Annotations can still be used locally, but will not be saved to the server. Refresh and try again if needed.')
         }
       })
     return () => { cancelled = true }
