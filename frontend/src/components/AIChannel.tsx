@@ -1690,7 +1690,7 @@ export function AIChannel({
             try {
               // Store a relative path so the annotation modal resolves it
               // via window.location.origin (Caddy), not the backend port
-              const relativePath = `/media/claims/${img.claimId}/files/${img.filename}`
+              const relativePath = `/media/claims/${img.claimId}/files/${img.filename.split('/').map(encodeURIComponent).join('/')}`
               const doc = await createClaimDocument(img.claimId, {
                 image_url: relativePath,
                 source_key: img.sourceKey,

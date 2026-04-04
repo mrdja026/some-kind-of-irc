@@ -375,13 +375,22 @@ export const fetchClaimFileContent = async (claimId: string, filename: string): 
     const error = await response.text().catch(() => 'Failed to fetch file');
     throw new Error(error || 'Failed to fetch file');
   }
-  // For JSON files, parse and return the JSON object
-  // For other files, return as text (or could return blob for binary)
+  const contentType = response.headers.get('content-type') || '';
   const lowerFilename = filename.toLowerCase();
+  // Return parsed JSON for .json files
   if (lowerFilename.endsWith('.json')) {
     return response.json();
   }
-  // Return text for other text-based files
+  // Return Blob for binary types (images, PDFs, etc.)
+  if (
+    contentType.startsWith('image/') ||
+    contentType.startsWith('application/pdf') ||
+    contentType.startsWith('application/octet-stream') ||
+    (!contentType.startsWith('text/') && !lowerFilename.endsWith('.txt') && !lowerFilename.endsWith('.csv'))
+  ) {
+    return response.blob();
+  }
+  // Return text for known text-based files
   return response.text();
 };
 
