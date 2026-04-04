@@ -225,7 +225,9 @@ class AiEventStreamConsumer:
         if events:
             try:
                 inserted = self._persist_events(events)
-                logger.debug("Persisted %d/%d events to Postgres", inserted, len(events))
+                logger.debug(
+                    "Persisted %d/%d events to Postgres", inserted, len(events)
+                )
             except Exception:
                 # Persistence failed — do not ACK so messages stay pending for retry
                 return []
@@ -243,7 +245,9 @@ class AiEventStreamConsumer:
                 try:
                     next_id = "0-0"
                     while True:
-                        next_id, claimed = self._client.xautoclaim(
+                        # Redis 7.0+ returns 3 values: (next_id, claimed_messages, deleted_ids)
+                        # deleted_ids are message IDs pruned from PEL because they no longer exist
+                        next_id, claimed, deleted_ids = self._client.xautoclaim(
                             self._stream_key,
                             CONSUMER_GROUP,
                             CONSUMER_NAME,
@@ -251,10 +255,17 @@ class AiEventStreamConsumer:
                             start_id=next_id,
                             count=BATCH_SIZE,
                         )
+                        if deleted_ids:
+                            logger.debug(
+                                "XAUTOCLAIM pruned %d stale message IDs from PEL",
+                                len(deleted_ids),
+                            )
                         if claimed:
                             parsed_claimed = [
                                 (
-                                    msg_id.decode() if isinstance(msg_id, bytes) else msg_id,
+                                    msg_id.decode()
+                                    if isinstance(msg_id, bytes)
+                                    else msg_id,
                                     {
                                         (k.decode() if isinstance(k, bytes) else k): (
                                             v.decode() if isinstance(v, bytes) else v
@@ -270,7 +281,9 @@ class AiEventStreamConsumer:
                                     self._stream_key, CONSUMER_GROUP, *reclaim_ids
                                 )
                         # xautoclaim returns "0-0" when no more pending messages
-                        next_id_str = next_id.decode() if isinstance(next_id, bytes) else next_id
+                        next_id_str = (
+                            next_id.decode() if isinstance(next_id, bytes) else next_id
+                        )
                         if next_id_str == "0-0" or not claimed:
                             break
                 except Exception as e:

@@ -100,11 +100,11 @@ ensure_backend_running() {
 }
 
 ORIGINAL_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-if [ -f "$ROOT_DIR/.env.local" ]; then
-  echo "Loading overrides from .env.local"
+if [ -f "$ROOT_DIR/.env" ]; then
+  echo "Loading overrides from .env"
   set -a
   # shellcheck disable=SC1090
-  source "$ROOT_DIR/.env.local"
+  source "$ROOT_DIR/.env"
   set +a
 fi
 # Restore command-line ANTHROPIC_API_KEY (takes precedence over .env.local)

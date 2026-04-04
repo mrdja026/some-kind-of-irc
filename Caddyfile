@@ -23,9 +23,8 @@
   @ai_backend path /ai/*
   reverse_proxy @ai_backend backend:8002
 
-  # ADK AI service direct access — restricted to health/status probes only.
-  # All AI endpoints must go through the backend proxy (@ai_backend above).
-  @adk path /adk/healthz /adk/health /adk/status
+  # ADK AI service direct access for health probes and /ai/* endpoints
+  @adk path /adk/healthz /adk/health /adk/status /adk/ai/*
   handle @adk {
     uri strip_prefix /adk
     reverse_proxy ai-service-adk:8004
