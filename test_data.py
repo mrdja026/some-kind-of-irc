@@ -792,7 +792,7 @@ def _gen_companion_documents(claim_id: str, claim_type: str, reported_date: str)
     data_path = f"{claim_id}-data/data"
 
     docs = []
-    for i, doc_type in enumerate(doc_types, start=1):
+    for doc_type in doc_types:
         templates = DOC_FILENAME_TEMPLATES.get(doc_type, [f"{doc_type}.pdf"])
         filename = resolve_filename_template(
             random.choice(templates), claim_id, reported_date

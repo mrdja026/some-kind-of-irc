@@ -97,6 +97,7 @@ export function DocumentAnnotationModal({
   const [isValidationWorkflowOpen, setIsValidationWorkflowOpen] =
     useState(false)
   const [annotationSessionId, setAnnotationSessionId] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   // Create/reuse annotation session when claimId is available
   useEffect(() => {
@@ -133,7 +134,7 @@ export function DocumentAnnotationModal({
           onClose()
         })
         .catch(() => {
-          // Still close — export already downloaded locally
+          setExportError('Export saved locally but could not be persisted to the server.')
           onClose()
         })
     },
@@ -342,6 +343,13 @@ export function DocumentAnnotationModal({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
+      {/* Export persistence error banner */}
+      {exportError && (
+        <div className="bg-red-800 text-white text-sm px-4 py-2 flex items-center justify-between">
+          <span>{exportError}</span>
+          <button onClick={() => setExportError(null)} className="ml-4 text-red-200 hover:text-white">✕</button>
+        </div>
+      )}
       {/* Modal Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-700">
         <div className="flex items-center gap-4">

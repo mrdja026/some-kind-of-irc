@@ -1702,8 +1702,8 @@ export function AIChannel({
                 setAnnotationTarget({ documentId: docId, filename: img.filename, claimId: img.claimId })
                 setSelectedClaimImage(null)
               }
-            } catch {
-              // silently ignore — data-processor may be down
+            } catch (err) {
+              console.error('[AIChannel] createClaimDocument failed', err)
             }
           } : undefined}
         />

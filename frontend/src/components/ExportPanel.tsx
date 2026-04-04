@@ -193,7 +193,11 @@ export function ExportPanel({
   const previewMutation = useMutation({
     mutationFn: (format: ExportFormat) => exportDocument(documentId, format),
     onSuccess: (data) => {
-      setPreviewContent(data.content)
+      const contentStr =
+        typeof data.content === 'string'
+          ? data.content
+          : JSON.stringify(data, null, 2)
+      setPreviewContent(contentStr)
     },
   })
 

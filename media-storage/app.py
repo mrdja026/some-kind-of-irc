@@ -436,24 +436,29 @@ def list_claim_files(claim_id: str):
 
     prefix = f"{claim_id}-data/data/"
     try:
-        response = s3_client.list_objects_v2(
-            Bucket=claims_bucket, Prefix=prefix
-        )
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=claims_bucket, Prefix=prefix)
     except EndpointConnectionError:
         return jsonify({"detail": "Storage unavailable"}), 503
     except ClientError:
         return jsonify({"detail": "Storage error"}), 503
 
     files = []
-    for obj in response.get("Contents", []):
-        key = obj["Key"]
-        name = key.split("/")[-1] if "/" in key else key
-        files.append({
-            "key": key,
-            "filename": name,
-            "size": obj.get("Size", 0),
-            "last_modified": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
-        })
+    try:
+        for page in pages:
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                name = key.split("/")[-1] if "/" in key else key
+                files.append({
+                    "key": key,
+                    "filename": name,
+                    "size": obj.get("Size", 0),
+                    "last_modified": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
+                })
+    except EndpointConnectionError:
+        return jsonify({"detail": "Storage unavailable"}), 503
+    except ClientError:
+        return jsonify({"detail": "Storage error"}), 503
 
     return jsonify({"claim_id": claim_id, "files": files})
 

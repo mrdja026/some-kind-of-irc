@@ -1,7 +1,10 @@
 from pathlib import Path
 from urllib.parse import quote_plus
 from pydantic_settings import BaseSettings
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def _read_secret(secret_file: str | None) -> str:
@@ -98,3 +101,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.data_processor_enabled and not settings.DP_SERVICE_AUTH_SECRET:
+    logger.warning(
+        "FEATURE_DATA_PROCESSOR is enabled but DP_SERVICE_AUTH_SECRET is empty; "
+        "service-to-service calls to the data processor will be unauthenticated."
+    )

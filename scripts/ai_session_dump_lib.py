@@ -246,7 +246,7 @@ def _extract_new_fields(ev: dict[str, Any], fields: Mapping[str, Any]) -> None:
 
 
 def _collect_sources(events: list[dict[str, Any]]) -> list[str]:
-    order = ["caddy", "ai_service", "ai_service_adk"]
+    order = ["caddy", "ai_service", "ai_service_adk", "backend"]
     seen: set[str] = set()
     out: list[str] = []
     for s in order:
