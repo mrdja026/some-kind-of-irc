@@ -350,10 +350,24 @@ def create_claim_document(
     if not re.match(_claim_id_pattern, claim_id):
         raise HTTPException(status_code=400, detail="Invalid claim ID")
 
+    expected_parent = f"{claim_id}-data"
+    expected_prefix = f"{expected_parent}/data/"
+    if not body.source_key.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=400, detail="Source file does not belong to this claim"
+        )
+    if body.source_parent_key and body.source_parent_key != expected_parent:
+        raise HTTPException(status_code=400, detail="Invalid source parent for claim")
+    image_path = urllib.parse.urlsplit(body.image_url).path
+    if not image_path.startswith(f"/media/claims/{claim_id}/files/"):
+        raise HTTPException(
+            status_code=400, detail="Image URL does not belong to this claim"
+        )
+
     payload = {
         "source_bucket": "synt-data",
         "source_key": body.source_key,
-        "source_parent_key": body.source_parent_key or f"{claim_id}-data",
+        "source_parent_key": expected_parent,
         "image_url": body.image_url,
         "channel_id": f"claims-{claim_id}",
         "uploaded_by": current_user.username,
@@ -372,7 +386,12 @@ def create_claim_document(
 
     if not resp.ok:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+    try:
+        return resp.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=502, detail="Invalid data processor response"
+        ) from None
 
 
 class CreateDamageAnnotationRequest(BaseModel):
@@ -440,7 +459,12 @@ def create_damage_annotation(
 
     if not resp.ok:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+    try:
+        return resp.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=502, detail="Invalid data processor response"
+        ) from None
 
 
 @router.get("/claims/{claim_id}/damage-annotations")
@@ -466,7 +490,14 @@ def list_damage_annotations(
     if not resp.ok:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(
+            status_code=502, detail="Invalid data processor response"
+        ) from None
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Invalid data processor response")
     documents = data.get("documents", [])
     annotations = []
     for doc in documents:
@@ -615,7 +646,7 @@ async def persist_annotation_export(
         redis_xadd_succeeded = True
     except Exception:
         logger.warning("Failed to XADD annotation export event", exc_info=True)
-        stream_msg_id = ""
+        stream_msg_id = f"local:{uuid.uuid4()}"
 
     # 2) Write claims_debug_events row
     debug_event = ClaimsDebugEvent(

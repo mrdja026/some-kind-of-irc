@@ -602,7 +602,15 @@ export function AIChannel({
         setAnnotationDocumentId(null)
 
         if (claimId) {
-          fetchClaimFiles(claimId).then((res) => setClaimFiles(res.files || [])).catch(() => {})
+          const activeId = claimId
+          fetchClaimFiles(activeId).then((res) => {
+            // Guard: only apply if we're still viewing the same claim
+            setClaimPayload((curr) => {
+              const currId = (curr?.claim as Record<string, unknown>)?.claim_id as string | undefined
+              if (currId === activeId) setClaimFiles(res.files || [])
+              return curr
+            })
+          }).catch(() => {})
         }
         setResponses([
           {

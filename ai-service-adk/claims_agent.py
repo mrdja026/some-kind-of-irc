@@ -507,9 +507,13 @@ def damage_annotations(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": "No claim_id in payload", "annotations": []}
 
     backend_url = settings.BACKEND_URL.rstrip("/")
+    headers: Dict[str, str] = {}
+    if settings.DP_SERVICE_AUTH_SECRET:
+        headers["X-Service-Auth"] = settings.DP_SERVICE_AUTH_SECRET
     try:
         resp = httpx.get(
             f"{backend_url}/media/claims/{claim_id}/damage-annotations",
+            headers=headers,
             timeout=10,
         )
         resp.raise_for_status()

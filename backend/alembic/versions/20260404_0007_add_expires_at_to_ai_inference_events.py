@@ -69,6 +69,15 @@ def upgrade() -> None:
             postgresql_where=sa.text("expires_at IS NOT NULL"),
         )
 
+    # Backfill rows written before this migration (90-day TTL from creation)
+    op.execute(
+        sa.text(
+            "UPDATE ai_inference_events "
+            "SET expires_at = created_at + INTERVAL '90 days' "
+            "WHERE expires_at IS NULL"
+        )
+    )
+
 
 def downgrade() -> None:
     if _index_exists("ix_ai_inference_events_expires_at"):

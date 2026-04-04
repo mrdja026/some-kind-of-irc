@@ -47,7 +47,11 @@ def _build_database_url() -> str:
     port = os.getenv("DB_PORT", "5432").strip()
     name = os.getenv("DB_NAME", "app_db").strip()
     host = host or "postgres"
-    password_raw = password_raw or "change-me-local-password"
+    if not password_raw:
+        LOG.warning(
+            "DB persistence disabled: missing DB_PASSWORD/DB_PASSWORD_FILE"
+        )
+        return ""
     return f"postgresql://{quote_plus(user)}:{quote_plus(password_raw)}@{host}:{port}/{name}"
 
 DATABASE_URL = _build_database_url()

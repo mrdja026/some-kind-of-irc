@@ -103,12 +103,15 @@ export function DocumentAnnotationModal({
   useEffect(() => {
     if (!claimId) return
     let cancelled = false
+    setAnnotationSessionId(null)
     createAnnotationSession(claimId)
       .then((res) => {
         if (!cancelled) setAnnotationSessionId(res.session_id)
       })
       .catch(() => {
-        // non-blocking — session persistence is best-effort
+        if (!cancelled) {
+          setExportError('Unable to initialize export persistence. Annotations will not be saved to the server.')
+        }
       })
     return () => { cancelled = true }
   }, [claimId])
@@ -116,7 +119,10 @@ export function DocumentAnnotationModal({
   // Callback for ExportPanel: persist export to backend, then auto-close
   const handleExportComplete = useCallback(
     (_format: string, content: string) => {
-      if (!claimId || !annotationSessionId) return
+      if (!claimId || !annotationSessionId) {
+        setExportError('Annotation session is not ready yet. Please try again.')
+        return
+      }
       let findings: unknown
       try {
         findings = JSON.parse(content)
@@ -135,7 +141,6 @@ export function DocumentAnnotationModal({
         })
         .catch(() => {
           setExportError('Export saved locally but could not be persisted to the server.')
-          onClose()
         })
     },
     [claimId, annotationSessionId, documentId, filename, onClose, onExportPersisted],

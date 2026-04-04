@@ -34,17 +34,10 @@ BLOCK_MS = 5000
 MIN_IDLE_TIME_MS = 60_000
 
 # Domain routing prefixes
-_GMAIL_KINDS = frozenset(
-    {
-        "gmail_questions",
-        "gmail_summary",
-        "gmail_step_questions",
-        "gmail_step_summary_action",
-        "gmail_step_summary_insight",
-        "gmail_step_triage",
-        "gmail_step_judge",
-    }
-)
+def _is_gmail_kind(kind: str) -> bool:
+    """Return True for any gmail_* event kind."""
+    return kind.startswith("gmail_")
+
 
 _CALENDAR_KINDS = frozenset(
     {
@@ -125,6 +118,19 @@ def _safe_json(value: Optional[str]) -> Any:
         return None
 
 
+def _safe_json_text(value: Optional[str], *, default: Optional[str] = None) -> Optional[str]:
+    """Round-trip a JSON string through parse+re-serialize to ensure validity.
+
+    Returns *default* when the input is absent or unparseable so that JSONB
+    columns receive either valid JSON or NULL instead of a raw malformed string
+    that would cause the INSERT to fail.
+    """
+    parsed = _safe_json(value)
+    if parsed is None:
+        return default
+    return json.dumps(parsed)
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     """Parse ISO datetime, returning None on failure."""
     if not value:
@@ -150,16 +156,6 @@ def _build_ai_inference_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
     if not recorded_at:
         return None
 
-    payload_raw = f.get("payload", "{}")
-    payload = _safe_json(payload_raw)
-    if payload is None:
-        payload = {}
-
-    caller = f.get("caller")
-    tool_calls = f.get("tool_calls")
-    questions = f.get("questions")
-    plan = f.get("plan")
-
     return {
         "id": str(uuid.uuid4()),
         "stream_msg_id": msg_id,
@@ -171,13 +167,13 @@ def _build_ai_inference_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
         "request_id": f.get("request_id"),
         "correlation_id": f.get("correlation_id"),
         "username": f.get("username"),
-        "caller": caller,
-        "tool_calls": tool_calls,
+        "caller": _safe_json_text(f.get("caller")),
+        "tool_calls": _safe_json_text(f.get("tool_calls")),
         "question": f.get("question"),
-        "questions": questions,
+        "questions": _safe_json_text(f.get("questions")),
         "reasoning": f.get("reasoning"),
-        "plan": plan,
-        "payload": payload_raw,
+        "plan": _safe_json_text(f.get("plan")),
+        "payload": _safe_json_text(f.get("payload"), default="{}"),
         "created_at": _now(),
         "expires_at": _expiry(),
     }
@@ -189,12 +185,23 @@ def _build_gmail_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
     if not recorded_at:
         return None
 
-    payload_raw = f.get("payload", "{}")
+    payload_raw = _safe_json_text(f.get("payload"), default="{}") or "{}"
     payload = _safe_json(payload_raw) or {}
 
     req = payload.get("request", {}) if isinstance(payload, dict) else {}
     resp = payload.get("response", {}) if isinstance(payload, dict) else {}
     step = payload.get("step") if isinstance(payload, dict) else None
+
+    questions_val = (
+        json.dumps(resp.get("questions"))
+        if isinstance(resp, dict) and resp.get("questions")
+        else _safe_json_text(f.get("questions"))
+    )
+    top_emails_val = (
+        json.dumps(resp.get("top_email_ids"))
+        if isinstance(resp, dict) and resp.get("top_email_ids")
+        else None
+    )
 
     return {
         "id": str(uuid.uuid4()),
@@ -206,11 +213,11 @@ def _build_gmail_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
         "step": step,
         "interest": req.get("interest") if isinstance(req, dict) else None,
         "email_count": req.get("email_count") if isinstance(req, dict) else None,
-        "questions": json.dumps(resp.get("questions")) if isinstance(resp, dict) and resp.get("questions") else f.get("questions"),
-        "top_email_ids": json.dumps(resp.get("top_email_ids")) if isinstance(resp, dict) and resp.get("top_email_ids") else None,
+        "questions": questions_val,
+        "top_email_ids": top_emails_val,
         "final_summary": resp.get("final_summary") if isinstance(resp, dict) else None,
         "reasoning": resp.get("reasoning") if isinstance(resp, dict) else f.get("reasoning"),
-        "caller": f.get("caller"),
+        "caller": _safe_json_text(f.get("caller")),
         "payload": payload_raw,
         "recorded_at": recorded_at,
         "created_at": _now(),
@@ -224,11 +231,17 @@ def _build_calendar_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
     if not recorded_at:
         return None
 
-    payload_raw = f.get("payload", "{}")
+    payload_raw = _safe_json_text(f.get("payload"), default="{}") or "{}"
     payload = _safe_json(payload_raw) or {}
 
     req = payload.get("request", {}) if isinstance(payload, dict) else {}
     resp = payload.get("response", {}) if isinstance(payload, dict) else {}
+
+    attendees_val = (
+        json.dumps(req.get("attendees"))
+        if isinstance(req, dict) and req.get("attendees")
+        else None
+    )
 
     return {
         "id": str(uuid.uuid4()),
@@ -242,10 +255,10 @@ def _build_calendar_row(msg_id: str, f: dict[str, str]) -> Optional[dict]:
         "start_datetime": req.get("start_datetime") if isinstance(req, dict) else None,
         "end_datetime": req.get("end_datetime") if isinstance(req, dict) else None,
         "timezone": req.get("timezone") if isinstance(req, dict) else None,
-        "attendees": json.dumps(req.get("attendees")) if isinstance(req, dict) and req.get("attendees") else None,
+        "attendees": attendees_val,
         "google_event_id": resp.get("event_id") if isinstance(resp, dict) else None,
         "google_html_link": resp.get("html_link") if isinstance(resp, dict) else None,
-        "caller": f.get("caller"),
+        "caller": _safe_json_text(f.get("caller")),
         "payload": payload_raw,
         "recorded_at": recorded_at,
         "created_at": _now(),
@@ -344,7 +357,7 @@ class StreamConsumer:
                             continue
 
                     # Route to domain table
-                    if kind in _GMAIL_KINDS:
+                    if _is_gmail_kind(kind):
                         domain_row = _build_gmail_row(msg_id, fields)
                         if domain_row:
                             try:
@@ -514,6 +527,7 @@ class StreamConsumer:
             LOG.info("StreamConsumer started")
         except Exception as e:
             LOG.error("Failed to start stream consumer: %s", e)
+            raise
 
     def stop(self) -> None:
         """Stop consumer and close connections."""
