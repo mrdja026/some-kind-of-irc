@@ -493,6 +493,12 @@ def _get_redis_log() -> _redis.Redis:
         if not url:
             raise HTTPException(status_code=503, detail="Redis log URL not configured")
         _redis_log_client = _redis.from_url(url, decode_responses=True)
+    else:
+        try:
+            _redis_log_client.ping()
+        except Exception:
+            url = settings.REDIS_LOG_URL.strip()
+            _redis_log_client = _redis.from_url(url, decode_responses=True)
     return _redis_log_client
 
 
@@ -585,6 +591,7 @@ async def persist_annotation_export(
 
     # 1) Emit AI session stream event via Redis XADD
     stream_msg_id = ""
+    redis_xadd_succeeded = False
     try:
         client = _get_redis_log()
         fields: dict[str, str] = {
@@ -604,9 +611,10 @@ async def persist_annotation_export(
         )
         if isinstance(stream_msg_id, bytes):
             stream_msg_id = stream_msg_id.decode()
+        redis_xadd_succeeded = True
     except Exception:
         logger.warning("Failed to XADD annotation export event", exc_info=True)
-        stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
+        stream_msg_id = ""
 
     # 2) Write claims_debug_events row
     debug_event = ClaimsDebugEvent(
@@ -696,6 +704,7 @@ async def persist_annotation_export(
         "annotation_result_id": str(annotation_result.id),
         "damage_labels": damage_labels,
         "stream_msg_id": str(stream_msg_id),
+        "redis_xadd_succeeded": redis_xadd_succeeded,
         "ai_message_id": ai_message_id,
     }
 
@@ -814,6 +823,7 @@ async def get_annotation_results(
 
     # Emit AI session stream event (only for authenticated frontend users)
     stream_msg_id = ""
+    redis_xadd_succeeded = False
     if current_user:
         try:
             client = _get_redis_log()
@@ -834,9 +844,10 @@ async def get_annotation_results(
             )
             if isinstance(stream_msg_id, bytes):
                 stream_msg_id = stream_msg_id.decode()
+            redis_xadd_succeeded = True
         except Exception:
             logger.warning("Failed to XADD annotation results event", exc_info=True)
-            stream_msg_id = f"fallback-{uuid.uuid4().hex[:12]}"
+            stream_msg_id = ""
 
     # Post #ai message (only when authenticated — skip for ADK service-to-service)
     ai_message_id = None
@@ -885,5 +896,6 @@ async def get_annotation_results(
         "document_id": result.document_id,
         "filename": result.filename,
         "stream_msg_id": str(stream_msg_id),
+        "redis_xadd_succeeded": redis_xadd_succeeded,
         "ai_message_id": ai_message_id,
     }

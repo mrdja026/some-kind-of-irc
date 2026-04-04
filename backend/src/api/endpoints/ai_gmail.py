@@ -65,20 +65,28 @@ async def _stream_gmail_questions(
                 cookies=dict(request.cookies),
                 headers=headers,
             )
-
-        if not response.is_success:
-            detail = "Gmail questions failed"
+            is_success = response.is_success
             try:
-                error_body = response.json()
-                detail = error_body.get("detail", detail)
-            except Exception:
-                if response.text:
-                    detail = response.text
+                response_data: Any = response.json()
+            except ValueError:
+                response_data = None
+            response_text = response.text
+
+        if not is_success:
+            detail = "Gmail questions failed"
+            if isinstance(response_data, dict):
+                detail = response_data.get("detail", detail)
+            elif response_text:
+                detail = response_text
             yield await emit_error(code="ADK_ERROR", message=detail)
             return
 
-        result = response.json()
-        yield await emit_done(result=result)
+        if response_data is None:
+            yield await emit_error(
+                code="ADK_ERROR", message="Invalid JSON response from ADK service"
+            )
+            return
+        yield await emit_done(result=response_data)
 
     except httpx.TimeoutException:
         yield await emit_error(
@@ -118,20 +126,28 @@ async def _stream_gmail_summary(
                 cookies=dict(request.cookies),
                 headers=headers,
             )
-
-        if not response.is_success:
-            detail = "Gmail summary failed"
+            is_success = response.is_success
             try:
-                error_body = response.json()
-                detail = error_body.get("detail", detail)
-            except Exception:
-                if response.text:
-                    detail = response.text
+                response_data: Any = response.json()
+            except ValueError:
+                response_data = None
+            response_text = response.text
+
+        if not is_success:
+            detail = "Gmail summary failed"
+            if isinstance(response_data, dict):
+                detail = response_data.get("detail", detail)
+            elif response_text:
+                detail = response_text
             yield await emit_error(code="ADK_ERROR", message=detail)
             return
 
-        result = response.json()
-        yield await emit_done(result=result)
+        if response_data is None:
+            yield await emit_error(
+                code="ADK_ERROR", message="Invalid JSON response from ADK service"
+            )
+            return
+        yield await emit_done(result=response_data)
 
     except httpx.TimeoutException:
         yield await emit_error(

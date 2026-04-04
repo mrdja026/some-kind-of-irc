@@ -40,15 +40,22 @@ class CalendarCreateRequest(BaseModel):
     event: CalendarEventPayload
 
 
-async def _stream_calendar_questions(
+async def _create_sse_proxy_stream(
     request: Request,
     payload: dict[str, Any],
     request_id: str,
     correlation_id: str | None,
+    endpoint_path: str,
+    agent: str,
+    model: str,
+    progress_stage: str,
+    progress_message: str,
+    error_prefix: str,
+    timeout: float = 30.0,
 ) -> AsyncIterator[str]:
-    """Stream Calendar question generation via SSE."""
-    yield await emit_meta(agent="calendar_agent", model="gemini-2.0-flash")
-    yield await emit_progress(stage="planning", message="Analyzing your request...")
+    """Reusable SSE proxy stream factory for ADK calendar endpoints."""
+    yield await emit_meta(agent=agent, model=model)
+    yield await emit_progress(stage=progress_stage, message=progress_message)
 
     adk_url = settings.AI_SERVICE_ADK_URL.rstrip("/")
     headers = {"x-request-id": request_id}
@@ -56,34 +63,64 @@ async def _stream_calendar_questions(
         headers["x-correlation-id"] = correlation_id
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                f"{adk_url}/ai/calendar/questions",
+                f"{adk_url}{endpoint_path}",
                 json=payload,
                 cookies=dict(request.cookies),
                 headers=headers,
             )
-
-        if not response.is_success:
-            detail = "Calendar questions failed"
+            is_success = response.is_success
             try:
-                error_body = response.json()
-                detail = error_body.get("detail", detail)
-            except Exception:
-                if response.text:
-                    detail = response.text
+                response_data: Any = response.json()
+            except ValueError:
+                response_data = None
+            response_text = response.text
+
+        if not is_success:
+            detail = error_prefix
+            if isinstance(response_data, dict):
+                detail = response_data.get("detail", detail)
+            elif response_text:
+                detail = response_text
             yield await emit_error(code="ADK_ERROR", message=detail)
             return
 
-        result = response.json()
-        yield await emit_done(result=result)
+        if response_data is None:
+            yield await emit_error(
+                code="ADK_ERROR", message="Invalid JSON response from ADK service"
+            )
+            return
+        yield await emit_done(result=response_data)
 
     except httpx.TimeoutException:
         yield await emit_error(
-            code="TIMEOUT", message="Calendar questions request timed out"
+            code="TIMEOUT", message=f"{error_prefix} request timed out"
         )
     except httpx.RequestError as exc:
         yield await emit_error(code="CONNECTION_ERROR", message=str(exc))
+
+
+async def _stream_calendar_questions(
+    request: Request,
+    payload: dict[str, Any],
+    request_id: str,
+    correlation_id: str | None,
+) -> AsyncIterator[str]:
+    """Stream Calendar question generation via SSE."""
+    async for chunk in _create_sse_proxy_stream(
+        request=request,
+        payload=payload,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        endpoint_path="/ai/calendar/questions",
+        agent="calendar_agent",
+        model="gemini-2.0-flash",
+        progress_stage="planning",
+        progress_message="Analyzing your request...",
+        error_prefix="Calendar questions failed",
+    ):
+        yield chunk
 
 
 async def _stream_calendar_create(
@@ -93,43 +130,19 @@ async def _stream_calendar_create(
     correlation_id: str | None,
 ) -> AsyncIterator[str]:
     """Stream Calendar event creation via SSE."""
-    yield await emit_meta(agent="calendar_agent", model="gemini-2.0-flash")
-    yield await emit_progress(stage="creating", message="Creating calendar event...")
-
-    adk_url = settings.AI_SERVICE_ADK_URL.rstrip("/")
-    headers = {"x-request-id": request_id}
-    if correlation_id:
-        headers["x-correlation-id"] = correlation_id
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{adk_url}/ai/calendar/create",
-                json=payload,
-                cookies=dict(request.cookies),
-                headers=headers,
-            )
-
-        if not response.is_success:
-            detail = "Calendar create failed"
-            try:
-                error_body = response.json()
-                detail = error_body.get("detail", detail)
-            except Exception:
-                if response.text:
-                    detail = response.text
-            yield await emit_error(code="ADK_ERROR", message=detail)
-            return
-
-        result = response.json()
-        yield await emit_done(result=result)
-
-    except httpx.TimeoutException:
-        yield await emit_error(
-            code="TIMEOUT", message="Calendar create request timed out"
-        )
-    except httpx.RequestError as exc:
-        yield await emit_error(code="CONNECTION_ERROR", message=str(exc))
+    async for chunk in _create_sse_proxy_stream(
+        request=request,
+        payload=payload,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        endpoint_path="/ai/calendar/create",
+        agent="calendar_agent",
+        model="gemini-2.0-flash",
+        progress_stage="creating",
+        progress_message="Creating calendar event...",
+        error_prefix="Calendar create failed",
+    ):
+        yield chunk
 
 
 @router.post("/questions")
