@@ -86,6 +86,7 @@ async function consumeSSEStream<T>(
   let buffer = '';
   let result: T | null = null;
   let errorMessage: string | null = null;
+  let currentEventType: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -97,7 +98,6 @@ async function consumeSSEStream<T>(
     const lines = buffer.split('\n');
     buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-    let currentEventType: string | null = null;
 
     for (const line of lines) {
       if (line.startsWith('event: ')) {

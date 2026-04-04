@@ -118,17 +118,17 @@ async def append_ai_session_event(
         fields["session_id"] = session_id
 
     # New fields for AI inference logging
-    if caller:
+    if caller is not None:
         fields["caller"] = json.dumps(caller, default=str)
-    if tool_calls:
+    if tool_calls is not None:
         fields["tool_calls"] = json.dumps(tool_calls, default=str)
-    if question:
+    if question is not None:
         fields["question"] = question
-    if questions:
+    if questions is not None:
         fields["questions"] = json.dumps(questions)
-    if reasoning:
+    if reasoning is not None:
         fields["reasoning"] = reasoning
-    if plan:
+    if plan is not None:
         fields["plan"] = json.dumps(plan, default=str)
 
     try:

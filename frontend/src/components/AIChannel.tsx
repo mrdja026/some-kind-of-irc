@@ -599,6 +599,7 @@ export function AIChannel({
         setClaimFiles([])
         setExpandedFile(null)
         setFileContents({})
+        setAnnotationDocumentId(null)
 
         if (claimId) {
           fetchClaimFiles(claimId).then((res) => setClaimFiles(res.files || [])).catch(() => {})
@@ -637,6 +638,7 @@ export function AIChannel({
         setClaimFiles([])
         setExpandedFile(null)
         setFileContents({})
+        setAnnotationDocumentId(null)
 
         let loadedFiles: { filename: string; content: unknown }[] = []
         if (claimId) {

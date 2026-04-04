@@ -158,6 +158,7 @@ class AiEventStreamConsumer:
 
         Uses INSERT ... ON CONFLICT DO NOTHING for efficient dedup.
         Returns number of rows inserted.
+        Raises on DB failure so callers can skip ACK.
         """
         if not events:
             return 0
@@ -190,7 +191,7 @@ class AiEventStreamConsumer:
         except Exception as e:
             logger.error("Failed to persist events: %s", e)
             db.rollback()
-            return 0
+            raise
         finally:
             db.close()
 
@@ -200,10 +201,15 @@ class AiEventStreamConsumer:
         """
         Process a batch of messages from the stream.
 
-        Returns list of message IDs that were successfully processed.
+        Returns list of message IDs to acknowledge:
+        - All IDs when persistence succeeds (including parse failures, which
+          should be acked to avoid infinite reprocessing of unparsable messages).
+        - Empty list when persistence fails, so messages remain pending and
+          will be reclaimed for retry.
         """
         events = []
         msg_ids = []
+        failed_parse_ids = []
 
         for msg_id, fields in messages:
             event_data = self._parse_event_fields(msg_id, fields)
@@ -211,14 +217,18 @@ class AiEventStreamConsumer:
                 events.append(event_data)
                 msg_ids.append(msg_id)
             else:
-                # Still track failed parses for ack to avoid reprocessing
-                msg_ids.append(msg_id)
+                # Parse failure: track separately — always ACK to prevent infinite reprocessing
+                failed_parse_ids.append(msg_id)
 
         if events:
-            inserted = self._persist_events(events)
-            logger.debug("Persisted %d/%d events to Postgres", inserted, len(events))
+            try:
+                inserted = self._persist_events(events)
+                logger.debug("Persisted %d/%d events to Postgres", inserted, len(events))
+            except Exception:
+                # Persistence failed — do not ACK so messages stay pending for retry
+                return []
 
-        return msg_ids
+        return msg_ids + failed_parse_ids
 
     def _run(self) -> None:
         """Main consumer loop."""
@@ -226,6 +236,44 @@ class AiEventStreamConsumer:
 
         while self._running:
             try:
+                # Reclaim messages that have been idle for >60 s in the PEL
+                # (Pending Entry List) so they are retried after failures.
+                try:
+                    next_id = "0-0"
+                    while True:
+                        next_id, claimed = self._client.xautoclaim(
+                            self._stream_key,
+                            CONSUMER_GROUP,
+                            CONSUMER_NAME,
+                            min_idle_time=60_000,  # 60 seconds in ms
+                            start_id=next_id,
+                            count=BATCH_SIZE,
+                        )
+                        if claimed:
+                            parsed_claimed = [
+                                (
+                                    msg_id.decode() if isinstance(msg_id, bytes) else msg_id,
+                                    {
+                                        (k.decode() if isinstance(k, bytes) else k): (
+                                            v.decode() if isinstance(v, bytes) else v
+                                        )
+                                        for k, v in fields.items()
+                                    },
+                                )
+                                for msg_id, fields in claimed
+                            ]
+                            reclaim_ids = self._process_messages(parsed_claimed)
+                            if reclaim_ids:
+                                self._client.xack(
+                                    self._stream_key, CONSUMER_GROUP, *reclaim_ids
+                                )
+                        # xautoclaim returns "0-0" when no more pending messages
+                        next_id_str = next_id.decode() if isinstance(next_id, bytes) else next_id
+                        if next_id_str == "0-0" or not claimed:
+                            break
+                except Exception as e:
+                    logger.warning("XAUTOCLAIM failed (non-fatal): %s", e)
+
                 # Read new messages from stream
                 result = self._client.xreadgroup(
                     groupname=CONSUMER_GROUP,

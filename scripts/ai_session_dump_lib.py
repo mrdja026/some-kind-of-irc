@@ -241,7 +241,7 @@ def _extract_new_fields(ev: dict[str, Any], fields: Mapping[str, Any]) -> None:
             plan = json.loads(plan)
         except json.JSONDecodeError:
             plan = None
-    if isinstance(plan, dict) and plan:
+    if isinstance(plan, (dict, list)) and plan:
         ev["plan"] = plan
 
 

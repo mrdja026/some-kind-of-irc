@@ -148,7 +148,7 @@ class DocumentFromMinioView(APIView):
         from api.models import DocumentRecord
 
         existing = DocumentRecord.objects.filter(
-            source_key=source_key, channel_id=channel_id
+            source_bucket=source_bucket, source_key=source_key, channel_id=channel_id
         ).first()
         if existing:
             doc = store.get_document(existing.id)
@@ -821,7 +821,8 @@ class DocumentExportView(APIView):
             # Header row
             writer.writerow([
                 "document_id", "source_filename", "field_name", "field_type",
-                "value", "confidence", "validation_status"
+                "value", "confidence", "validation_status",
+                "verification_status", "review_value", "certainty"
             ])
             
             # Data rows
@@ -834,6 +835,9 @@ class DocumentExportView(APIView):
                     field["value"] or "",
                     field["confidence"] or "",
                     field["validation_status"],
+                    field.get("verification_status") if field.get("verification_status") is not None else "",
+                    field.get("review_value") if field.get("review_value") is not None else "",
+                    field.get("certainty") if field.get("certainty") is not None else "",
                 ])
             
             csv_content = output.getvalue()
@@ -858,6 +862,9 @@ CREATE TABLE IF NOT EXISTS extracted_fields (
     field_value TEXT,
     confidence REAL,
     validation_status TEXT,
+    verification_status TEXT,
+    review_value TEXT,
+    certainty REAL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
             """.strip())
@@ -866,8 +873,8 @@ CREATE TABLE IF NOT EXISTS extracted_fields (
             # Insert statements
             for field in fields:
                 sql = """
-INSERT INTO extracted_fields (document_id, source_filename, field_name, field_type, field_value, confidence, validation_status)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO extracted_fields (document_id, source_filename, field_name, field_type, field_value, confidence, validation_status, verification_status, review_value, certainty)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """.strip()
                 sql_statements.append(sql)
                 parameters.append((
@@ -877,7 +884,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
                     field["type"],
                     field["value"] or "",
                     field["confidence"],
-                    field["validation_status"]
+                    field["validation_status"],
+                    field.get("verification_status"),
+                    field.get("review_value"),
+                    field.get("certainty"),
                 ))
             
             return Response(
