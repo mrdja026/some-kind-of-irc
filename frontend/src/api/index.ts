@@ -381,17 +381,17 @@ export const fetchClaimFileContent = async (claimId: string, filename: string): 
   if (lowerFilename.endsWith('.json')) {
     return response.json();
   }
-  // Return Blob for binary types (images, PDFs, etc.)
-  if (
-    contentType.startsWith('image/') ||
-    contentType.startsWith('application/pdf') ||
-    contentType.startsWith('application/octet-stream') ||
-    (!contentType.startsWith('text/') && !lowerFilename.endsWith('.txt') && !lowerFilename.endsWith('.csv'))
-  ) {
-    return response.blob();
+  // Return text for text/* content types or known text extensions
+  const isTextContent =
+    contentType.startsWith('text/') ||
+    lowerFilename.endsWith('.txt') ||
+    lowerFilename.endsWith('.csv') ||
+    lowerFilename.endsWith('.xml');
+  if (isTextContent) {
+    return response.text();
   }
-  // Return text for known text-based files
-  return response.text();
+  // Return Blob for everything else (images, PDFs, binary files, etc.)
+  return response.blob();
 };
 
 export const getClaimFileUrl = (claimId: string, filename: string): string =>
