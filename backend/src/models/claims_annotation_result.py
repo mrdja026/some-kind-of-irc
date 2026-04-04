@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, func
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 from src.core.database import Base
@@ -27,7 +27,7 @@ class ClaimsAnnotationResult(Base):
     damage_labels = Column(ARRAY(String), nullable=False, server_default="{}")
     findings = Column(JSONB, nullable=False)
     exported_by = Column(String, nullable=False)
-    exported_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    exported_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
     __table_args__ = (
         Index("ix_claims_annotation_results_claim_id", "claim_id"),

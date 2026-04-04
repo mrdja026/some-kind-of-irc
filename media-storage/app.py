@@ -435,16 +435,10 @@ def list_claim_files(claim_id: str):
         return jsonify({"detail": "Invalid claim ID"}), 400
 
     prefix = f"{claim_id}-data/data/"
+    files = []
     try:
         paginator = s3_client.get_paginator("list_objects_v2")
         pages = paginator.paginate(Bucket=claims_bucket, Prefix=prefix)
-    except EndpointConnectionError:
-        return jsonify({"detail": "Storage unavailable"}), 503
-    except ClientError:
-        return jsonify({"detail": "Storage error"}), 503
-
-    files = []
-    try:
         for page in pages:
             for obj in page.get("Contents", []):
                 key = obj["Key"]
