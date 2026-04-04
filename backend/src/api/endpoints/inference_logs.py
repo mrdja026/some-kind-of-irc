@@ -10,7 +10,7 @@ from typing import Any
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.core.config import settings
 from src.api.endpoints.auth import get_current_user
@@ -142,16 +142,23 @@ async def get_inference_logs(
 
                 # Parse new fields
                 caller_raw = _safe_json_loads(fields.get("caller"))
-                caller = (
-                    CallerInfo(**caller_raw) if isinstance(caller_raw, dict) else None
-                )
+                caller = None
+                if isinstance(caller_raw, dict):
+                    try:
+                        caller = CallerInfo(**caller_raw)
+                    except (ValidationError, TypeError) as exc:
+                        logger.warning("Skipping malformed caller in event %s: %s", msg_id, exc)
 
                 tool_calls_raw = _safe_json_loads(fields.get("tool_calls"))
                 tool_calls = None
                 if isinstance(tool_calls_raw, list):
-                    tool_calls = [
-                        ToolCall(**tc) for tc in tool_calls_raw if isinstance(tc, dict)
-                    ]
+                    tool_calls = []
+                    for tc in tool_calls_raw:
+                        if isinstance(tc, dict):
+                            try:
+                                tool_calls.append(ToolCall(**tc))
+                            except (ValidationError, TypeError) as exc:
+                                logger.warning("Skipping malformed tool_call in event %s: %s", msg_id, exc)
 
                 questions_raw = _safe_json_loads(fields.get("questions"))
                 questions = questions_raw if isinstance(questions_raw, list) else None

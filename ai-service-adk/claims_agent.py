@@ -556,7 +556,13 @@ def claims_annotation_results(payload: Dict[str, Any]) -> Dict[str, Any]:
         data = resp.json()
 
         if data.get("status") == "no_results":
-            return {"claim_id": claim_id, "damage_type": None, "error": "no results"}
+            return {
+                "claim_id": claim_id,
+                "damage_type": None,
+                "damage_labels": [],
+                "annotation_count": 0,
+                "status": "no_results",
+            }
 
         return {
             "claim_id": claim_id,

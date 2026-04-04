@@ -86,14 +86,24 @@ async def _stream_claims_qa(
             detail = "Claims Q&A failed"
             try:
                 error_body = response.json()
-                detail = error_body.get("detail", detail)
-            except Exception:
+                if isinstance(error_body, dict):
+                    detail = str(error_body.get("detail", detail))
+                elif response.text:
+                    detail = response.text
+            except ValueError:
                 if response.text:
                     detail = response.text
             yield await emit_error(code="ADK_ERROR", message=detail)
             return
 
-        result = response.json()
+        try:
+            result = response.json()
+        except ValueError:
+            yield await emit_error(
+                code="INVALID_RESPONSE",
+                message="Claims Q&A returned invalid JSON",
+            )
+            return
         yield await emit_done(result=result)
 
     except httpx.TimeoutException:

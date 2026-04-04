@@ -98,6 +98,14 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.now(),
         ),
+        # Retention: rows with expires_at < now() can be purged by a scheduled job.
+        # Default: 90 days from creation. Set to NULL for indefinite retention.
+        sa.Column(
+            "expires_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="Retention deadline; rows past this timestamp may be purged",
+        ),
     )
 
     # Create indexes
@@ -116,9 +124,18 @@ def upgrade() -> None:
         "ai_inference_events",
         ["recorded_at"],
     )
+    op.create_index(
+        "ix_ai_inference_events_expires_at",
+        "ai_inference_events",
+        ["expires_at"],
+        postgresql_where=sa.text("expires_at IS NOT NULL"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_ai_inference_events_expires_at", table_name="ai_inference_events"
+    )
     op.drop_index(
         "ix_ai_inference_events_recorded_at", table_name="ai_inference_events"
     )

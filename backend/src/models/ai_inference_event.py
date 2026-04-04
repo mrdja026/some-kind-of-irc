@@ -34,10 +34,10 @@ class AiInferenceEvent(Base):
 
     # Redis XADD message ID (e.g. "1711528800000-0") — globally unique per message.
     # Used as the dedup key so ON CONFLICT is reliable.
-    stream_msg_id = Column(String, nullable=False, unique=True)
+    stream_msg_id = Column(String, nullable=False)
 
     # Core event metadata
-    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False)
     source = Column(
         String,
         nullable=False,
@@ -46,7 +46,6 @@ class AiInferenceEvent(Base):
     kind = Column(
         String,
         nullable=False,
-        index=True,
         comment="Event type: claims_candidate, gmail_step_judge, tool_invoked, etc.",
     )
     backend = Column(
@@ -56,7 +55,7 @@ class AiInferenceEvent(Base):
     )
 
     # Session and request correlation
-    session_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True)
     request_id = Column(String, nullable=True)
     correlation_id = Column(String, nullable=True)
 
@@ -89,6 +88,14 @@ class AiInferenceEvent(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
+    # Retention: rows past expires_at may be purged by a scheduled job.
+    # Default: 90 days from creation. NULL means indefinite retention.
+    expires_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Retention deadline; rows past this timestamp may be purged",
+    )
+
     __table_args__ = (
         # Ensure stream_msg_id is unique for dedup
         UniqueConstraint("stream_msg_id", name="uq_ai_inference_event_stream_msg_id"),
@@ -98,4 +105,6 @@ class AiInferenceEvent(Base):
         Index("ix_ai_inference_events_kind", "kind"),
         # Index for time-range queries
         Index("ix_ai_inference_events_recorded_at", "recorded_at"),
+        # Partial index for retention purge queries
+        Index("ix_ai_inference_events_expires_at", "expires_at", postgresql_where="expires_at IS NOT NULL"),
     )

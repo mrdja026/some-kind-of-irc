@@ -94,6 +94,7 @@ class GmailSummaryRequest(BaseModel):
     emails: Annotated[List[Dict[str, Any]], Field(max_length=MAX_GMAIL_EMAILS)]
     interest: str
     answers: List[str] = []
+    session_id: Optional[str] = None
 
 
 class GmailQuestionsRequest(BaseModel):
@@ -101,6 +102,7 @@ class GmailQuestionsRequest(BaseModel):
     interest: str = ""
     previous_answers: List[str] = []
     question_count: int = 2
+    session_id: Optional[str] = None
 
 
 class GmailSummaryResponse(BaseModel):
@@ -153,6 +155,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _resolve_session_id(request_body_sid: Optional[str], http_request: Request) -> str:
+    """Return a canonical session UUID from body, header, or a fresh UUID."""
+    incoming = (request_body_sid or http_request.headers.get("x-session-id") or "").strip()
+    try:
+        return str(_uuid.UUID(incoming)) if incoming else str(_uuid.uuid4())
+    except ValueError:
+        return str(_uuid.uuid4())
 
 
 @app.get("/healthz")
@@ -286,6 +297,7 @@ async def generate_gmail_questions(
 
     rid = http_request.headers.get("x-request-id") or new_request_id()
     correlation_id = http_request.headers.get("x-correlation-id")
+    session_id = _resolve_session_id(request.session_id, http_request)
 
     questions = await gmail_agent.generate_followup_questions(
         emails=request.emails,
@@ -300,6 +312,7 @@ async def generate_gmail_questions(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="gmail_follow_up_interviewer",
             role="Gmail Follow-up Interviewer",
@@ -325,6 +338,7 @@ async def generate_gmail_questions(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="gmail_follow_up_interviewer",
             role="Gmail Follow-up Interviewer",
@@ -365,6 +379,7 @@ async def generate_gmail_summary(
 
     rid = http_request.headers.get("x-request-id") or new_request_id()
     correlation_id = http_request.headers.get("x-correlation-id")
+    session_id = _resolve_session_id(request.session_id, http_request)
 
     summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
@@ -378,6 +393,7 @@ async def generate_gmail_summary(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="action_summary_analyst",
             role="Action Summary Analyst",
@@ -401,6 +417,7 @@ async def generate_gmail_summary(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="insight_summary_analyst",
             role="Insight Summary Analyst",
@@ -432,6 +449,7 @@ async def generate_gmail_summary(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="inbox_triage_specialist",
             role="Inbox Triage Specialist",
@@ -455,6 +473,7 @@ async def generate_gmail_summary(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="gmail_summary_judge",
             role="Gmail Summary Judge",
@@ -488,6 +507,7 @@ async def generate_gmail_summary(
         username=username,
         correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
         caller=CallerInfo(
             agent="gmail_summary_judge",
             role="Gmail Summary Judge",

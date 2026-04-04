@@ -10,7 +10,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import redis
@@ -145,6 +145,8 @@ class AiEventStreamConsumer:
                 "reasoning": reasoning,
                 "plan": plan,
                 "payload": payload,
+                # Retention: automatically expire after 90 days
+                "expires_at": datetime.now(timezone.utc) + timedelta(days=90),
             }
         except Exception as e:
             logger.error("Failed to parse event %s: %s", stream_msg_id, e)

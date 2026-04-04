@@ -109,6 +109,7 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY-}"
       ADK_MODEL: "${ADK_MODEL:-anthropic/claude-sonnet-4-5-20250929}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
+      DP_SERVICE_AUTH_SECRET: "${DP_SERVICE_AUTH_SECRET:?DP_SERVICE_AUTH_SECRET must be set}"
       DB_HOST: "${DB_HOST:-postgres}"
       DB_PORT: "${DB_PORT:-5432}"
       DB_NAME: "${DB_NAME:-app_db}"
