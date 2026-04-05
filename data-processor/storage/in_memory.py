@@ -43,6 +43,12 @@ class LabelType(Enum):
     DATE = "date"
     AMOUNT = "amount"
     CUSTOM = "custom"
+    FIRE_DAMAGE = "fire_damage"
+    WATER_DAMAGE = "water_damage"
+    SMOKE_DAMAGE = "smoke_damage"
+    STRUCTURAL_DAMAGE = "structural_damage"
+    GLASS_DAMAGE = "glass_damage"
+    DEBRIS = "debris"
 
 
 @dataclass
@@ -82,6 +88,9 @@ class Annotation:
     extracted_text: Optional[str] = None
     confidence: Optional[float] = None
     validation_status: str = "pending"
+    verification_status: str = "unverified"
+    review_value: Optional[str] = None
+    certainty: Optional[float] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -96,6 +105,9 @@ class Annotation:
             "extracted_text": self.extracted_text,
             "confidence": self.confidence,
             "validation_status": self.validation_status,
+            "verification_status": self.verification_status,
+            "review_value": self.review_value,
+            "certainty": self.certainty,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -113,6 +125,9 @@ class Annotation:
             extracted_text=data.get("extracted_text"),
             confidence=data.get("confidence"),
             validation_status=data.get("validation_status", "pending"),
+            verification_status=data.get("verification_status", "unverified"),
+            review_value=data.get("review_value"),
+            certainty=data.get("certainty"),
         )
 
 
@@ -131,6 +146,9 @@ class Document:
     image_data: Optional[bytes] = None
     preprocessed_data: Optional[bytes] = None
     thumbnail_url: Optional[str] = None
+    source_bucket: Optional[str] = None
+    source_key: Optional[str] = None
+    source_parent_key: Optional[str] = None
     width: int = 0
     height: int = 0
     ocr_status: OcrStatus = OcrStatus.PENDING
@@ -155,6 +173,9 @@ class Document:
             "pdf_text_layer": self.pdf_text_layer,
             "image_url": self.image_url,
             "thumbnail_url": self.thumbnail_url,
+            "source_bucket": self.source_bucket,
+            "source_key": self.source_key,
+            "source_parent_key": self.source_parent_key,
             "width": self.width,
             "height": self.height,
             "ocr_status": self.ocr_status.value,
@@ -330,6 +351,9 @@ def _annotation_from_record(record: AnnotationRecord) -> Annotation:
         extracted_text=record.extracted_text,
         confidence=record.confidence,
         validation_status=record.validation_status,
+        verification_status=getattr(record, "verification_status", "unverified"),
+        review_value=getattr(record, "review_value", None),
+        certainty=getattr(record, "certainty", None),
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -351,6 +375,9 @@ def _document_from_record(record: DocumentRecord, include_annotations: bool = Tr
         image_data=_as_bytes(record.image_data),
         preprocessed_data=_as_bytes(record.preprocessed_data),
         thumbnail_url=record.thumbnail_url,
+        source_bucket=getattr(record, "source_bucket", None),
+        source_key=getattr(record, "source_key", None),
+        source_parent_key=getattr(record, "source_parent_key", None),
         width=record.width,
         height=record.height,
         ocr_status=_as_ocr_status(record.ocr_status),
@@ -447,6 +474,9 @@ class DocumentStore:
             image_data=document.image_data,
             preprocessed_data=document.preprocessed_data,
             thumbnail_url=document.thumbnail_url,
+            source_bucket=document.source_bucket,
+            source_key=document.source_key,
+            source_parent_key=document.source_parent_key,
             width=document.width,
             height=document.height,
             ocr_status=document.ocr_status.value,
@@ -522,6 +552,9 @@ class DocumentStore:
             extracted_text=annotation.extracted_text,
             confidence=annotation.confidence,
             validation_status=annotation.validation_status,
+            verification_status=annotation.verification_status,
+            review_value=annotation.review_value,
+            certainty=annotation.certainty,
             created_at=now,
             updated_at=now,
         )

@@ -76,6 +76,18 @@ export type ClaimResponse = {
   claim: unknown;
 };
 
+export type ClaimFileEntry = {
+  key: string;
+  filename: string;
+  size: number;
+  last_modified: string | null;
+};
+
+export type ClaimFilesResponse = {
+  claim_id: string;
+  files: ClaimFileEntry[];
+};
+
 export type ClaimQaHistoryEntry = {
   question: string;
   answer: string;
@@ -111,7 +123,10 @@ export type ClaimQaResponse = {
 };
 
 // Data Processor types
-export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom';
+export type LabelType = 'header' | 'table' | 'signature' | 'date' | 'amount' | 'custom'
+  | 'fire_damage' | 'water_damage' | 'smoke_damage' | 'structural_damage' | 'glass_damage' | 'debris';
+
+export type VerificationStatus = 'unverified' | 'human_verified' | 'ai_suggested' | 'rejected';
 
 export type BoundingBox = {
   x: number;
@@ -130,6 +145,10 @@ export type Annotation = {
   bounding_box: BoundingBox;
   extracted_text?: string | null;
   confidence?: number | null;
+  validation_status?: string;
+  verification_status?: VerificationStatus;
+  review_value?: string | null;
+  certainty?: number | null;
   created_at: string;
 };
 
@@ -149,6 +168,9 @@ export type Document = {
   ocr_status: OcrStatus;
   ocr_result?: OcrResult | null;
   annotations: Annotation[];
+  source_bucket?: string | null;
+  source_key?: string | null;
+  source_parent_key?: string | null;
   created_at: string;
 };
 
@@ -295,3 +317,41 @@ export type StageColorMap = {
     label: string;
   };
 };
+
+// SSE Event Types for AI streaming
+export type AISSEEventType = 'meta' | 'progress' | 'delta' | 'done' | 'error';
+
+export type AISSEMetaEvent = {
+  type: 'meta';
+  agent: string;
+  model: string;
+};
+
+export type AISSEProgressEvent = {
+  type: 'progress';
+  stage: string;
+  message: string;
+};
+
+export type AISSEDeltaEvent = {
+  type: 'delta';
+  content: string;
+};
+
+export type AISSEDoneEvent<T = unknown> = {
+  type: 'done';
+  result: T;
+};
+
+export type AISSEErrorEvent = {
+  type: 'error';
+  code: string;
+  message: string;
+};
+
+export type AISSEEvent<T = unknown> =
+  | AISSEMetaEvent
+  | AISSEProgressEvent
+  | AISSEDeltaEvent
+  | AISSEDoneEvent<T>
+  | AISSEErrorEvent;

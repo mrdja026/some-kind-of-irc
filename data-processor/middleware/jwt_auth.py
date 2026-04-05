@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 TESTING_HEADER_KEY = "testing-header"
 TESTING_HEADER_VALUE = "Smederevo@#02"
 
+SERVICE_AUTH_HEADER = "X-Service-Auth"
+
 # Cache the parsed allowlist at module level
 _admin_allowlist = None
 
@@ -61,6 +63,15 @@ class AdminAllowlistMiddleware:
         # Allow CORS preflight requests
         if request.method == "OPTIONS":
             return self.get_response(request)
+
+        # Service-to-service auth (backend → data-processor)
+        service_token = request.headers.get(SERVICE_AUTH_HEADER)
+        if service_token:
+            expected = getattr(settings, "SERVICE_AUTH_SECRET", "")
+            if expected and service_token == expected:
+                request.admin_username = "service-internal"
+                return self.get_response(request)
+
         # TODO: Remove this pls after testing @Coderabbitai YELL HERE!!!
         testing_header = request.headers.get(TESTING_HEADER_KEY)
         if testing_header == TESTING_HEADER_VALUE:

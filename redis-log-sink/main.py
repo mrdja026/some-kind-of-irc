@@ -5,9 +5,12 @@ import signal
 import socketserver
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import quote_plus
 
 import redis
 
+from consumer import StreamConsumer
 from session_dump_lib import (
     DEFAULT_AI_STREAM_KEY,
     build_session_dump_document,
@@ -26,11 +29,38 @@ REDIS_LOG_URL = os.getenv("REDIS_LOG_URL", "redis://redis-log:6379/0")
 REDIS_LOG_STREAM_KEY = os.getenv("REDIS_LOG_STREAM_KEY", "caddy:warn_error_logs")
 AI_SESSION_STREAM_KEY = os.getenv("AI_SESSION_STREAM_KEY", DEFAULT_AI_STREAM_KEY)
 REDIS_LOG_MAXLEN = int(os.getenv("REDIS_LOG_MAXLEN", "200"))
+
+def _build_database_url() -> str:
+    explicit = os.getenv("DATABASE_URL", "").strip()
+    if explicit:
+        return explicit
+    host = os.getenv("DB_HOST", "").strip()
+    password_file = os.getenv("DB_PASSWORD_FILE", "").strip()
+    if not host and not password_file:
+        return ""
+    password_raw = os.getenv("DB_PASSWORD", "").strip()
+    if not password_raw and password_file:
+        p = Path(password_file)
+        if p.is_file():
+            password_raw = p.read_text(encoding="utf-8").strip()
+    user = os.getenv("DB_USER", "app_user").strip()
+    port = os.getenv("DB_PORT", "5432").strip()
+    name = os.getenv("DB_NAME", "app_db").strip()
+    host = host or "postgres"
+    if not password_raw:
+        LOG.warning(
+            "DB persistence disabled: missing DB_PASSWORD/DB_PASSWORD_FILE"
+        )
+        return ""
+    return f"postgresql://{quote_plus(user)}:{quote_plus(password_raw)}@{host}:{port}/{name}"
+
+DATABASE_URL = _build_database_url()
 ALLOWED_LEVELS = {"warn", "error"}
 
 redis_client = redis.from_url(REDIS_LOG_URL, decode_responses=True)
 
 _session_dump_written = False
+_stream_consumer: StreamConsumer | None = None
 
 
 def _build_stream_entry(payload: dict, raw_line: str, level: str) -> dict[str, str]:
@@ -143,9 +173,11 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def main() -> None:
+    global _stream_consumer
+
     dump_dir_status = os.getenv("SESSION_DUMP_DIR", "").strip() or "(unset)"
     LOG.info(
-        "Starting sink on %s:%s -> %s stream=%s maxlen=%s ai_stream=%s dump_dir=%s",
+        "Starting sink on %s:%s -> %s stream=%s maxlen=%s ai_stream=%s dump_dir=%s db=%s",
         LISTEN_HOST,
         LISTEN_PORT,
         REDIS_LOG_URL,
@@ -153,7 +185,21 @@ def main() -> None:
         REDIS_LOG_MAXLEN,
         AI_SESSION_STREAM_KEY,
         dump_dir_status,
+        "configured" if DATABASE_URL else "(disabled)",
     )
+
+    # Start continuous Redis→Postgres consumer
+    if DATABASE_URL:
+        _stream_consumer = StreamConsumer(
+            redis_url=REDIS_LOG_URL,
+            database_url=DATABASE_URL,
+            ai_stream_key=AI_SESSION_STREAM_KEY,
+            caddy_stream_key=REDIS_LOG_STREAM_KEY,
+        )
+        _stream_consumer.start()
+    else:
+        LOG.warning("DATABASE_URL not set; stream consumer disabled (events won't persist to Postgres)")
+
     server = ThreadedTCPServer((LISTEN_HOST, LISTEN_PORT), LogLineHandler)
 
     def handle_sig(signum: int, _frame: object) -> None:
@@ -173,6 +219,8 @@ def main() -> None:
     finally:
         LOG.info("Sink TCP server stopped; writing merged session dump if configured")
         server.server_close()
+        if _stream_consumer:
+            _stream_consumer.stop()
         _write_merged_session_dump()
 
 

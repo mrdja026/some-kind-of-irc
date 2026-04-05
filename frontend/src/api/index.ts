@@ -6,64 +6,138 @@ import type {
   CalendarEventPayload,
   InferenceLogEvent,
   ClaimResponse,
+  ClaimFilesResponse,
   ClaimQaHistoryEntry,
   ClaimQaResponse,
   ClaimToolCall,
+  AISSEEvent,
+  AISSEDoneEvent,
 } from '../types';
 
-const API_BASE_URL =
+export const API_BASE_URL =
   typeof window === 'undefined'
     ? import.meta.env.VITE_API_URL || 'http://backend:8002'
-    : (() => {
-        const origin = window.location.origin;
-        const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
-        if (explicit) {
-          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
-            return origin;
-          }
-          return explicit;
-        }
-        return origin;
-      })();
-
-// ADK AI service base URL (now the only AI backend)
-const ADK_API_BASE_URL =
-  typeof window === 'undefined'
-    ? import.meta.env.VITE_ADK_API_URL || import.meta.env.VITE_AI_API_URL || 'http://backend:8002'
     : (() => {
         const origin = window.location.origin;
         const isLocalHost =
           window.location.hostname === 'localhost' ||
           window.location.hostname === '127.0.0.1';
-        const normalizeLocalAdkUrl = (value: string): string => {
+        const normalizeLocalApiUrl = (value: string): string => {
           if (!isLocalHost) {
             return value;
           }
-          if (value.includes(':8002') || value.includes(':8001') || value.includes(':8004') || value.includes(':4269')) {
+          if (
+            value.includes(':8002') ||
+            value.includes(':8001') ||
+            value.includes(':8004') ||
+            value.includes(':4269')
+          ) {
             return 'http://localhost:8080';
           }
           return value;
         };
-        const explicit = import.meta.env.VITE_PUBLIC_ADK_API_URL?.trim();
+        const explicit = import.meta.env.VITE_PUBLIC_API_URL?.trim();
         if (explicit) {
-          if (explicit.includes('localhost') && window.location.hostname !== 'localhost') {
+          if ((explicit.includes('localhost') || explicit.includes('127.0.0.1')) && !isLocalHost) {
             return origin;
           }
-          return normalizeLocalAdkUrl(explicit);
+          return normalizeLocalApiUrl(explicit);
         }
-        const browserAdk = import.meta.env.VITE_ADK_API_URL?.trim();
-        if (browserAdk) {
-          if (browserAdk.includes('localhost') && window.location.hostname !== 'localhost') {
-            return origin;
-          }
-          return normalizeLocalAdkUrl(browserAdk);
-        }
-        // Fall back to AI API URL if no ADK-specific URL is set
         if (isLocalHost) {
           return 'http://localhost:8080';
         }
         return origin;
       })();
+
+// ---------------------------------------------------------------------------
+// SSE (Server-Sent Events) utilities for AI streaming
+// ---------------------------------------------------------------------------
+
+type SSEProgressCallback = (stage: string, message: string) => void;
+
+/**
+ * Consume an SSE stream and return the final result from the 'done' event.
+ * Calls onProgress for each 'progress' and 'meta' event received.
+ */
+async function consumeSSEStream<T>(
+  url: string,
+  options: RequestInit,
+  onProgress?: SSEProgressCallback,
+): Promise<T> {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Accept': 'text/event-stream',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('No response body');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: T | null = null;
+  let errorMessage: string | null = null;
+  let currentEventType: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE events from buffer
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEventType = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        try {
+          const parsed = JSON.parse(data);
+
+          if (currentEventType === 'meta' && onProgress) {
+            // Show agent/model info as the first progress step
+            const agent = parsed.agent || 'AI';
+            const model = parsed.model || '';
+            const metaMessage = model ? `${agent} (${model})` : agent;
+            onProgress('meta', `Starting ${metaMessage}...`);
+          } else if (currentEventType === 'progress' && onProgress) {
+            onProgress(parsed.stage, parsed.message);
+          } else if (currentEventType === 'done') {
+            result = parsed.result as T;
+          } else if (currentEventType === 'error') {
+            errorMessage = parsed.message || 'Unknown error';
+          }
+        } catch {
+          // Skip malformed JSON
+        }
+        currentEventType = null;
+      }
+    }
+  }
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  if (result === null) {
+    throw new Error('No result received from SSE stream');
+  }
+
+  return result;
+}
 
 const parseAIError = async (response: Response, fallback: string): Promise<string> => {
   const payload = await response.json().catch(() => null);
@@ -159,70 +233,74 @@ export const generateGmailQuestions = async (
   interest: string,
   previousAnswers: string[] = [],
   questionCount = 2,
+  onProgress?: SSEProgressCallback,
 ): Promise<{ questions: string[] }> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/gmail/questions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      emails,
-      interest,
-      previous_answers: previousAnswers,
-      question_count: questionCount,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error('Failed to generate questions');
-  }
-  return response.json();
+  return consumeSSEStream<{ questions: string[] }>(
+    `${API_BASE_URL}/ai/gmail/questions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        emails,
+        interest,
+        previous_answers: previousAnswers,
+        question_count: questionCount,
+      }),
+    },
+    onProgress,
+  );
 };
 
 export const generateGmailSummary = async (
   emails: any[],
   interest: string,
   answers: string[],
+  onProgress?: SSEProgressCallback,
 ): Promise<{ final_summary: string; top_email_ids: string[]; reasoning: string }> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/gmail/summary`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ emails, interest, answers }),
-  });
-  if (!response.ok) {
-    throw new Error('Failed to generate summary');
-  }
-  return response.json();
+  return consumeSSEStream<{ final_summary: string; top_email_ids: string[]; reasoning: string }>(
+    `${API_BASE_URL}/ai/gmail/summary`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ emails, interest, answers }),
+    },
+    onProgress,
+  );
 };
 
 export const generateCalendarQuestion = async (
   request: string,
   previousAnswers: string[] = [],
+  onProgress?: SSEProgressCallback,
 ): Promise<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/calendar/questions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ request, previous_answers: previousAnswers }),
-  });
-  if (!response.ok) {
-    throw new Error('Failed to generate calendar question');
-  }
-  return response.json();
+  return consumeSSEStream<{ status: 'clarify' | 'confirm'; question: string; event: CalendarEventPayload }>(
+    `${API_BASE_URL}/ai/calendar/questions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ request, previous_answers: previousAnswers }),
+    },
+    onProgress,
+  );
 };
 
 export const createCalendarEvent = async (
   event: CalendarEventPayload,
+  onProgress?: SSEProgressCallback,
 ): Promise<{ event_id: string | null; html_link: string | null; summary: string | null }> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/calendar/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ event }),
-  });
-  if (!response.ok) {
-    throw new Error('Failed to create calendar event');
-  }
-  return response.json();
+  return consumeSSEStream<{ event_id: string | null; html_link: string | null; summary: string | null }>(
+    `${API_BASE_URL}/ai/calendar/create`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ event }),
+    },
+    onProgress,
+  );
 };
 
 export const fetchGmailMessages = async (): Promise<{ emails: any[] }> => {
@@ -263,6 +341,62 @@ export const fetchRandomClaim = async (): Promise<ClaimResponse> => {
   return response.json();
 };
 
+export const fetchDeepReviewClaim = async (): Promise<ClaimResponse> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/deep-review/random`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch deep review claim' }));
+    throw new Error(error.detail || 'Failed to fetch deep review claim');
+  }
+  return response.json();
+};
+
+export const fetchClaimFiles = async (claimId: string): Promise<ClaimFilesResponse> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch claim files' }));
+    throw new Error(error.detail || 'Failed to fetch claim files');
+  }
+  return response.json();
+};
+
+const encodeClaimFilename = (filename: string): string =>
+  filename.split('/').map(encodeURIComponent).join('/');
+
+export const fetchClaimFileContent = async (claimId: string, filename: string): Promise<unknown> => {
+  const encodedFilename = encodeClaimFilename(filename);
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/files/${encodedFilename}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.text().catch(() => 'Failed to fetch file');
+    throw new Error(error || 'Failed to fetch file');
+  }
+  const contentType = response.headers.get('content-type') || '';
+  const lowerFilename = filename.toLowerCase();
+  // Return parsed JSON for .json files
+  if (lowerFilename.endsWith('.json')) {
+    return response.json();
+  }
+  // Return text for text/* content types or known text extensions
+  const isTextContent =
+    contentType.startsWith('text/') ||
+    lowerFilename.endsWith('.txt') ||
+    lowerFilename.endsWith('.csv') ||
+    lowerFilename.endsWith('.xml');
+  if (isTextContent) {
+    return response.text();
+  }
+  // Return Blob for everything else (images, PDFs, binary files, etc.)
+  return response.blob();
+};
+
+export const getClaimFileUrl = (claimId: string, filename: string): string =>
+  `${API_BASE_URL}/media/claims/${claimId}/files/${encodeClaimFilename(filename)}`;
+
 export const generateClaimAnswer = async (
   claim: unknown,
   question: string,
@@ -271,26 +405,26 @@ export const generateClaimAnswer = async (
   askedQuestions: string[] = [],
   toolHistory: ClaimToolCall[] = [],
   sessionId?: string | null,
+  onProgress?: SSEProgressCallback,
 ): Promise<ClaimQaResponse> => {
-  const response = await fetch(`${API_BASE_URL}/ai/claims/qa`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      claim,
-      question,
-      history,
-      question_count: questionCount,
-      asked_questions: askedQuestions,
-      tool_history: toolHistory,
-      session_id: sessionId ?? undefined,
-    }),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to answer claim question' }));
-    throw new Error(error.detail || 'Failed to answer claim question');
-  }
-  return response.json();
+  return consumeSSEStream<ClaimQaResponse>(
+    `${API_BASE_URL}/ai/claims/qa`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        claim,
+        question,
+        history,
+        question_count: questionCount,
+        asked_questions: askedQuestions,
+        tool_history: toolHistory,
+        session_id: sessionId ?? undefined,
+      }),
+    },
+    onProgress,
+  );
 };
 
 
@@ -506,9 +640,9 @@ export const addUserToChannel = async (
   }
 };
 
-// AI Agent APIs (using ADK service only)
+// AI Agent APIs (status/health checks still go through Caddy to ADK directly)
 export const getAIStatus = async (): Promise<AIStatus> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/ai/status`, {
+  const response = await fetch(`${API_BASE_URL}/adk/ai/status`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -518,7 +652,7 @@ export const getAIStatus = async (): Promise<AIStatus> => {
 };
 
 export const getAIHealth = async (): Promise<{ service: string; status: string }> => {
-  const response = await fetch(`${ADK_API_BASE_URL}/adk/healthz`, {
+  const response = await fetch(`${API_BASE_URL}/adk/healthz`, {
     credentials: 'include',
   });
   if (!response.ok) {
@@ -547,6 +681,140 @@ export const getInferenceLogs = async (
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to get inference logs' }));
     throw new Error(error.detail || 'Failed to get inference logs');
+  }
+  return response.json();
+};
+
+// ---------------------------------------------------------------------------
+// Claim damage-annotation API (proxied through backend)
+// ---------------------------------------------------------------------------
+
+export type CreateClaimDocRequest = {
+  image_url: string;
+  source_key: string;
+  source_parent_key?: string;
+  original_filename?: string;
+};
+
+export type CreateClaimAnnotationRequest = {
+  document_id: string;
+  label_type: string;
+  label_name?: string;
+  color?: string;
+  bounding_box: { x: number; y: number; width: number; height: number; rotation?: number };
+  verification_status?: string;
+  certainty?: number;
+  review_value?: string | null;
+};
+
+export type DamageAnnotationEntry = {
+  id: string;
+  document_id: string;
+  label_type: string;
+  label_name: string;
+  color: string;
+  bounding_box: { x: number; y: number; width: number; height: number; rotation?: number };
+  verification_status: string;
+  certainty: number | null;
+  review_value: string | null;
+  original_filename: string | null;
+  image_url: string | null;
+};
+
+export const createClaimDocument = async (
+  claimId: string,
+  body: CreateClaimDocRequest,
+): Promise<Record<string, unknown>> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/documents/from-minio`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create document' }));
+    throw new Error(error.detail || 'Failed to create document');
+  }
+  return response.json();
+};
+
+export const createClaimAnnotation = async (
+  claimId: string,
+  body: CreateClaimAnnotationRequest,
+): Promise<Record<string, unknown>> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/damage-annotations`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create annotation' }));
+    throw new Error(error.detail || 'Failed to create annotation');
+  }
+  return response.json();
+};
+
+export const fetchClaimAnnotations = async (
+  claimId: string,
+): Promise<{ claim_id: string; annotations: DamageAnnotationEntry[]; count: number }> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/damage-annotations`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch annotations' }));
+    throw new Error(error.detail || 'Failed to fetch annotations');
+  }
+  return response.json();
+};
+
+// ---------------------------------------------------------------------------
+// Annotation session & export persistence
+// ---------------------------------------------------------------------------
+
+export const createAnnotationSession = async (
+  claimId: string,
+): Promise<{ session_id: string; created: boolean }> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/annotation-session`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create annotation session' }));
+    throw new Error(error.detail || 'Failed to create annotation session');
+  }
+  return response.json();
+};
+
+export const persistAnnotationExport = async (
+  claimId: string,
+  sessionId: string,
+  documentId: string,
+  findings: unknown,
+  sourceFilename?: string,
+): Promise<{
+  status: string
+  debug_event_id: string
+  annotation_result_id: string
+  damage_labels: string[]
+  stream_msg_id: string
+  ai_message_id: number | null
+}> => {
+  const response = await fetch(`${API_BASE_URL}/media/claims/${claimId}/annotation-export`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      document_id: documentId,
+      findings,
+      source_filename: sourceFilename ?? null,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to persist annotation export' }));
+    throw new Error(error.detail || 'Failed to persist annotation export');
   }
   return response.json();
 };

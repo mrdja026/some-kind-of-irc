@@ -41,10 +41,18 @@ services:
       LOG_SINK_HOST: 0.0.0.0
       LOG_SINK_PORT: "6001"
       SESSION_DUMP_DIR: "${SESSION_DUMP_DIR:-/datasets-out}"
+      DB_HOST: "${DB_HOST:-postgres}"
+      DB_PORT: "${DB_PORT:-5432}"
+      DB_NAME: "${DB_NAME:-app_db}"
+      DB_USER: "${DB_USER:-app_user}"
+      DB_PASSWORD_FILE: /run/secrets/pg_app_password
+    secrets:
+      - pg_app_password
     volumes:
       - ./frontend/public/datasets:/datasets-out
     depends_on:
       - redis-log
+      - postgres
 
   backend:
     build:
@@ -61,6 +69,7 @@ services:
       AI_SESSION_STREAM_KEY: "${AI_SESSION_STREAM_KEY:-ai:session_events}"
       DATA_PROCESSOR_URL: "${DATA_PROCESSOR_URL:-http://data-processor:8003}"
       FEATURE_DATA_PROCESSOR: "${FEATURE_DATA_PROCESSOR:-true}"
+      DP_SERVICE_AUTH_SECRET: "${DP_SERVICE_AUTH_SECRET:?DP_SERVICE_AUTH_SECRET must be set}"
       ADMIN_ALLOWLIST: "${ADMIN_ALLOWLIST:-admina;guest;guest2}"
       AI_ALLOWLIST: "${AI_ALLOWLIST:-admina;guest;guest2;guest3}"
       GMAIL_OAUTH_CLIENT_ID: "${GMAIL_OAUTH_CLIENT_ID:-}"
@@ -108,6 +117,7 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY-}"
       ADK_MODEL: "${ADK_MODEL:-anthropic/claude-sonnet-4-5-20250929}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
+      DP_SERVICE_AUTH_SECRET: "${DP_SERVICE_AUTH_SECRET:?DP_SERVICE_AUTH_SECRET must be set}"
       DB_HOST: "${DB_HOST:-postgres}"
       DB_PORT: "${DB_PORT:-5432}"
       DB_NAME: "${DB_NAME:-app_db}"
@@ -198,6 +208,7 @@ services:
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       BACKEND_URL: "${BACKEND_URL:-http://backend:8002}"
+      SERVICE_AUTH_SECRET: "${DP_SERVICE_AUTH_SECRET:?DP_SERVICE_AUTH_SECRET must be set}"
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
       DB_HOST: "${DB_HOST:-postgres}"
       DB_PORT: "${DB_PORT:-5432}"

@@ -37,6 +37,7 @@ DATA_PROCESSOR_ENABLED = os.getenv("DATA_PROCESSOR_ENABLED", "true").lower() in 
 JWT_SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
 JWT_ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ADMIN_ALLOWLIST = os.getenv("ADMIN_ALLOWLIST", "admina")
+SERVICE_AUTH_SECRET = os.getenv("SERVICE_AUTH_SECRET", "")
 
 # Application definition
 INSTALLED_APPS = [

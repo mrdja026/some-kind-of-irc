@@ -1,0 +1,11 @@
+## 1. Implementation
+- [x] 1.1 Add backend endpoint: GET /claims/{claim_id}/annotation-results?session_id=&document_id=
+- [x] 1.2 Lookup latest claims_annotation_results by claim_id (+optional session_id, document_id)
+- [x] 1.3 Derive primary damage_type from labels (certainty -> frequency)
+- [x] 1.4 Emit AI session stream event kind=claims_annotation_results
+- [x] 1.5 Post #ai message with "ok that is {damage_type} damage" + FINDINGS JSON (auth-gated)
+- [x] 1.6 Add ADK mock tool to call backend and return summary
+- [x] 1.7 Allowlist claims_annotation_results in session dump normalization
+- [x] 1.8 Wire tool into candidate_a + followup_candidate_a stages
+- [x] 1.9 Plumb annotation_document_id from frontend annotation modal → Q&A claim payload
+- [x] 1.10 Lint + local deploy

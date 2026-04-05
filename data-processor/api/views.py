@@ -123,6 +123,64 @@ def health_check(request):
     )
 
 
+class DocumentFromMinioView(APIView):
+    """Create or retrieve a document from a MinIO object reference.
+
+    Idempotent: if a document with the same source_key already exists in the
+    given channel it is returned instead of creating a duplicate.
+    """
+
+    def post(self, request):
+        source_bucket = request.data.get("source_bucket")
+        source_key = request.data.get("source_key")
+        source_parent_key = request.data.get("source_parent_key")
+        image_url = request.data.get("image_url")
+        channel_id = request.data.get("channel_id")
+        uploaded_by = request.data.get("uploaded_by", "")
+        original_filename = request.data.get("original_filename", "")
+
+        if not source_bucket or not source_key or not channel_id:
+            return Response(
+                {"error": "source_bucket, source_key, and channel_id are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from api.models import DocumentRecord
+
+        existing = DocumentRecord.objects.filter(
+            source_bucket=source_bucket, source_key=source_key, channel_id=channel_id
+        ).first()
+        if existing:
+            doc = store.get_document(existing.id)
+            serializer = DocumentSerializer(doc)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        if not original_filename:
+            original_filename = source_key.rsplit("/", 1)[-1] if "/" in source_key else source_key
+
+        _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".svg"}
+        ext = Path(original_filename).suffix.lower()
+        if ext == ".pdf":
+            inferred_type = "pdf"
+        elif ext in _image_exts:
+            inferred_type = "image"
+        else:
+            inferred_type = "other"
+        doc = Document(
+            channel_id=channel_id,
+            uploaded_by=uploaded_by,
+            original_filename=original_filename,
+            file_type=inferred_type,
+            image_url=image_url,
+            source_bucket=source_bucket,
+            source_key=source_key,
+            source_parent_key=source_parent_key,
+        )
+        doc = store.create_document(doc)
+        serializer = DocumentSerializer(doc)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 class DocumentListCreateView(APIView):
     """
     List all documents or create a new document.
@@ -724,6 +782,9 @@ class DocumentExportView(APIView):
                 "confidence": annotation.confidence,
                 "bounding_box": annotation.bounding_box.to_dict() if annotation.bounding_box else None,
                 "validation_status": annotation.validation_status,
+                "verification_status": annotation.verification_status,
+                "review_value": annotation.review_value,
+                "certainty": annotation.certainty,
             }
             fields.append(field)
         
@@ -760,7 +821,8 @@ class DocumentExportView(APIView):
             # Header row
             writer.writerow([
                 "document_id", "source_filename", "field_name", "field_type",
-                "value", "confidence", "validation_status"
+                "value", "confidence", "validation_status",
+                "verification_status", "review_value", "certainty"
             ])
             
             # Data rows
@@ -773,6 +835,9 @@ class DocumentExportView(APIView):
                     field["value"] or "",
                     field["confidence"] or "",
                     field["validation_status"],
+                    field.get("verification_status") or "",
+                    field.get("review_value") or "",
+                    field.get("certainty") if field.get("certainty") is not None else "",
                 ])
             
             csv_content = output.getvalue()
@@ -797,6 +862,9 @@ CREATE TABLE IF NOT EXISTS extracted_fields (
     field_value TEXT,
     confidence REAL,
     validation_status TEXT,
+    verification_status TEXT,
+    review_value TEXT,
+    certainty REAL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
             """.strip())
@@ -805,8 +873,8 @@ CREATE TABLE IF NOT EXISTS extracted_fields (
             # Insert statements
             for field in fields:
                 sql = """
-INSERT INTO extracted_fields (document_id, source_filename, field_name, field_type, field_value, confidence, validation_status)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO extracted_fields (document_id, source_filename, field_name, field_type, field_value, confidence, validation_status, verification_status, review_value, certainty)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """.strip()
                 sql_statements.append(sql)
                 parameters.append((
@@ -816,7 +884,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
                     field["type"],
                     field["value"] or "",
                     field["confidence"],
-                    field["validation_status"]
+                    field["validation_status"],
+                    field.get("verification_status"),
+                    field.get("review_value"),
+                    field.get("certainty"),
                 ))
             
             return Response(

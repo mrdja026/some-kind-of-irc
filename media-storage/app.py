@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import urllib.parse
 from uuid import uuid4
 from typing import Optional
 
@@ -213,6 +214,7 @@ def _ensure_bucket_exists():
 
 
 _claim_filename_re = re.compile(r"^CLM-2026-(\d{4})\.json$")
+_claim_id_re = re.compile(r"^CLM-2026-\d{4}$")
 
 
 def _parse_claim_index(filename: str) -> Optional[int]:
@@ -419,6 +421,75 @@ def get_claim(filename: str):
         return jsonify({"detail": "Invalid claim JSON"}), 502
 
     return jsonify({"filename": filename, "claim": claim_payload})
+
+
+@app.get("/claims/<claim_id>/files")
+def list_claim_files(claim_id: str):
+    _, error = _verify_session()
+    if error == "auth_unavailable":
+        return jsonify({"detail": "Auth service unavailable"}), 503
+    if error:
+        return jsonify({"detail": "Unauthorized"}), 401
+
+    if not _claim_id_re.match(claim_id):
+        return jsonify({"detail": "Invalid claim ID"}), 400
+
+    prefix = f"{claim_id}-data/data/"
+    files = []
+    try:
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=claims_bucket, Prefix=prefix)
+        for page in pages:
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                name = key.split("/")[-1] if "/" in key else key
+                files.append({
+                    "key": key,
+                    "filename": name,
+                    "size": obj.get("Size", 0),
+                    "last_modified": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
+                })
+    except EndpointConnectionError:
+        return jsonify({"detail": "Storage unavailable"}), 503
+    except ClientError:
+        return jsonify({"detail": "Storage error"}), 503
+
+    return jsonify({"claim_id": claim_id, "files": files})
+
+
+@app.get("/claims/<claim_id>/files/<path:filename>")
+def get_claim_file(claim_id: str, filename: str):
+    _, error = _verify_session()
+    if error == "auth_unavailable":
+        return jsonify({"detail": "Auth service unavailable"}), 503
+    if error:
+        return jsonify({"detail": "Unauthorized"}), 401
+
+    if not _claim_id_re.match(claim_id):
+        return jsonify({"detail": "Invalid claim ID"}), 400
+
+    safe_filename = os.path.basename(os.path.normpath(urllib.parse.unquote(filename)))
+    if not safe_filename or safe_filename in (".", "..") or "/" in safe_filename or "\\" in safe_filename:
+        return jsonify({"detail": "Invalid filename"}), 400
+    key = f"{claim_id}-data/data/{safe_filename}"
+
+    try:
+        response = s3_client.get_object(Bucket=claims_bucket, Key=key)
+    except EndpointConnectionError:
+        return jsonify({"detail": "Storage unavailable"}), 503
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code in {"NoSuchKey", "404", "NotFound"}:
+            return jsonify({"detail": "File not found"}), 404
+        return jsonify({"detail": "Storage error"}), 503
+
+    try:
+        data = response["Body"].read()
+    except OSError:
+        return jsonify({"detail": "Failed to read file"}), 502
+
+    content_type = response.get("ContentType", "application/octet-stream")
+    return app.response_class(data, mimetype=content_type)
 
 
 @app.get("/media/<path:key>")

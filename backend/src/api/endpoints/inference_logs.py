@@ -1,4 +1,8 @@
-"""API endpoint for reading AI inference events from Redis stream."""
+"""API endpoint for reading AI inference events from Redis stream.
+
+Supports the extended event schema with caller attribution, tool_calls,
+question(s), reasoning, and plan fields.
+"""
 
 import json
 import logging
@@ -6,7 +10,7 @@ from typing import Any
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.core.config import settings
 from src.api.endpoints.auth import get_current_user
@@ -33,6 +37,29 @@ def _get_redis_log() -> redis.Redis:
     return _redis_log_client
 
 
+class CallerInfo(BaseModel):
+    """Agent caller attribution metadata."""
+
+    agent: str
+    role: str | None = None
+    stage: str
+    attempt: int | None = None
+    model: str | None = None
+
+
+class ToolCall(BaseModel):
+    """Tool invocation record."""
+
+    tool_name: str
+    args: Any | None = None
+    result: Any | None = None
+    error: str | None = None
+    elapsed_ms: int | None = None
+    reason: str | None = None
+    reason_detail: str | None = None
+    caller: CallerInfo | None = None
+
+
 class InferenceLogEvent(BaseModel):
     """A single inference log event."""
 
@@ -42,8 +69,15 @@ class InferenceLogEvent(BaseModel):
     kind: str
     backend: str
     username: str | None = None
+    session_id: str | None = None
     request_id: str | None = None
     correlation_id: str | None = None
+    caller: CallerInfo | None = None
+    tool_calls: list[ToolCall] | None = None
+    question: str | None = None
+    questions: list[str] | None = None
+    reasoning: str | None = None
+    plan: dict[str, Any] | None = None
     payload: dict[str, Any]
 
 
@@ -57,6 +91,16 @@ class InferenceLogsResponse(BaseModel):
 AI_EVENT_KINDS = None
 
 
+def _safe_json_loads(value: str | None) -> Any:
+    """Parse JSON string, returning None on failure."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
 @router.get("/logs", response_model=InferenceLogsResponse)
 async def get_inference_logs(
     limit: int = Query(default=100, ge=1, le=500),
@@ -64,7 +108,8 @@ async def get_inference_logs(
 ) -> InferenceLogsResponse:
     """Read AI inference events from Redis stream.
 
-    Returns the most recent inference log events for the current user.
+    Returns the most recent inference log events for the current user,
+    including caller attribution, tool_calls, and reasoning fields.
     """
     try:
         client = _get_redis_log()
@@ -95,6 +140,32 @@ async def get_inference_logs(
                 except json.JSONDecodeError:
                     payload = {"raw": payload_raw}
 
+                # Parse new fields
+                caller_raw = _safe_json_loads(fields.get("caller"))
+                caller = None
+                if isinstance(caller_raw, dict):
+                    try:
+                        caller = CallerInfo(**caller_raw)
+                    except (ValidationError, TypeError) as exc:
+                        logger.warning("Skipping malformed caller in event %s: %s", msg_id, exc)
+
+                tool_calls_raw = _safe_json_loads(fields.get("tool_calls"))
+                tool_calls = None
+                if isinstance(tool_calls_raw, list):
+                    tool_calls = []
+                    for tc in tool_calls_raw:
+                        if isinstance(tc, dict):
+                            try:
+                                tool_calls.append(ToolCall(**tc))
+                            except (ValidationError, TypeError) as exc:
+                                logger.warning("Skipping malformed tool_call in event %s: %s", msg_id, exc)
+
+                questions_raw = _safe_json_loads(fields.get("questions"))
+                questions = questions_raw if isinstance(questions_raw, list) else None
+
+                plan_raw = _safe_json_loads(fields.get("plan"))
+                plan = plan_raw if isinstance(plan_raw, dict) else None
+
                 event = InferenceLogEvent(
                     event_id=msg_id,
                     recorded_at=fields.get("recorded_at", ""),
@@ -102,8 +173,15 @@ async def get_inference_logs(
                     kind=kind,
                     backend=fields.get("backend", ""),
                     username=row_username or None,
+                    session_id=fields.get("session_id") or None,
                     request_id=fields.get("request_id") or None,
                     correlation_id=fields.get("correlation_id") or None,
+                    caller=caller,
+                    tool_calls=tool_calls,
+                    question=fields.get("question") or None,
+                    questions=questions,
+                    reasoning=fields.get("reasoning") or None,
+                    plan=plan,
                     payload=payload
                     if isinstance(payload, dict)
                     else {"value": payload},

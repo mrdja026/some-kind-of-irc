@@ -165,8 +165,13 @@ export function BoundingBoxCanvas({
     let crossOrigin: string | undefined
     if (typeof window !== 'undefined') {
       try {
-        const imageOrigin = new URL(imageUrl, window.location.origin).origin
-        crossOrigin = imageOrigin !== window.location.origin ? 'anonymous' : undefined
+        const parsedUrl = new URL(imageUrl, window.location.origin)
+        const isSameOrigin = parsedUrl.origin === window.location.origin
+        if (!isSameOrigin) {
+          crossOrigin = parsedUrl.pathname.startsWith('/media/claims/')
+            ? 'use-credentials'
+            : 'anonymous'
+        }
       } catch {
         crossOrigin = undefined
       }

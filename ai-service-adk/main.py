@@ -24,7 +24,13 @@ from pydantic import BaseModel, Field
 from auth import require_ai_access
 from config import settings
 from rate_limiter import enforce_rate_limit, remaining_requests
-from ai_session_events import append_ai_session_event, new_request_id, _client as _redis_log_client
+from ai_session_events import (
+    append_ai_session_event,
+    new_request_id,
+    _client as _redis_log_client,
+    CallerInfo,
+    ToolCall,
+)
 from calendar_agent import CalendarAgentADK
 from gmail_agent import GmailAgentADK
 from claims_agent import (
@@ -88,6 +94,7 @@ class GmailSummaryRequest(BaseModel):
     emails: Annotated[List[Dict[str, Any]], Field(max_length=MAX_GMAIL_EMAILS)]
     interest: str
     answers: List[str] = []
+    session_id: Optional[str] = None
 
 
 class GmailQuestionsRequest(BaseModel):
@@ -95,6 +102,7 @@ class GmailQuestionsRequest(BaseModel):
     interest: str = ""
     previous_answers: List[str] = []
     question_count: int = 2
+    session_id: Optional[str] = None
 
 
 class GmailSummaryResponse(BaseModel):
@@ -147,6 +155,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _resolve_session_id(request_body_sid: Optional[str], http_request: Request) -> str:
+    """Return a canonical session UUID from body, header, or a fresh UUID."""
+    incoming = (request_body_sid or http_request.headers.get("x-session-id") or "").strip()
+    try:
+        return str(_uuid.UUID(incoming)) if incoming else str(_uuid.uuid4())
+    except ValueError:
+        return str(_uuid.uuid4())
 
 
 @app.get("/healthz")
@@ -278,6 +295,10 @@ async def generate_gmail_questions(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    correlation_id = http_request.headers.get("x-correlation-id")
+    session_id = _resolve_session_id(request.session_id, http_request)
+
     questions = await gmail_agent.generate_followup_questions(
         emails=request.emails,
         interest=request.interest,
@@ -285,13 +306,46 @@ async def generate_gmail_questions(
         question_count=request.question_count,
     )
 
+    # Emit discrete event for Gmail questions step
+    await append_ai_session_event(
+        kind="gmail_step_questions",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="gmail_follow_up_interviewer",
+            role="Gmail Follow-up Interviewer",
+            stage="questions",
+            model="claude-3-haiku-20240307",
+        ),
+        questions=questions,
+        payload={
+            "route": "/ai/gmail/questions",
+            "request": {
+                "interest": request.interest,
+                "question_count": request.question_count,
+                "previous_answers": request.previous_answers,
+                "email_count": len(request.emails),
+            },
+            "response": {"questions": questions},
+        },
+    )
+
     resp = GmailQuestionsResponse(questions=questions)
-    rid = http_request.headers.get("x-request-id") or new_request_id()
     await append_ai_session_event(
         kind="gmail_questions",
         username=username,
-        correlation_id=http_request.headers.get("x-correlation-id"),
+        correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="gmail_follow_up_interviewer",
+            role="Gmail Follow-up Interviewer",
+            stage="questions",
+            model="claude-3-haiku-20240307",
+        ),
+        questions=questions,
         payload={
             "route": "/ai/gmail/questions",
             "request": {
@@ -323,10 +377,62 @@ async def generate_gmail_summary(
         window_seconds=3600,
     )
 
+    rid = http_request.headers.get("x-request-id") or new_request_id()
+    correlation_id = http_request.headers.get("x-correlation-id")
+    session_id = _resolve_session_id(request.session_id, http_request)
+
     summaries = await gmail_agent.generate_summaries(
         emails=request.emails,
         interest=request.interest,
         answers=request.answers,
+    )
+
+    # Emit discrete event for action summary step
+    await append_ai_session_event(
+        kind="gmail_step_summary_action",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="action_summary_analyst",
+            role="Action Summary Analyst",
+            stage="summary_action",
+            model="claude-3-haiku-20240307",
+        ),
+        payload={
+            "route": "/ai/gmail/summary",
+            "step": "action_summary",
+            "request": {
+                "interest": request.interest,
+                "email_count": len(request.emails),
+            },
+            "response": {"summary_a": summaries.get("summary_a", "")},
+        },
+    )
+
+    # Emit discrete event for insight summary step
+    await append_ai_session_event(
+        kind="gmail_step_summary_insight",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="insight_summary_analyst",
+            role="Insight Summary Analyst",
+            stage="summary_insight",
+            model="claude-3-haiku-20240307",
+        ),
+        payload={
+            "route": "/ai/gmail/summary",
+            "step": "insight_summary",
+            "request": {
+                "interest": request.interest,
+                "email_count": len(request.emails),
+            },
+            "response": {"summary_b": summaries.get("summary_b", "")},
+        },
     )
 
     result = await gmail_agent.judge_and_rank(
@@ -337,17 +443,78 @@ async def generate_gmail_summary(
         answers=request.answers,
     )
 
+    # Emit discrete event for triage/classification step
+    await append_ai_session_event(
+        kind="gmail_step_triage",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="inbox_triage_specialist",
+            role="Inbox Triage Specialist",
+            stage="triage",
+            model="claude-3-haiku-20240307",
+        ),
+        payload={
+            "route": "/ai/gmail/summary",
+            "step": "triage",
+            "request": {
+                "interest": request.interest,
+                "email_count": len(request.emails),
+            },
+            "response": {"top_email_ids": result.get("top_email_ids", [])},
+        },
+    )
+
+    # Emit discrete event for judge step
+    await append_ai_session_event(
+        kind="gmail_step_judge",
+        username=username,
+        correlation_id=correlation_id,
+        request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="gmail_summary_judge",
+            role="Gmail Summary Judge",
+            stage="judge",
+            model="claude-3-haiku-20240307",
+        ),
+        reasoning=result.get("reasoning", ""),
+        payload={
+            "route": "/ai/gmail/summary",
+            "step": "judge",
+            "request": {
+                "interest": request.interest,
+                "summary_a": summaries.get("summary_a", ""),
+                "summary_b": summaries.get("summary_b", ""),
+            },
+            "response": {
+                "final_summary": result.get("final_summary", ""),
+                "top_email_ids": result.get("top_email_ids", []),
+                "reasoning": result.get("reasoning", ""),
+            },
+        },
+    )
+
     resp = GmailSummaryResponse(
         final_summary=result.get("final_summary", ""),
         top_email_ids=result.get("top_email_ids", []),
         reasoning=result.get("reasoning", ""),
     )
-    rid = http_request.headers.get("x-request-id") or new_request_id()
     await append_ai_session_event(
         kind="gmail_summary",
         username=username,
-        correlation_id=http_request.headers.get("x-correlation-id"),
+        correlation_id=correlation_id,
         request_id=rid,
+        session_id=session_id,
+        caller=CallerInfo(
+            agent="gmail_summary_judge",
+            role="Gmail Summary Judge",
+            stage="summary",
+            model="claude-3-haiku-20240307",
+        ),
+        reasoning=resp.reasoning,
         payload={
             "route": "/ai/gmail/summary",
             "request": {
@@ -415,6 +582,27 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="truth_checker",
+            role="Truth Check Agent",
+            stage="truth_check",
+            model="n/a",
+        ),
+        tool_calls=[
+            ToolCall(
+                tool_name="truth_check",
+                args={"claim_id": request.claim.get("claim_id", "")},
+                result={
+                    "status": tool_output.get("status"),
+                    "status_ok": tool_output.get("status_ok"),
+                    "summary_ok": tool_output.get("summary_ok"),
+                    "timeline_ok": tool_output.get("timeline_ok"),
+                    "issue_count": len(tool_output.get("issues", [])),
+                },
+                elapsed_ms=tool_elapsed_ms,
+                reason="factual",
+            )
+        ],
         payload={
             "route": "/ai/claims/qa",
             "tool_name": "truth_check",
@@ -436,6 +624,22 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="truth_checker",
+            role="Truth Check Agent",
+            stage="truth_check",
+            model="n/a",
+        ),
+        tool_calls=[
+            ToolCall(
+                tool_name="truth_check",
+                args={"claim_id": request.claim.get("claim_id", "")},
+                result=tool_output,
+                elapsed_ms=tool_elapsed_ms,
+                reason="factual",
+            )
+        ],
+        question=request.question,
         payload={
             "route": "/ai/claims/qa",
             "step": "truth_check",
@@ -467,7 +671,12 @@ async def generate_claims_answer(
 
     candidate_a_tools = build_tool_calls(
         request.claim,
-        ["status_check", "timeline_check", "notes_summary"],
+        [
+            "status_check",
+            "timeline_check",
+            "notes_summary",
+            "claims_annotation_results",
+        ],
         stage="candidate_a",
     )
     tool_history.extend(candidate_a_tools)
@@ -481,6 +690,20 @@ async def generate_claims_answer(
             correlation_id=correlation_id,
             request_id=rid,
             session_id=session_id,
+            caller=CallerInfo(
+                agent="candidate_a",
+                role="Claims Candidate A",
+                stage="candidate_a",
+                model="claude-3-haiku-20240307",
+            ),
+            tool_calls=[
+                ToolCall(
+                    tool_name=_tc["name"],
+                    args={"claim_id": request.claim.get("claim_id", "")},
+                    result=_tc.get("result"),
+                    reason="coverage",
+                )
+            ],
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -505,6 +728,22 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="candidate_a",
+            role="Claims Candidate A",
+            stage="candidate_a",
+            model="claude-3-haiku-20240307",
+        ),
+        tool_calls=[
+            ToolCall(
+                tool_name=tc["name"],
+                args={"claim_id": request.claim.get("claim_id", "")},
+                result=tc.get("result"),
+                reason="coverage",
+            )
+            for tc in candidate_a_tools
+        ],
+        question=request.question,
         payload={
             "route": "/ai/claims/qa",
             "step": "candidate_a",
@@ -532,6 +771,20 @@ async def generate_claims_answer(
             correlation_id=correlation_id,
             request_id=rid,
             session_id=session_id,
+            caller=CallerInfo(
+                agent="candidate_b",
+                role="Claims Candidate B",
+                stage="candidate_b",
+                model="claude-3-haiku-20240307",
+            ),
+            tool_calls=[
+                ToolCall(
+                    tool_name=_tc["name"],
+                    args={"claim_id": request.claim.get("claim_id", "")},
+                    result=_tc.get("result"),
+                    reason="coverage",
+                )
+            ],
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -556,6 +809,22 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="candidate_b",
+            role="Claims Candidate B",
+            stage="candidate_b",
+            model="claude-3-haiku-20240307",
+        ),
+        tool_calls=[
+            ToolCall(
+                tool_name=tc["name"],
+                args={"claim_id": request.claim.get("claim_id", "")},
+                result=tc.get("result"),
+                reason="coverage",
+            )
+            for tc in candidate_b_tools
+        ],
+        question=request.question,
         payload={
             "route": "/ai/claims/qa",
             "step": "candidate_b",
@@ -583,6 +852,20 @@ async def generate_claims_answer(
             correlation_id=correlation_id,
             request_id=rid,
             session_id=session_id,
+            caller=CallerInfo(
+                agent="judge",
+                role="Claims Judge",
+                stage="judge",
+                model="claude-3-haiku-20240307",
+            ),
+            tool_calls=[
+                ToolCall(
+                    tool_name=_tc["name"],
+                    args={"claim_id": request.claim.get("claim_id", "")},
+                    result=_tc.get("result"),
+                    reason="consistency",
+                )
+            ],
             payload={
                 "route": "/ai/claims/qa",
                 "tool_name": _tc["name"],
@@ -606,6 +889,25 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="judge",
+            role="Claims Judge",
+            stage="judge",
+            model="claude-3-haiku-20240307",
+        ),
+        tool_calls=[
+            ToolCall(
+                tool_name=tc["name"],
+                args={"claim_id": request.claim.get("claim_id", "")},
+                result=tc.get("result"),
+                reason="consistency",
+            )
+            for tc in judge_tools
+        ],
+        question=request.question,
+        reasoning=judge_result.get("reasoning")
+        if isinstance(judge_result, dict)
+        else None,
         payload={
             "route": "/ai/claims/qa",
             "step": "judge",
@@ -649,7 +951,7 @@ async def generate_claims_answer(
         for attempt in range(1, max_attempts + 1):
             followup_tools_a = build_tool_calls(
                 request.claim,
-                ["status_check", "timeline_check"],
+                ["status_check", "timeline_check", "claims_annotation_results"],
                 stage="followup_candidate_a",
                 attempt=attempt,
             )
@@ -664,6 +966,21 @@ async def generate_claims_answer(
                     correlation_id=correlation_id,
                     request_id=rid,
                     session_id=session_id,
+                    caller=CallerInfo(
+                        agent="followup_candidate_a",
+                        role="Followup Candidate A",
+                        stage="followup_candidate_a",
+                        attempt=attempt,
+                        model="claude-3-haiku-20240307",
+                    ),
+                    tool_calls=[
+                        ToolCall(
+                            tool_name=_tc["name"],
+                            args={"claim_id": request.claim.get("claim_id", "")},
+                            result=_tc.get("result"),
+                            reason="clarity",
+                        )
+                    ],
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -696,6 +1013,23 @@ async def generate_claims_answer(
                 correlation_id=correlation_id,
                 request_id=rid,
                 session_id=session_id,
+                caller=CallerInfo(
+                    agent="followup_candidate_a",
+                    role="Followup Candidate A",
+                    stage="followup_candidate_a",
+                    attempt=attempt,
+                    model="claude-3-haiku-20240307",
+                ),
+                tool_calls=[
+                    ToolCall(
+                        tool_name=tc["name"],
+                        args={"claim_id": request.claim.get("claim_id", "")},
+                        result=tc.get("result"),
+                        reason="clarity",
+                    )
+                    for tc in followup_tools_a
+                ],
+                question=followup_a,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_candidate_a",
@@ -725,6 +1059,21 @@ async def generate_claims_answer(
                     correlation_id=correlation_id,
                     request_id=rid,
                     session_id=session_id,
+                    caller=CallerInfo(
+                        agent="followup_candidate_b",
+                        role="Followup Candidate B",
+                        stage="followup_candidate_b",
+                        attempt=attempt,
+                        model="claude-3-haiku-20240307",
+                    ),
+                    tool_calls=[
+                        ToolCall(
+                            tool_name=_tc["name"],
+                            args={"claim_id": request.claim.get("claim_id", "")},
+                            result=_tc.get("result"),
+                            reason="clarity",
+                        )
+                    ],
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -757,6 +1106,23 @@ async def generate_claims_answer(
                 correlation_id=correlation_id,
                 request_id=rid,
                 session_id=session_id,
+                caller=CallerInfo(
+                    agent="followup_candidate_b",
+                    role="Followup Candidate B",
+                    stage="followup_candidate_b",
+                    attempt=attempt,
+                    model="claude-3-haiku-20240307",
+                ),
+                tool_calls=[
+                    ToolCall(
+                        tool_name=tc["name"],
+                        args={"claim_id": request.claim.get("claim_id", "")},
+                        result=tc.get("result"),
+                        reason="clarity",
+                    )
+                    for tc in followup_tools_b
+                ],
+                question=followup_b,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_candidate_b",
@@ -786,6 +1152,21 @@ async def generate_claims_answer(
                     correlation_id=correlation_id,
                     request_id=rid,
                     session_id=session_id,
+                    caller=CallerInfo(
+                        agent="followup_judge",
+                        role="Followup Judge",
+                        stage="followup_judge",
+                        attempt=attempt,
+                        model="claude-3-haiku-20240307",
+                    ),
+                    tool_calls=[
+                        ToolCall(
+                            tool_name=_tc["name"],
+                            args={"claim_id": request.claim.get("claim_id", "")},
+                            result=_tc.get("result"),
+                            reason="consistency",
+                        )
+                    ],
                     payload={
                         "route": "/ai/claims/qa",
                         "tool_name": _tc["name"],
@@ -816,6 +1197,28 @@ async def generate_claims_answer(
                 correlation_id=correlation_id,
                 request_id=rid,
                 session_id=session_id,
+                caller=CallerInfo(
+                    agent="followup_judge",
+                    role="Followup Judge",
+                    stage="followup_judge",
+                    attempt=attempt,
+                    model="claude-3-haiku-20240307",
+                ),
+                tool_calls=[
+                    ToolCall(
+                        tool_name=tc["name"],
+                        args={"claim_id": request.claim.get("claim_id", "")},
+                        result=tc.get("result"),
+                        reason="consistency",
+                    )
+                    for tc in followup_judge_tools
+                ],
+                question=followup_judge_result.get("question")
+                if isinstance(followup_judge_result, dict)
+                else None,
+                reasoning=followup_judge_result.get("reasoning")
+                if isinstance(followup_judge_result, dict)
+                else None,
                 payload={
                     "route": "/ai/claims/qa",
                     "step": "followup_judge",
@@ -881,6 +1284,14 @@ async def generate_claims_answer(
         correlation_id=correlation_id,
         request_id=rid,
         session_id=session_id,
+        caller=CallerInfo(
+            agent="followup_summary",
+            role="Followup Summary",
+            stage="followup",
+            model="n/a",
+        ),
+        question=next_question,
+        reasoning=followup_reasoning,
         payload={
             "route": "/ai/claims/qa",
             "step": "followup",
@@ -940,7 +1351,9 @@ async def generate_claims_answer(
             stream_key=settings.AI_SESSION_STREAM_KEY,
         )
     except Exception:
-        logger.warning("Claims persistence failed (session=%s)", session_id, exc_info=True)
+        logger.warning(
+            "Claims persistence failed (session=%s)", session_id, exc_info=True
+        )
 
     return ClaimQaResponse(
         answer=final_answer,

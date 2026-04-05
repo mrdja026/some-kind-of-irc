@@ -203,6 +203,9 @@ export type CreateAnnotationRequest = {
     height: number;
     rotation?: number;
   };
+  verification_status?: string;
+  review_value?: string | null;
+  certainty?: number | null;
 };
 
 export type UpdateAnnotationRequest = Partial<CreateAnnotationRequest>;

@@ -20,12 +20,20 @@ import {
   listTemplates,
   applyTemplate,
 } from '../api/dataProcessor'
-import type { Annotation, LabelType, OcrStatus } from '../types'
+import { API_BASE_URL, createAnnotationSession, persistAnnotationExport } from '../api'
+import type { Annotation, LabelType, OcrStatus, VerificationStatus } from '../types'
 import { BoundingBoxCanvas } from './BoundingBoxCanvas'
 import { AnnotationToolbar } from './AnnotationToolbar'
 import { TemplateSaveModal } from './TemplateSaveModal'
 import { ExportPanel } from './ExportPanel'
 import { ValidationWorkflow } from './ValidationWorkflow'
+
+export interface AnnotationExportResult {
+  claimId: string
+  documentId: string
+  filename: string
+  damageLabels: string[]
+}
 
 interface DocumentAnnotationModalProps {
   documentId: string
@@ -33,17 +41,29 @@ interface DocumentAnnotationModalProps {
   channelId: number
   onClose: () => void
   onStatusChange?: (status: OcrStatus) => void
+  claimId?: string
+  onExportPersisted?: (result: AnnotationExportResult) => void
 }
 
 // Label type colors
 const LABEL_COLORS: Record<LabelType, string> = {
-  header: '#3B82F6', // blue
-  table: '#10B981', // green
-  signature: '#8B5CF6', // purple
-  date: '#F59E0B', // amber
-  amount: '#EF4444', // red
-  custom: '#6B7280', // gray
+  header: '#3B82F6',
+  table: '#10B981',
+  signature: '#8B5CF6',
+  date: '#F59E0B',
+  amount: '#EF4444',
+  custom: '#6B7280',
+  fire_damage: '#EF5350',
+  water_damage: '#42A5F5',
+  smoke_damage: '#78909C',
+  structural_damage: '#FF7043',
+  glass_damage: '#26C6DA',
+  debris: '#8D6E63',
 }
+
+const DAMAGE_LABEL_TYPES: Set<LabelType> = new Set([
+  'fire_damage', 'water_damage', 'smoke_damage', 'structural_damage', 'glass_damage', 'debris',
+])
 
 export function DocumentAnnotationModal({
   documentId,
@@ -51,6 +71,8 @@ export function DocumentAnnotationModal({
   channelId,
   onClose,
   onStatusChange,
+  claimId,
+  onExportPersisted,
 }: DocumentAnnotationModalProps) {
   const queryClient = useQueryClient()
 
@@ -74,6 +96,55 @@ export function DocumentAnnotationModal({
   const [isExportPanelOpen, setIsExportPanelOpen] = useState(false)
   const [isValidationWorkflowOpen, setIsValidationWorkflowOpen] =
     useState(false)
+  const [annotationSessionId, setAnnotationSessionId] = useState<string | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  // Create/reuse annotation session when claimId is available
+  useEffect(() => {
+    if (!claimId) return
+    let cancelled = false
+    setAnnotationSessionId(null)
+    createAnnotationSession(claimId)
+      .then((res) => {
+        if (!cancelled) setAnnotationSessionId(res.session_id)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExportError('Unable to initialize export persistence. Annotations can still be used locally, but will not be saved to the server. Refresh and try again if needed.')
+        }
+      })
+    return () => { cancelled = true }
+  }, [claimId])
+
+  // Callback for ExportPanel: persist export to backend, then auto-close
+  const handleExportComplete = useCallback(
+    (_format: string, content: string) => {
+      if (!claimId || !annotationSessionId) {
+        setExportError('Annotation session is not ready yet. Please try again.')
+        return
+      }
+      let findings: unknown
+      try {
+        findings = JSON.parse(content)
+      } catch {
+        findings = { raw: content }
+      }
+      persistAnnotationExport(claimId, annotationSessionId, documentId, findings, filename)
+        .then((res) => {
+          onExportPersisted?.({
+            claimId,
+            documentId,
+            filename,
+            damageLabels: res.damage_labels ?? [],
+          })
+          onClose()
+        })
+        .catch(() => {
+          setExportError('Export saved locally but could not be persisted to the server.')
+        })
+    },
+    [claimId, annotationSessionId, documentId, filename, onClose, onExportPersisted],
+  )
 
   // Fetch document details
   const { data: document, isLoading: isLoadingDocument } = useQuery({
@@ -113,6 +184,17 @@ export function DocumentAnnotationModal({
     }
   }, [document, debug])
 
+  const resolvedImageUrl = (() => {
+    const rawUrl = document?.image_url
+    if (!rawUrl) {
+      return undefined
+    }
+    if (rawUrl.startsWith('/media/')) {
+      return `${API_BASE_URL}${rawUrl}`
+    }
+    return rawUrl
+  })()
+
   // Process OCR mutation
   const processMutation = useMutation({
     mutationFn: () => processDocument(documentId),
@@ -127,10 +209,9 @@ export function DocumentAnnotationModal({
       label_type: LabelType
       label_name: string
       color: string
-      x: number
-      y: number
-      width: number
-      height: number
+      bounding_box: { x: number; y: number; width: number; height: number; rotation?: number }
+      verification_status?: VerificationStatus
+      certainty?: number | null
     }) => createAnnotation(documentId, data),
     onSuccess: (newAnnotation) => {
       setAnnotations((prev) => [...prev, newAnnotation])
@@ -186,11 +267,13 @@ export function DocumentAnnotationModal({
       const name =
         labelName.trim() || `${activeLabelType} ${annotations.length + 1}`
 
+      const isDamage = DAMAGE_LABEL_TYPES.has(activeLabelType)
       createAnnotationMutation.mutate({
         label_type: activeLabelType,
         label_name: name,
         color: LABEL_COLORS[activeLabelType],
         bounding_box: { ...box, rotation: 0 },
+        ...(isDamage ? { verification_status: 'human_verified' as VerificationStatus, certainty: 1.0 } : {}),
       })
       setLabelName('')
       setLabelNameError(null)
@@ -212,11 +295,7 @@ export function DocumentAnnotationModal({
   const handleToolChange = useCallback(
     (next: 'select' | 'draw') => {
       setTool(next)
-      if (next === 'draw') {
-        setActiveLabelType('custom')
-      }
       setLabelNameError(null)
-      // Preserve the active label type; do not force custom on tool change
     },
     [],
   )
@@ -269,6 +348,13 @@ export function DocumentAnnotationModal({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
+      {/* Export persistence error banner */}
+      {exportError && (
+        <div className="bg-red-800 text-white text-sm px-4 py-2 flex items-center justify-between">
+          <span>{exportError}</span>
+          <button onClick={() => setExportError(null)} className="ml-4 text-red-200 hover:text-white">✕</button>
+        </div>
+      )}
       {/* Modal Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-700">
         <div className="flex items-center gap-4">
@@ -402,12 +488,12 @@ export function DocumentAnnotationModal({
               <Loader2 size={48} className="animate-spin text-gray-500" />
             </div>
           ) : (
-            <BoundingBoxCanvas
-              documentId={documentId}
-              imageUrl={document?.image_url}
-              annotations={annotations}
-              selectedAnnotation={selectedAnnotation}
-              onSelectAnnotation={setSelectedAnnotation}
+              <BoundingBoxCanvas
+                documentId={documentId}
+                imageUrl={resolvedImageUrl}
+                annotations={annotations}
+                selectedAnnotation={selectedAnnotation}
+                onSelectAnnotation={setSelectedAnnotation}
               onCreateAnnotation={handleCreateAnnotation}
               onUpdateAnnotation={handleUpdateAnnotation}
               tool={tool}
@@ -510,6 +596,7 @@ export function DocumentAnnotationModal({
         annotations={annotations}
         isOpen={isExportPanelOpen}
         onClose={() => setIsExportPanelOpen(false)}
+        onExportComplete={claimId ? handleExportComplete : undefined}
       />
 
       {/* Validation Workflow */}
